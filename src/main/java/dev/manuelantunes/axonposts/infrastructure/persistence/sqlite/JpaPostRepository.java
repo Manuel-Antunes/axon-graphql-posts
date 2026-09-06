@@ -3,13 +3,17 @@ package dev.manuelantunes.axonposts.infrastructure.persistence.sqlite;
 import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
+import dev.manuelantunes.axonposts.domain.post.vo.TagRef;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.ScrollPosition;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * Adapter: implementa a porta {@link PostRepository} com Spring Data JPA sobre SQLite.
@@ -55,5 +59,15 @@ public class JpaPostRepository implements PostRepository {
 
         return repository.findAllByOrderByCreatedAtAscIdAsc(position, Limit.of(limit))
                 .getContent();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<PostId, List<TagRef>> findTagsByPostIds(Collection<PostId> postIds) {
+        if (postIds.isEmpty()) {
+            return Map.of();
+        }
+        return repository.findAllWithTagsByIdIn(postIds).stream()
+                .collect(Collectors.toMap(Post::id, Post::tags, (first, second) -> first));
     }
 }

@@ -6,6 +6,8 @@ A ideia central: o input é validado na borda e mapeado para um command → o co
 
 `Post` e `Tag` são, cada uma, **uma classe só**: entidade de domínio com comportamento, mapeamento JPA e entidade event-sourced do Axon. Não existe entidade de infraestrutura espelho — os value objects são `@Embeddable` de verdade e o `PostView` é apenas o DTO de saída do GraphQL.
 
+`posts` e `Post.tags` são cursor connections; as tags são resolvidas por **DataLoader**, então N posts numa resposta viram uma consulta, não N.
+
 ```
 mutation createPost(input) ──► @Valid  (Bean Validation: campo vazio, título > 200 → BAD_REQUEST aqui)
                               │
@@ -109,7 +111,9 @@ dev.manuelantunes.axonposts
 │   ├── persistence/sqlite/SpringDataPostRepository, SpringDataTagRepository
 │   └── axon/AxonConfig                         # InMemoryEventStorageEngine, subscribingMatching(...), Clock
 └── interfaces/graphql
-    └── PostQueryController, PostMutationController, PostSubscriptionController
+    ├── PostQueryController, PostMutationController, PostSubscriptionController
+    ├── PostTagsController                      #   campo Post.tags: DataLoader + cursor connection
+    └── Connections                             #   cursor ↔ offset, compartilhado pelas duas connections
 ```
 
 Schema em `src/main/resources/graphql/posts.graphqls`.
@@ -158,7 +162,7 @@ Terminal 2 — dispara o command:
 
 ```bash
 curl -s -X POST http://localhost:8080/graphql -H 'Content-Type: application/json' \
-  -d '{"query":"mutation { createPost(input:{title:\"Axon 5 + GraphQL\", content:\"oi\", author:\"manuel\"}) { id title version tags { id name } } }"}'
+  -d '{"query":"mutation { createPost(input:{title:\"Axon 5 + GraphQL\", content:\"oi\", author:\"manuel\"}) { id title version tags(first: 5) { edges { node { id name } } } } }"}'
 ```
 
 O terminal 1 recebe:
@@ -172,7 +176,8 @@ E a mutation responde com a tag padrão já atribuída — `version: 2`, porque 
 
 ```json
 {"data":{"createPost":{"id":"…","title":"Axon 5 + GraphQL","version":2,
-                       "tags":[{"id":"…","name":"Untagged"}]}}}
+   "tags":{"edges":[{"cursor":"T18w","node":{"id":"…","name":"Untagged"}}],
+           "pageInfo":{"hasNextPage":false}}}}}
 ```
 
 Subscription filtrada por tópico (só updates daquele post):
@@ -209,8 +214,9 @@ Testes unitários (`./mvnw test`):
 - `PostTest` / `TagTest` — domínio puro. O único colaborador é o `RecordingDomainEvents`, um duplo da porta do próprio domínio: dá para afirmar exatamente o que foi disparado sem Axon, sem Spring e sem JPA — mesmo com as entidades mapeadas.
 - `CreatePostCommandHandlerTest`, `UpdatePostCommandHandlerTest`, `AssignTagToPostCommandHandlerTest`, `CreateTagCommandHandlerTest` — given-when-then com o `AxonTestFixture` do Axon 5, um por handler. Cada um monta só o handler que testa, então uma dependência acidental entre dois deles quebra o teste. Como salvar virou responsabilidade do command, os repositórios em memória provam que ele salvou — e o quê.
 - `FindAllPostsQueryHandlerTest` — a mecânica do `limit + 1`: a linha extra nunca vaza para o resultado e o `hasNext` bate.
+- `ConnectionsTest` — a tradução cursor ↔ offset e o recorte em memória, que é a parte da cursor connection que é lógica nossa e não do Spring. É o mesmo código por trás de `posts` e de `Post.tags`.
 
-A orquestração da tag padrão (dois commands encadeados no `AFTER_COMMIT`) é coberta pelo smoke test, e não por teste unitário: o que ela tem de interessante — a ordem entre commit, dispatch e resposta da mutation — só existe com o Axon de verdade rodando.
+A orquestração da tag padrão (dois commands encadeados no `AFTER_COMMIT`) e o lote do DataLoader são cobertos pelo smoke test, e não por teste unitário: o que os dois têm de interessante — a ordem entre commit, dispatch e resposta da mutation; quantas vezes a função de lote é chamada — só existe com o Axon e o graphql-java de verdade rodando.
 
 ## Decisões que valem comentar
 
@@ -246,11 +252,21 @@ E é o mesmo `onAfterCommit` que faz a mutation devolver o post **já com a tag*
 
 A tradução acontece em degraus, cada um no seu lugar: o controller converte cursor ↔ `offset`/`limit` (o cursor `T18w` é o base64 de `O_0`, um `OffsetScrollPosition`); a query do Axon carrega só os dois números, porque mensagem não carrega tipo de framework; o query handler decide o `hasNext` pedindo **uma linha a mais** e descartando-a; e o adapter volta para `ScrollPosition`/`Window`, o suporte a scrolling nativo do Spring Data. A ordenação é `createdAt, id` — `createdAt` sozinho não é único, e dois posts do mesmo instante fariam a paginação por offset pular ou repetir linhas. Paginação só para frente (`first`/`after`), declarada assim em vez de aceitar `last`/`before` e ignorá-los.
 
+**`Post.tags`: connection paginada, servida por DataLoader.** Uma query `posts(first: 20) { edges { node { tags { … } } } }` dispararia 21 consultas — uma para os posts e uma para as tags de cada um. Com o DataLoader, o graphql-java junta os 20 pedidos do mesmo nível de execução e chama a função de lote **uma vez**, com os 20 ids; `findTagsByPostIds` resolve tudo num `join fetch` só. O smoke test prova isso lendo o log: duas queries que trazem dois posts produzem **duas** chamadas de lote de 2 chaves, não quatro de 1.
+
+Para o lote ter o que evitar, `Post.tags` virou `@ElementCollection(fetch = LAZY)` e o `PostView` **perdeu** o campo `tags`: com `EAGER` o Hibernate faria um SELECT por post e o N+1 aconteceria antes de o DataLoader entrar em cena. Efeito colateral bem-vindo: quem não pede `tags` na query não paga por elas.
+
+**Por que `@SchemaMapping` + DataLoader, e não `@BatchMapping`.** `@BatchMapping` é açúcar para exatamente o que o `PostTagsController` faz à mão — o javadoc dele diz isso: registrar a função no `BatchLoaderRegistry` e expor um `DataFetcher` que consulta o `DataLoader`. O que ele **não** faz é enxergar argumentos de campo: o `BatchLoaderHandlerMethod` só resolve a coleção de chaves, `@ContextValue`, `GraphQLContext` e `BatchLoaderEnvironment` — não há `@Argument` nem `ScrollSubrange`.
+
+Como `tags` é paginado (`first`/`after`), a forma anotada não dá conta. A escolha era entre um campo sem paginação e a forma explícita; ficou a explícita — mesmo DataLoader, mesmo lote, com o argumento na mão. Se `tags` deixar de ser paginado um dia, o método vira um `@BatchMapping` de três linhas.
+
+O lote traz todas as tags de cada post e a paginação recorta **em memória** (`Connections.slice`). É o certo para uma coleção filha pequena: ela já veio inteira no lote, e paginar no banco por post desfaria o lote. Para uma coleção grande, o caminho seria uma consulta com janela por chave dentro da própria função de lote — a fronteira do controller não mudaria.
+
 **Validação em duas alturas, de propósito.** As constraints em `CreatePostInput`/`UpdatePostInput` são fail-fast de borda: o `@Valid` no `@Argument` faz o Spring GraphQL validar antes de existir command, e o cliente recebe `BAD_REQUEST` com a mensagem do campo. Os value objects continuam validando por conta própria, e é essa a validação que **vale** — ela protege a invariante venha o command de onde vier (outro adapter, um teste, uma migração). A borda existe para dar erro melhor e mais cedo, não para substituir o domínio. No `UpdatePostInput` o "nulo pode, vazio não" é `@Pattern` e não `@NotBlank`: constraints são ignoradas quando o valor é `null`, que é justamente a semântica de update parcial.
 
 **MapStruct é o mapper padrão de todas as camadas.** Os dois saltos que o dado dá têm um mapper cada, ambos em `mapper/` e gerados em tempo de compilação (`target/generated-sources/annotations`, Java comum, zero reflexão): `PostInputMapper` (input GraphQL → command) e `PostViewMapper` (domínio → DTO de saída). O terceiro salto — read model ↔ entidade JPA — simplesmente deixou de existir quando `Post` virou a própria entidade mapeada. O ganho não é escrever menos linhas: é `-Amapstruct.unmappedTargetPolicy=ERROR` no `pom.xml`, que faz um campo novo no destino sem origem **quebrar o build** em vez de chegar `null` do outro lado.
 
-O `PostInputMapper` o MapStruct resolve sozinho (record → record). O `PostViewMapper` precisa de `expression = "java(post.title().value())"` por campo, porque o MapStruct descobre propriedades por acessor JavaBean (`getTitle()`) ou componente de `record`, e `Post` não é nem um nem outro — é entidade de domínio com acessores `title()` devolvendo value objects. Escrever a origem à mão não custa a garantia que importa: o **destino** continua conferido pelo compilador.
+O `PostInputMapper` o MapStruct resolve sozinho (record → record), assim como o `toTagViews` que o `PostTagsController` toma emprestado (`TagRef` → `TagView`). O `PostViewMapper` precisa de `expression = "java(post.title().value())"` por campo, porque o MapStruct descobre propriedades por acessor JavaBean (`getTitle()`) ou componente de `record`, e `Post` não é nem um nem outro — é entidade de domínio com acessores `title()` devolvendo value objects. Escrever a origem à mão não custa a garantia que importa: o **destino** continua conferido pelo compilador.
 
 **`dto`, `mapper` e `exceptions` na raiz: agrupados por papel.** As camadas continuam valendo para o que tem regra (`domain`, `application`, `infrastructure`, `interfaces`), mas os artefatos puramente técnicos ficam agrupados pelo que são — um lugar só para procurar "todo input", "todo mapeamento", "toda tradução de erro". O preço é que esses pacotes cruzam fronteiras. As **exceções** em si não se mudaram: `InvalidPostException` e `InvalidTagException` seguem nos seus domínios, porque são vocabulário deles; o que foi para `exceptions/` é quem as *ouve* na borda.
 
@@ -287,4 +303,4 @@ Os **eventos**, porém, carregam primitivos: evento é contrato, atravessa proce
 - Voltar a projetar o read model nos event handlers (tirando o `save` do command) pra recuperar o read model derivado do stream — e, aí sim, poder rodar o processor em modo pooled streaming (o default do Axon 5) e ver consistência eventual de verdade. Enquanto o command salva, trocar pra pooled só atrasa o `emit`: a escrita no SQLite continua síncrona.
 - Explorar o DCB de verdade: um segundo `@EventSourced` (ex.: `AuthorQuota` com `tagKey = "author"`) carregado no mesmo command handler via `@InjectEntity(idProperty = "author")`, e a consistency boundary passa a cobrir os dois streams.
 - `DateTime` scalar (graphql-java-extended-scalars) no lugar de `String` pros timestamps.
-- Paginação por keyset (`KeysetScrollPosition`) no lugar de offset: cursor estável mesmo com inserção concorrente, e sem o custo de `OFFSET n` em tabela grande. O `ScrollSubrange` já entrega os dois — só a query do Axon e o adapter mudariam.
+- Paginação por keyset (`KeysetScrollPosition`) no lugar de offset em `posts`: cursor estável mesmo com inserção concorrente, e sem o custo de `OFFSET n` em tabela grande. O `ScrollSubrange` já entrega os dois — só a query do Axon e o adapter mudariam.

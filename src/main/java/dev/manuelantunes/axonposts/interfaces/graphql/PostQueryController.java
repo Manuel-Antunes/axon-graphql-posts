@@ -6,7 +6,6 @@ import dev.manuelantunes.axonposts.dto.controller.PostView;
 import dev.manuelantunes.axonposts.application.post.query.FindAllPostsQuery;
 import dev.manuelantunes.axonposts.application.post.query.FindPostQuery;
 import org.axonframework.extension.reactor.messaging.queryhandling.gateway.ReactorQueryGateway;
-import org.springframework.data.domain.OffsetScrollPosition;
 import org.springframework.data.domain.ScrollPosition;
 import org.springframework.data.domain.Window;
 import org.springframework.graphql.data.query.ScrollSubrange;
@@ -60,7 +59,7 @@ public class PostQueryController {
 
     @QueryMapping
     public Mono<Window<PostView>> posts(ScrollSubrange subrange) {
-        long offset = startOffset(subrange);
+        long offset = Connections.startOffset(subrange);
         int limit = subrange.count().orElse(DEFAULT_PAGE_SIZE);
 
         return queryGateway.query(new FindAllPostsQuery(offset, limit), PostPage.class)
@@ -68,28 +67,8 @@ public class PostQueryController {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
-    /**
-     * Cursor → índice da primeira linha. Um {@link OffsetScrollPosition} aponta para a <b>última linha
-     * já vista</b>, então a próxima página começa em {@code offset + 1}; sem cursor, começa em 0.
-     */
-    private static long startOffset(ScrollSubrange subrange) {
-        return subrange.position()
-                .filter(OffsetScrollPosition.class::isInstance)
-                .map(OffsetScrollPosition.class::cast)
-                .filter(position -> !position.isInitial())
-                .map(position -> position.getOffset() + 1)
-                .orElse(0L);
-    }
-
-    /**
-     * O {@code positionFunction} é o que dá cursor a cada item: o item de índice {@code i} da página
-     * recebe a posição {@code offset + i}, que é o que o cliente devolve como {@code after}.
-     */
+    /** A tradução cursor ↔ offset é a mesma de {@code Post.tags}; mora em {@link Connections}. */
     private static Window<PostView> toWindow(PostPage page) {
-        return Window.from(
-                page.items(),
-                OffsetScrollPosition.positionFunction(page.offset()),
-                page.hasNext()
-        );
+        return Connections.window(page.items(), page.offset(), page.hasNext());
     }
 }

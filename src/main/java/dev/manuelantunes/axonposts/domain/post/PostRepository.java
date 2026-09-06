@@ -1,8 +1,11 @@
 package dev.manuelantunes.axonposts.domain.post;
 
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
+import dev.manuelantunes.axonposts.domain.post.vo.TagRef;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -24,4 +27,14 @@ public interface PostRepository {
      * @param limit  quantidade máxima de linhas a devolver
      */
     List<Post> findAll(long offset, int limit);
+
+    /**
+     * As tags de vários posts de uma vez. É o método que existe para ser chamado <b>em lote</b>: o
+     * DataLoader do campo {@code Post.tags} junta os ids de todos os posts de uma mesma resposta GraphQL
+     * e pergunta uma vez só, em vez de uma vez por post.
+     * <p>
+     * Posts sem tag simplesmente não aparecem no mapa — cabe a quem chama tratar a ausência como lista
+     * vazia.
+     */
+    Map<PostId, List<TagRef>> findTagsByPostIds(Collection<PostId> postIds);
 }

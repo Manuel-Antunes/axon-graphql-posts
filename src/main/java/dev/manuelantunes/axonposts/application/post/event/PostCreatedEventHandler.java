@@ -10,8 +10,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-
 /**
  * Handler de <b>um</b> evento de domínio: {@link PostCreatedEvent}. Faz uma coisa só — notificar quem
  * estiver ouvindo {@code onPostCreated}.
@@ -40,8 +38,7 @@ public class PostCreatedEventHandler {
                 event.author(),
                 event.occurredAt(),
                 event.occurredAt(),
-                PostVersion.initial().value(),
-                List.of()
+                PostVersion.initial().value()
         );
 
         log.debug("PostCreated {} → emitindo para onPostCreated", view.id());

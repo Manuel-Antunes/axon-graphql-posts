@@ -13,10 +13,21 @@ type Post {
     "Quantidade de eventos aplicados (1 = só criado)"
     version: Int!
     """
-    Tags do post. Um post criado sem tags recebe automaticamente a tag padrão "Untagged",
-    o que gera um PostUpdated — por isso um post recém-criado chega aqui já na versão 2.
+    Tags do post, como Relay cursor connection.
+
+    Resolvida à parte do resto do Post, por um DataLoader: N posts numa mesma resposta viram
+    UMA consulta ao banco, não N. Como o campo tem argumentos (first/after), a resolução usa
+    @SchemaMapping + DataLoader explícito — @BatchMapping não enxerga argumentos de campo.
+
+    Um post criado sem tags recebe automaticamente a tag padrão "Untagged", o que gera um
+    PostUpdated — por isso um post recém-criado chega aqui já na versão 2.
     """
-    tags: [Tag!]!
+    tags(
+        "Quantas tags trazer; ausente = 20"
+        first: Int,
+        "Cursor da última tag já vista; ausente = do começo"
+        after: String
+    ): TagConnection!
 }
 
 "Uma tag. Agregado próprio: tem id e stream de eventos independentes do post."

@@ -72,9 +72,9 @@ sleep 2
 step "subscriptions abertas: onPostCreated, onPostUpdated(sem filtro)"
 
 # ---- 4. commands: createPost A e B ---------------------------------------------------------
-gql '{"query":"mutation { createPost(input:{title:\"Axon + GraphQL over SSE\", content:\"primeiro post\", author:\"manuel\"}) { id title author createdAt version tags { id name } } }"}' > "$LOG/20-createPost-A.txt"
+gql '{"query":"mutation { createPost(input:{title:\"Axon + GraphQL over SSE\", content:\"primeiro post\", author:\"manuel\"}) { id title author createdAt version tags(first: 5) { edges { cursor node { id name } } pageInfo { hasNextPage } } } }"}' > "$LOG/20-createPost-A.txt"
 A=$(post_id "$LOG/20-createPost-A.txt")
-gql '{"query":"mutation { createPost(input:{title:\"Segundo post\", content:\"outro conteúdo\", author:\"manuel\"}) { id title author version tags { id name } } }"}' > "$LOG/21-createPost-B.txt"
+gql '{"query":"mutation { createPost(input:{title:\"Segundo post\", content:\"outro conteúdo\", author:\"manuel\"}) { id title author version tags(first: 5) { edges { cursor node { id name } } pageInfo { hasNextPage } } } }"}' > "$LOG/21-createPost-B.txt"
 B=$(post_id "$LOG/21-createPost-B.txt")
 step "criados A=$A B=$B"
 
@@ -101,14 +101,16 @@ gql "{\"query\":\"mutation { updatePost(input:{id: \\\"$A\\\", title: \\\"   \\\
 step "erros de validação disparados (title longo, title em branco no update)"
 
 # ---- 7. queries ----------------------------------------------------------------------------
-gql "{\"query\":\"{ post(id: \\\"$A\\\") { id title content author createdAt updatedAt version tags { id name } } }\"}" > "$LOG/50-query-post-A.txt"
-gql '{"query":"{ posts(first: 10) { edges { cursor node { id title version tags { name } } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }"}' > "$LOG/51-query-posts.txt"
+gql "{\"query\":\"{ post(id: \\\"$A\\\") { id title content author createdAt updatedAt version tags(first: 5) { edges { cursor node { id name } } pageInfo { hasNextPage } } } }\"}" > "$LOG/50-query-post-A.txt"
+gql '{"query":"{ posts(first: 10) { edges { cursor node { id title version tags(first: 5) { edges { node { name } } } } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }"}' > "$LOG/51-query-posts.txt"
 # paginação: 1ª página com first:1, depois after = endCursor da primeira
 gql '{"query":"{ posts(first: 1) { edges { cursor node { id title } } pageInfo { hasNextPage endCursor } } }"}' > "$LOG/53-connection-page1.txt"
 CURSOR=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["data"]["posts"]["pageInfo"]["endCursor"])' "$LOG/53-connection-page1.txt")
 gql "{\"query\":\"{ posts(first: 1, after: \\\"$CURSOR\\\") { edges { cursor node { id title } } pageInfo { hasNextPage } } }\"}" > "$LOG/54-connection-page2.txt"
 step "cursor connection: página 1 + página 2 (after=$CURSOR)"
 gql '{"query":"{ post(id: \"nao-existe\") { id } }"}' > "$LOG/52-query-post-missing.txt"
+# N+1: uma query com os dois posts deve disparar UMA única chamada da função de lote
+gql '{"query":"{ posts(first: 10) { edges { node { id tags(first: 5) { edges { node { name } } } } } } }"}' > "$LOG/55-dataloader-batch.txt"
 step "queries executadas"
 
 sleep 2
@@ -121,4 +123,8 @@ sleep 2
   echo "onPostUpdated (só A)     -> $(grep -c -E '^event: ?next' "$LOG/12-sse-onPostUpdated-only-A.txt") eventos (esperado 2)"
   echo "tag Untagged no createPost A -> $(grep -c 'Untagged' "$LOG/20-createPost-A.txt") (esperado 1)"
   echo "tag Untagged no createPost B -> $(grep -c 'Untagged' "$LOG/21-createPost-B.txt") (esperado 1)"
+  # DataLoader: duas queries trazem os 2 posts com tags. Sem lote seriam 2 chamadas cada (N+1);
+  # com lote é 1 chamada de 2 chaves por resposta — logo 2 no total, e nenhuma de 1 chave vinda delas.
+  echo "lote de 2 chaves         -> $(grep -c 'lote de tags: 2 post' "$LOG/02-app.txt") chamadas (esperado 2: uma por query multi-post)"
+  echo "lote de 1 chave          -> $(grep -c 'lote de tags: 1 post' "$LOG/02-app.txt") chamadas (esperado 3: as queries de post único)"
 } | tee "$LOG/60-summary.txt" | while read -r l; do step "$l"; done

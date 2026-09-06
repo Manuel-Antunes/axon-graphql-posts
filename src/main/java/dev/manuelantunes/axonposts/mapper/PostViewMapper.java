@@ -12,6 +12,10 @@ import java.util.List;
 /**
  * Domínio → saída do GraphQL: a entidade {@link Post} vira o DTO {@link PostView}, com os value objects
  * achatados em primitivos.
+ * <p>
+ * O {@link PostView} não tem tags: elas são um campo resolvido à parte, por DataLoader. O que este mapper
+ * empresta para lá é o {@link #toTagViews(List)} — a conversão {@code TagRef} → {@link TagView}, que o
+ * MapStruct gera sozinho por serem dois records.
  *
  * <h2>Por que aqui as origens são {@code expression}</h2>
  * O MapStruct descobre propriedades por acessor JavaBean ({@code getTitle()}) ou por componente de
@@ -33,7 +37,6 @@ public interface PostViewMapper {
     @Mapping(target = "createdAt", expression = "java(post.createdAt())")
     @Mapping(target = "updatedAt", expression = "java(post.updatedAt())")
     @Mapping(target = "version", expression = "java(post.version().value())")
-    @Mapping(target = "tags", expression = "java(toTagViews(post.tags()))")
     PostView toView(Post post);
 
     /** {@code TagRef} e {@code TagView} são records; só o nome do id difere. */

@@ -98,10 +98,15 @@ public class Post {
     /**
      * As tags do post, gravadas direto em {@code post_tags} como coleção de embeddables — o estado do
      * relacionamento mora no próprio agregado, sem entidade de ligação nem associação a {@code Tag}.
-     * {@code EAGER} porque a lista é pequena, sempre exibida junto do post e a entidade circula destacada
-     * fora da transação.
+     * <p>
+     * {@code LAZY}: no caminho de leitura ninguém navega por aqui. Quem serve as tags ao GraphQL é um
+     * DataLoader, que as busca em lote para todos os posts da resposta numa consulta só — com
+     * {@code EAGER} o Hibernate faria um SELECT por post e o lote não teria o que evitar.
+     * <p>
+     * No caminho de escrita a coleção sempre está carregada, porque a entidade que o command handler
+     * salva vem reconstituída dos eventos pelo Axon, não do banco.
      */
-    @ElementCollection(fetch = FetchType.EAGER)
+    @ElementCollection(fetch = FetchType.LAZY)
     @CollectionTable(name = "post_tags", joinColumns = @JoinColumn(name = "post_id"))
     private Set<TagRef> tags = new LinkedHashSet<>();
 
