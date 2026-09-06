@@ -1,0 +1,16 @@
+target/
+data/
+.poc-logs/
+.mvn/wrapper/maven-wrapper.jar
+*.log
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# OS
+.DS_Store

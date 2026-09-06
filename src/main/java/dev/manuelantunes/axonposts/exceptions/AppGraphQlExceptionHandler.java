@@ -1,0 +1,81 @@
+package dev.manuelantunes.axonposts.exceptions;
+
+import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
+import dev.manuelantunes.axonposts.domain.post.exception.PostAlreadyExistsException;
+import graphql.GraphQLError;
+import graphql.GraphqlErrorBuilder;
+import graphql.schema.DataFetchingEnvironment;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.ConstraintViolationException;
+import org.axonframework.modelling.repository.EntityNotFoundException;
+import org.springframework.graphql.data.method.annotation.GraphQlExceptionHandler;
+import org.springframework.graphql.execution.ErrorType;
+import org.springframework.web.bind.annotation.ControllerAdvice;
+
+import java.util.Comparator;
+import java.util.stream.Collectors;
+
+/**
+ * Traduz exceções do domínio, da validação e do Axon em erros GraphQL legíveis, em vez do genérico
+ * "INTERNAL_ERROR".
+ * <p>
+ * Fica na camada de interface porque é aqui que se decide como uma falha aparece <b>no protocolo</b>: o
+ * domínio lança {@code InvalidPostException} sem saber o que é um status HTTP ou um {@code ErrorType}.
+ * <p>
+ * As duas portas de entrada de erro de input desembocam no mesmo {@code BAD_REQUEST}:
+ * {@link ConstraintViolationException} (Bean Validation, na borda) e {@link InvalidPostException}
+ * (invariante do domínio, mais fundo). O cliente não precisa saber qual das duas o pegou.
+ * <p>
+ * Uma exceção lançada dentro de um command/query handler atravessa o {@code CompletableFuture} do
+ * gateway e pode chegar aqui embrulhada ({@code CompletionException}, {@code CommandExecutionException}
+ * etc.), então a classificação percorre a cadeia de causas.
+ */
+@ControllerAdvice
+public class AppGraphQlExceptionHandler {
+
+    @GraphQlExceptionHandler
+    public GraphQLError handle(Throwable ex, DataFetchingEnvironment env) {
+        for (Throwable t = ex; t != null; t = t.getCause()) {
+            if (t instanceof ConstraintViolationException violations) {
+                return error(ErrorType.BAD_REQUEST, describe(violations), env);
+            }
+            if (t instanceof InvalidPostException || t instanceof PostAlreadyExistsException) {
+                return error(ErrorType.BAD_REQUEST, t.getMessage(), env);
+            }
+            if (t instanceof EntityNotFoundException) {
+                return error(ErrorType.NOT_FOUND, "Post não encontrado", env);
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return error(ErrorType.INTERNAL_ERROR, "falha inesperada: " + rootCause(ex).getMessage(), env);
+    }
+
+    /**
+     * Junta as violações numa mensagem estável: ordenadas por caminho, para a mesma requisição inválida
+     * produzir sempre o mesmo texto (a {@code Set} do Bean Validation não tem ordem definida).
+     */
+    private static String describe(ConstraintViolationException ex) {
+        return ex.getConstraintViolations().stream()
+                .sorted(Comparator.comparing(v -> v.getPropertyPath().toString()))
+                .map(ConstraintViolation::getMessage)
+                .distinct()
+                .collect(Collectors.joining("; "));
+    }
+
+    private static Throwable rootCause(Throwable ex) {
+        Throwable t = ex;
+        while (t.getCause() != null && t.getCause() != t) {
+            t = t.getCause();
+        }
+        return t;
+    }
+
+    private static GraphQLError error(ErrorType type, String message, DataFetchingEnvironment env) {
+        return GraphqlErrorBuilder.newError(env)
+                .errorType(type)
+                .message(message)
+                .build();
+    }
+}

@@ -1,0 +1,64 @@
+"""
+Read model de um Post. Mesmo shape em queries, mutations e subscriptions.
+"""
+type Post {
+    id: ID!
+    title: String!
+    content: String!
+    author: String!
+    "ISO-8601 (UTC)"
+    createdAt: String!
+    "ISO-8601 (UTC)"
+    updatedAt: String!
+    "Quantidade de eventos aplicados (1 = só criado)"
+    version: Int!
+}
+
+type Query {
+    "Um Post pelo id; null se não existir"
+    post(id: ID!): Post
+    """
+    Posts em ordem de criação, como Relay cursor connection.
+
+    Os tipos PostConnection / PostEdge / PageInfo NÃO são declarados aqui de propósito: o
+    ConnectionTypeDefinitionConfigurer do Spring GraphQL os gera a partir do sufixo "Connection"
+    quando a app sobe. O controller devolve um Window<PostView> do Spring Data e o
+    WindowConnectionAdapter monta edges, cursores e pageInfo.
+
+    Paginação só para frente (first/after): é o que o read model, ordenado por criação, comporta.
+    """
+    posts(
+        "Quantos posts trazer; ausente = 20"
+        first: Int,
+        "Cursor do último post já visto; ausente = do começo"
+        after: String
+    ): PostConnection!
+}
+
+input CreatePostInput {
+    title: String!
+    content: String!
+    author: String!
+}
+
+input UpdatePostInput {
+    id: ID!
+    "null = manter o título atual"
+    title: String
+    "null = manter o conteúdo atual"
+    content: String
+}
+
+type Mutation {
+    "Despacha CreatePostCommand e devolve o Post já projetado"
+    createPost(input: CreatePostInput!): Post!
+    "Despacha UpdatePostCommand e devolve o Post já projetado"
+    updatePost(input: UpdatePostInput!): Post!
+}
+
+type Subscription {
+    "Emite a cada PostCreated (tópico global)"
+    onPostCreated: Post!
+    "Emite a cada PostUpdated; postId filtra por tópico (null = todos)"
+    onPostUpdated(postId: ID): Post!
+}

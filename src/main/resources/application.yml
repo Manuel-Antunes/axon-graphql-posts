@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: axon-graphql-posts
+
+  # ---- Read model: SQLite via Spring Data JPA ------------------------------------------
+  datasource:
+    # WAL + busy_timeout: leituras não bloqueiam escritas e um writer espera o outro em vez de SQLITE_BUSY
+    url: jdbc:sqlite:./data/posts.db?journal_mode=WAL&busy_timeout=5000
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 4
+  jpa:
+    database-platform: org.hibernate.community.dialect.SQLiteDialect
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: false
+
+  # ---- Spring for GraphQL ----------------------------------------------------------------
+  graphql:
+    graphiql:
+      enabled: true          # http://localhost:8080/graphiql
+    websocket:
+      path: /graphql         # só pro GraphiQL conseguir rodar subscriptions no browser
+    http:
+      sse:
+        keep-alive: 15s      # ping periódico pra manter o stream SSE vivo atrás de proxies
+
+  # ---- Axon 5: sem os autoconfigs JPA/JDBC (event store e token store em memória, nenhuma tabela do Axon no SQLite)
+  autoconfigure:
+    exclude:
+      - org.axonframework.extension.springboot.autoconfig.JpaAutoConfiguration
+      - org.axonframework.extension.springboot.autoconfig.JpaEventStoreAutoConfiguration
+      - org.axonframework.extension.springboot.autoconfig.JdbcAutoConfiguration
+
+axon:
+  axonserver:
+    enabled: false           # connector nem está no classpath; a flag é só documentação
+  converter:
+    general: jackson         # JacksonConverter (Jackson 3, que vem com o axon-conversion)
+  # Alternativa por propriedade ao EventProcessorDefinition bean do AxonConfig:
+  # eventhandling:
+  #   processors:
+  #     post-projection:
+  #       mode: subscribing
+
+logging:
+  level:
+    dev.manuelantunes.axonposts: DEBUG
+    org.axonframework: INFO
