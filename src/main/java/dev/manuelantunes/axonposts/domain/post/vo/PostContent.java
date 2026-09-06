@@ -1,11 +1,13 @@
 package dev.manuelantunes.axonposts.domain.post.vo;
 
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
+import jakarta.persistence.Embeddable;
 
 /**
- * Corpo do Post. Value object com a mesma ideia do {@link PostTitle}: valida e normaliza na construção,
- * sem limite de tamanho (a coluna do read model é TEXT).
+ * Corpo do Post. Mesma ideia do {@link PostTitle}: valida e normaliza na construção, sem limite de
+ * tamanho (a coluna é TEXT).
  */
+@Embeddable
 public record PostContent(String value) {
 
     public PostContent {
@@ -15,7 +17,6 @@ public record PostContent(String value) {
         value = value.strip();
     }
 
-    /** Construtor nomeado: valida e normaliza o texto cru que veio de fora. */
     public static PostContent of(String value) {
         return new PostContent(value);
     }

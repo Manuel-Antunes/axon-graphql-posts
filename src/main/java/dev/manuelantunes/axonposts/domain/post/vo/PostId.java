@@ -1,20 +1,24 @@
 package dev.manuelantunes.axonposts.domain.post.vo;
 
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
+import jakarta.persistence.Embeddable;
 
+import java.io.Serializable;
 import java.util.UUID;
 
 /**
- * Identidade do Post. Value object imutável e validado.
+ * Identidade do Post. Value object imutável, validado e <b>mapeado</b>.
  * <p>
- * É também o {@code idType} da entidade no Axon: aparece como {@code @TargetEntityId} nos commands e
- * como {@code @EventTag} nos eventos. O {@link #toString()} devolve o valor cru <b>de propósito</b> —
+ * {@code @Embeddable} num {@code record}: o Hibernate instancia pelo construtor canônico, então a
+ * invariante roda também quando a linha volta do banco. A chave primária pede
+ * {@link Serializable} — daí a interface.
+ * <p>
+ * Três papéis num tipo só: {@code @EmbeddedId} da entidade JPA, {@code idType} da entidade do Axon e
+ * {@code @TargetEntityId} dos commands. O {@link #toString()} devolve o valor cru <b>de propósito</b> —
  * é ele que vira o valor da tag ({@code postId=<uuid>}) no event store.
- * <p>
- * Construtores nomeados: {@link #of(String)} para um id que já existe (veio do cliente) e
- * {@link #newId()} para um id novo. A leitura no call site diz qual dos dois casos é.
  */
-public record PostId(String value) {
+@Embeddable
+public record PostId(String value) implements Serializable {
 
     public PostId {
         if (value == null || value.isBlank()) {

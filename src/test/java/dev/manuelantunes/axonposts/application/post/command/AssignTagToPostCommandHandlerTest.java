@@ -3,11 +3,9 @@ package dev.manuelantunes.axonposts.application.post.command;
 import dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent;
 import dev.manuelantunes.axonposts.domain.post.event.PostUpdatedEvent;
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
-import dev.manuelantunes.axonposts.domain.post.vo.Author;
-import dev.manuelantunes.axonposts.domain.post.vo.PostContent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
-import dev.manuelantunes.axonposts.domain.post.vo.PostTitle;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
+import dev.manuelantunes.axonposts.domain.post.vo.TagRef;
 import dev.manuelantunes.axonposts.support.InMemoryPostRepository;
 import dev.manuelantunes.axonposts.support.PostCommandFixtures;
 import org.axonframework.modelling.repository.EntityNotFoundException;
@@ -23,8 +21,8 @@ import static dev.manuelantunes.axonposts.support.PostCommandFixtures.NOW;
 import static dev.manuelantunes.axonposts.support.PostCommandFixtures.hasCause;
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Given-when-then do {@link UpdatePostCommandHandler}, e só dele. */
-class UpdatePostCommandHandlerTest {
+/** Given-when-then do {@link AssignTagToPostCommandHandler}, e só dele. */
+class AssignTagToPostCommandHandlerTest {
 
     private InMemoryPostRepository posts;
     private AxonTestFixture fixture;
@@ -33,9 +31,7 @@ class UpdatePostCommandHandlerTest {
     void setUp() {
         posts = new InMemoryPostRepository();
         fixture = PostCommandFixtures.forHandler(
-                "update-post",
-                config -> new UpdatePostCommandHandler(FIXED_CLOCK, posts)
-        );
+                "assign-tag", config -> new AssignTagToPostCommandHandler(FIXED_CLOCK, posts));
     }
 
     @AfterEach
@@ -44,67 +40,37 @@ class UpdatePostCommandHandlerTest {
     }
 
     @Test
-    void keepsUntouchedFieldsAndAppendsTheResultingState() {
+    void raisesPostUpdatedWithTheTagAndSavesThePost() {
         PostId id = PostId.newId();
 
         fixture.given()
                 .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
                 .when()
-                .command(new UpdatePostCommand(id, "novo título", null))
+                .command(new AssignTagToPostCommand(id, "tag-1", "Untagged"))
                 .then()
                 .success()
-                .events(new PostUpdatedEvent(id, "novo título", "conteúdo", List.of(), 2, NOW));
-    }
+                .events(new PostUpdatedEvent(id, "título", "conteúdo",
+                        List.of(new PostUpdatedEvent.Tag("tag-1", "Untagged")), 2, NOW));
 
-    @Test
-    void savesThePostWithTheVersionBumped() {
-        PostId id = PostId.newId();
-
-        fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
-                .event(new PostUpdatedEvent(id, "título v2", "conteúdo", List.of(), 2, NOW))
-                .when()
-                .command(new UpdatePostCommand(id, null, "conteúdo v3"))
-                .then()
-                .success();
-
-        // v1 criação + v2 update anterior + este = 3, com autor e createdAt vindos do stream
         assertThat(posts.findById(id)).hasValueSatisfying(post -> {
-            assertThat(post.title()).isEqualTo(PostTitle.of("título v2"));
-            assertThat(post.content()).isEqualTo(PostContent.of("conteúdo v3"));
-            assertThat(post.author()).isEqualTo(Author.of("manuel"));
-            assertThat(post.createdAt()).isEqualTo(NOW);
-            assertThat(post.version()).isEqualTo(new PostVersion(3));
+            assertThat(post.tags()).containsExactly(TagRef.of("tag-1", "Untagged"));
+            assertThat(post.version()).isEqualTo(new PostVersion(2));
         });
     }
 
     @Test
-    void reflectsPreviousUpdates() {
+    void rejectsATagThePostAlreadyHas() {
         PostId id = PostId.newId();
 
         fixture.given()
                 .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
-                .event(new PostUpdatedEvent(id, "título v2", "conteúdo", List.of(), 2, NOW))
+                .event(new PostUpdatedEvent(id, "título", "conteúdo",
+                        List.of(new PostUpdatedEvent.Tag("tag-1", "Untagged")), 2, NOW))
                 .when()
-                .command(new UpdatePostCommand(id, null, "conteúdo v3"))
-                .then()
-                .success()
-                .events(new PostUpdatedEvent(id, "título v2", "conteúdo v3", List.of(), 3, NOW));
-    }
-
-    @Test
-    void rejectsAnUpdateWithoutChangesAndSavesNothing() {
-        PostId id = PostId.newId();
-
-        fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
-                .when()
-                .command(new UpdatePostCommand(id, "título", null))
+                .command(new AssignTagToPostCommand(id, "tag-1", "Untagged"))
                 .then()
                 .noEvents()
                 .exceptionSatisfies(thrown -> assertThat(hasCause(thrown, InvalidPostException.class)).isTrue());
-
-        assertThat(posts.all()).isEmpty();
     }
 
     @Test
@@ -112,11 +78,9 @@ class UpdatePostCommandHandlerTest {
         fixture.given()
                 .noPriorActivity()
                 .when()
-                .command(new UpdatePostCommand(PostId.newId(), "x", null))
+                .command(new AssignTagToPostCommand(PostId.newId(), "tag-1", "Untagged"))
                 .then()
                 .noEvents()
                 .exceptionSatisfies(thrown -> assertThat(hasCause(thrown, EntityNotFoundException.class)).isTrue());
-
-        assertThat(posts.all()).isEmpty();
     }
 }

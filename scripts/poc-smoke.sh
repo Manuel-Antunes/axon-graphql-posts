@@ -16,6 +16,8 @@ rm -rf "$LOG"; mkdir -p "$LOG"
 
 step() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG/STATUS"; }
 gql()  { curl -s -X POST "$URL" -H 'Content-Type: application/json' -d "$1"; }
+# o id do post, e não o da tag: a resposta tem vários "id" e um sed guloso pega o último
+post_id() { python3 -c 'import json,sys;d=json.load(open(sys.argv[1]))["data"];print(next(iter(d.values()))["id"])' "$1"; }
 sse()  { curl -s -N -X POST "$URL" -H 'Content-Type: application/json' -H 'Accept: text/event-stream' -d "$1"; }
 finish() {
   step "encerrando (app=$APP_PID subs=$SUB_PIDS)"
@@ -70,10 +72,10 @@ sleep 2
 step "subscriptions abertas: onPostCreated, onPostUpdated(sem filtro)"
 
 # ---- 4. commands: createPost A e B ---------------------------------------------------------
-gql '{"query":"mutation { createPost(input:{title:\"Axon + GraphQL over SSE\", content:\"primeiro post\", author:\"manuel\"}) { id title author createdAt version } }"}' > "$LOG/20-createPost-A.txt"
-A=$(sed -E 's/.*"id":"([^"]+)".*/\1/' "$LOG/20-createPost-A.txt")
-gql '{"query":"mutation { createPost(input:{title:\"Segundo post\", content:\"outro conteúdo\", author:\"manuel\"}) { id title author version } }"}' > "$LOG/21-createPost-B.txt"
-B=$(sed -E 's/.*"id":"([^"]+)".*/\1/' "$LOG/21-createPost-B.txt")
+gql '{"query":"mutation { createPost(input:{title:\"Axon + GraphQL over SSE\", content:\"primeiro post\", author:\"manuel\"}) { id title author createdAt version tags { id name } } }"}' > "$LOG/20-createPost-A.txt"
+A=$(post_id "$LOG/20-createPost-A.txt")
+gql '{"query":"mutation { createPost(input:{title:\"Segundo post\", content:\"outro conteúdo\", author:\"manuel\"}) { id title author version tags { id name } } }"}' > "$LOG/21-createPost-B.txt"
+B=$(post_id "$LOG/21-createPost-B.txt")
 step "criados A=$A B=$B"
 
 # subscription filtrada por tópico (postId = A)
@@ -99,11 +101,11 @@ gql "{\"query\":\"mutation { updatePost(input:{id: \\\"$A\\\", title: \\\"   \\\
 step "erros de validação disparados (title longo, title em branco no update)"
 
 # ---- 7. queries ----------------------------------------------------------------------------
-gql "{\"query\":\"{ post(id: \\\"$A\\\") { id title content author createdAt updatedAt version } }\"}" > "$LOG/50-query-post-A.txt"
-gql '{"query":"{ posts(first: 10) { edges { cursor node { id title version } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }"}' > "$LOG/51-query-posts.txt"
+gql "{\"query\":\"{ post(id: \\\"$A\\\") { id title content author createdAt updatedAt version tags { id name } } }\"}" > "$LOG/50-query-post-A.txt"
+gql '{"query":"{ posts(first: 10) { edges { cursor node { id title version tags { name } } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }"}' > "$LOG/51-query-posts.txt"
 # paginação: 1ª página com first:1, depois after = endCursor da primeira
 gql '{"query":"{ posts(first: 1) { edges { cursor node { id title } } pageInfo { hasNextPage endCursor } } }"}' > "$LOG/53-connection-page1.txt"
-CURSOR=$(sed -E 's/.*"endCursor":"([^"]+)".*/\1/' "$LOG/53-connection-page1.txt")
+CURSOR=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["data"]["posts"]["pageInfo"]["endCursor"])' "$LOG/53-connection-page1.txt")
 gql "{\"query\":\"{ posts(first: 1, after: \\\"$CURSOR\\\") { edges { cursor node { id title } } pageInfo { hasNextPage } } }\"}" > "$LOG/54-connection-page2.txt"
 step "cursor connection: página 1 + página 2 (after=$CURSOR)"
 gql '{"query":"{ post(id: \"nao-existe\") { id } }"}' > "$LOG/52-query-post-missing.txt"
@@ -113,6 +115,10 @@ sleep 2
 # ---- 8. resumo -----------------------------------------------------------------------------
 {
   echo "onPostCreated            -> $(grep -c -E '^event: ?next' "$LOG/10-sse-onPostCreated.txt") eventos (esperado 2)"
-  echo "onPostUpdated (todos)    -> $(grep -c -E '^event: ?next' "$LOG/11-sse-onPostUpdated-all.txt") eventos (esperado 3)"
+  # 2 atribuições da tag padrão (uma por post criado) + 3 updates explícitos
+  echo "onPostUpdated (todos)    -> $(grep -c -E '^event: ?next' "$LOG/11-sse-onPostUpdated-all.txt") eventos (esperado 5)"
+  # aberta depois das criações, então só vê os 2 updates explícitos de A
   echo "onPostUpdated (só A)     -> $(grep -c -E '^event: ?next' "$LOG/12-sse-onPostUpdated-only-A.txt") eventos (esperado 2)"
+  echo "tag Untagged no createPost A -> $(grep -c 'Untagged' "$LOG/20-createPost-A.txt") (esperado 1)"
+  echo "tag Untagged no createPost B -> $(grep -c 'Untagged' "$LOG/21-createPost-B.txt") (esperado 1)"
 } | tee "$LOG/60-summary.txt" | while read -r l; do step "$l"; done

@@ -1,11 +1,12 @@
 package dev.manuelantunes.axonposts.interfaces.graphql;
 
-import dev.manuelantunes.axonposts.application.post.PostView;
+import dev.manuelantunes.axonposts.dto.controller.PostView;
 import dev.manuelantunes.axonposts.application.post.command.CreatePostCommand;
 import dev.manuelantunes.axonposts.application.post.command.UpdatePostCommand;
 import dev.manuelantunes.axonposts.application.post.query.FindPostQuery;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.dto.controller.CreatePostInput;
+import dev.manuelantunes.axonposts.dto.controller.PostView;
 import dev.manuelantunes.axonposts.dto.controller.UpdatePostInput;
 import dev.manuelantunes.axonposts.mapper.PostInputMapper;
 import jakarta.validation.Valid;

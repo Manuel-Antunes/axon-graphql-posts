@@ -1,7 +1,6 @@
 package dev.manuelantunes.axonposts.application.post.command;
 
-import dev.manuelantunes.axonposts.mapper.PostViewMapper;
-import dev.manuelantunes.axonposts.application.post.port.PostReadRepository;
+import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.Post;
 import org.axonframework.messaging.commandhandling.annotation.CommandHandler;
 import org.axonframework.messaging.eventhandling.gateway.EventAppender;
@@ -28,13 +27,11 @@ import static dev.manuelantunes.axonposts.application.shared.AppendingDomainEven
 public class UpdatePostCommandHandler {
 
     private final Clock clock;
-    private final PostReadRepository posts;
-    private final PostViewMapper viewMapper;
+    private final PostRepository posts;
 
-    public UpdatePostCommandHandler(Clock clock, PostReadRepository posts, PostViewMapper viewMapper) {
+    public UpdatePostCommandHandler(Clock clock, PostRepository posts) {
         this.clock = clock;
         this.posts = posts;
-        this.viewMapper = viewMapper;
     }
 
     @CommandHandler
@@ -48,6 +45,6 @@ public class UpdatePostCommandHandler {
                 appendingTo(eventAppender)
         );
 
-        posts.save(viewMapper.toView(updated));
+        posts.save(updated);
     }
 }

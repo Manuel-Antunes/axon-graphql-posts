@@ -1,7 +1,6 @@
 package dev.manuelantunes.axonposts.application.post.command;
 
-import dev.manuelantunes.axonposts.mapper.PostViewMapper;
-import dev.manuelantunes.axonposts.application.post.port.PostReadRepository;
+import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.exception.PostAlreadyExistsException;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
@@ -38,13 +37,11 @@ import static dev.manuelantunes.axonposts.application.shared.AppendingDomainEven
 public class CreatePostCommandHandler {
 
     private final Clock clock;
-    private final PostReadRepository posts;
-    private final PostViewMapper viewMapper;
+    private final PostRepository posts;
 
-    public CreatePostCommandHandler(Clock clock, PostReadRepository posts, PostViewMapper viewMapper) {
+    public CreatePostCommandHandler(Clock clock, PostRepository posts) {
         this.clock = clock;
         this.posts = posts;
-        this.viewMapper = viewMapper;
     }
 
     /**
@@ -67,7 +64,7 @@ public class CreatePostCommandHandler {
                 appendingTo(eventAppender)
         );
 
-        posts.save(viewMapper.toView(post));
+        posts.save(post);
         return post.id();
     }
 }

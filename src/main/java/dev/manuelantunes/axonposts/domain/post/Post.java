@@ -8,80 +8,112 @@ import dev.manuelantunes.axonposts.domain.post.vo.PostContent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.post.vo.PostTitle;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
+import dev.manuelantunes.axonposts.domain.post.vo.TagRef;
 import dev.manuelantunes.axonposts.domain.shared.DomainEventPublisher;
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.CollectionTable;
+import jakarta.persistence.Column;
+import jakarta.persistence.ElementCollection;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.EmbeddedId;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.Table;
 import org.axonframework.eventsourcing.annotation.EventSourcingHandler;
 import org.axonframework.eventsourcing.annotation.reflection.EntityCreator;
 import org.axonframework.extension.spring.stereotype.EventSourced;
 
 import java.time.Instant;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
- * Entidade de domínio do Post, no modelo de <b>entidades anotadas</b> do Axon Framework 5.
- * <p>
- * Não existe mais "aggregate root" com {@code @AggregateIdentifier} e {@code AggregateLifecycle.apply}:
+ * O Post: <b>uma</b> classe que é ao mesmo tempo a entidade de domínio, a entidade event-sourced do Axon
+ * e o mapeamento JPA. Não existe um "PostEntity" espelho para manter em sincronia.
+ *
+ * <h2>As três anotações e por que elas convivem</h2>
  * <ul>
- *   <li>{@code @EventSourced(tagKey = "postId", idType = PostId.class)} registra a entidade no Spring Boot
- *       (estereótipo que embrulha {@code @EventSourcedEntity}). O stream dela são os eventos com a tag
- *       {@code postId=<id>} — o dynamic consistency boundary do Axon 5;</li>
- *   <li>a entidade é <b>imutável</b>: todos os campos {@code final}, e evoluir devolve outra instância;</li>
- *   <li>o estado é feito de value objects ({@code domain.post.vo}), donos das próprias invariantes.</li>
+ *   <li>{@code @Entity} + {@code @Table}: o estado atual é gravado direto, com os value objects como
+ *       {@code @Embedded} e as tags como {@code @ElementCollection}. JPA é agnóstico de banco, então o
+ *       mapeamento vale para SQLite, Postgres ou qualquer outro;</li>
+ *   <li>{@code @EventSourced(tagKey = "postId", idType = PostId.class)}: o histórico são os eventos com
+ *       a tag {@code postId=<id>}, e é deles que o Axon reidrata a entidade ao tratar um command;</li>
+ *   <li>o comportamento: {@link #create}, {@link #update} e {@link #assignTag} validam invariantes e
+ *       disparam eventos. Nada aqui é getter/setter puro — não é um registro anêmico com regra
+ *       espalhada por serviços.</li>
  * </ul>
  *
- * <h2>Decidir devolve o Post pronto para salvar</h2>
- * {@link #create} e {@link #update} fazem duas coisas: <b>disparam</b> o evento pela porta
- * {@link DomainEventPublisher} e <b>devolvem o estado resultante</b>. Quem chama recebe o Post já
- * construído e o grava no read model — não precisa esperar o evento voltar para saber como o Post ficou.
- * <p>
- * O truque que mantém as duas metades coerentes: o estado devolvido é produzido pelos <i>mesmos</i>
- * métodos que o Axon usa para reconstituir a entidade do stream ({@link #createdFrom} e {@link #on}).
- * Existe um único lugar que define como um evento vira estado, então "o que eu acabei de salvar" e "o
- * que sai de um replay" não podem divergir.
+ * <h2>Mutável, e por quê</h2>
+ * O JPA exige construtor sem argumentos e campos não-finais para poder gerenciar a instância; os
+ * {@code @EventSourcingHandler} então <b>mutam</b> o estado em vez de devolver uma cópia (o Axon 5
+ * suporta os dois estilos). A entidade continua sem setters públicos: só os eventos mudam o estado, e
+ * só as decisões produzem eventos.
  *
- * <h2>Command handlers ficam fora</h2>
- * A entidade não tem {@code @CommandHandler}. Cada command tem a sua classe em
- * {@code application.post.command} — é lá que se decide <i>quando</i> chamar {@link #create} ou
- * {@link #update} e o que fazer com o Post devolvido; aqui só mora o <i>o quê</i> e o <i>se pode</i>.
- * E <i>ouvir</i> o evento disparado é da aplicação também ({@code application.post.event}).
+ * <h2>Duas metades, o mesmo caminho</h2>
+ * <b>Decidir</b> valida, dispara o evento pela porta {@link DomainEventPublisher} e devolve o Post
+ * pronto para salvar. <b>Evoluir</b> ({@link #on}) aplica o evento ao estado. Decidir termina chamando
+ * evoluir, então "o que o command salvou" e "o que sai de um replay" não podem divergir.
+ * <p>
+ * Command handlers ficam fora, um por command, em {@code application.post.command}. Ouvir os eventos
+ * disparados é da aplicação também ({@code application.post.event}).
  */
+@Entity
+@Table(name = "posts")
 @EventSourced(tagKey = Post.TAG_KEY, idType = PostId.class)
-public final class Post {
+public class Post {
 
     /** Chave da tag no event store; tem de bater com o nome do campo {@code @EventTag} dos eventos. */
     public static final String TAG_KEY = "postId";
 
-    private final PostId id;
-    private final PostTitle title;
-    private final PostContent content;
-    private final Author author;
-    private final Instant createdAt;
-    private final Instant updatedAt;
-    private final PostVersion version;
+    @EmbeddedId
+    @AttributeOverride(name = "value", column = @Column(name = "id", length = 36, nullable = false))
+    private PostId id;
 
-    private Post(PostId id,
-                 PostTitle title,
-                 PostContent content,
-                 Author author,
-                 Instant createdAt,
-                 Instant updatedAt,
-                 PostVersion version) {
-        this.id = id;
-        this.title = title;
-        this.content = content;
-        this.author = author;
-        this.createdAt = createdAt;
-        this.updatedAt = updatedAt;
-        this.version = version;
+    @Embedded
+    @AttributeOverride(name = "value", column = @Column(name = "title", length = 200, nullable = false))
+    private PostTitle title;
+
+    // TEXT em vez de @Lob: o driver sqlite-jdbc não implementa a API de CLOB do JDBC
+    @Embedded
+    @AttributeOverride(name = "value", column = @Column(name = "content", columnDefinition = "TEXT", nullable = false))
+    private PostContent content;
+
+    @Embedded
+    @AttributeOverride(name = "value", column = @Column(name = "author", nullable = false))
+    private Author author;
+
+    @Column(name = "created_at", nullable = false)
+    private Instant createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt;
+
+    @Embedded
+    @AttributeOverride(name = "value", column = @Column(name = "version", nullable = false))
+    private PostVersion version;
+
+    /**
+     * As tags do post, gravadas direto em {@code post_tags} como coleção de embeddables — o estado do
+     * relacionamento mora no próprio agregado, sem entidade de ligação nem associação a {@code Tag}.
+     * {@code EAGER} porque a lista é pequena, sempre exibida junto do post e a entidade circula destacada
+     * fora da transação.
+     */
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "post_tags", joinColumns = @JoinColumn(name = "post_id"))
+    private Set<TagRef> tags = new LinkedHashSet<>();
+
+    /** Exigido pelo JPA. Nenhum código de aplicação constrói um Post por aqui. */
+    protected Post() {
     }
 
     // ---- decidir: dispara o evento e devolve o estado resultante --------------------------------
 
     /**
      * Construtor nomeado do Post: valida os dados, <b>dispara</b> {@link PostCreatedEvent} e devolve o
-     * Post já criado, pronto para ser salvo por quem chamou.
-     * <p>
-     * Os textos entram crus e viram value objects na hora — se algum for inválido, nada é disparado e
-     * nada é devolvido.
+     * Post já criado, pronto para ser salvo por quem chamou. Nasce sem tags.
      *
      * @throws InvalidPostException se title, content ou author violarem suas invariantes
      */
@@ -104,15 +136,13 @@ public final class Post {
         );
 
         events.raise(event);
-        return createdFrom(event);
+        return new Post(event);
     }
 
     /**
-     * Decide uma atualização parcial, <b>dispara</b> {@link PostUpdatedEvent} com o estado resultante e
-     * devolve o Post atualizado. Campos {@code null} significam "não mexer".
-     * <p>
-     * Um update que não muda nada é rejeitado: evento inútil no stream é ruído que as subscriptions
-     * propagariam adiante.
+     * Decide uma atualização parcial de título e/ou conteúdo, dispara {@link PostUpdatedEvent} com o
+     * estado resultante e devolve o Post atualizado. Campos {@code null} significam "não mexer"; as tags
+     * não mudam aqui.
      *
      * @throws InvalidPostException se um valor informado for inválido, ou se nada mudar
      */
@@ -127,12 +157,57 @@ public final class Post {
             throw new InvalidPostException("update sem mudanças: informe um title e/ou content diferente do atual");
         }
 
+        return raiseUpdate(resultingTitle, resultingContent, this.tags, now, events);
+    }
+
+    /**
+     * Assinala uma tag ao post e dispara {@link PostUpdatedEvent} com a lista de tags resultante —
+     * o mesmo evento de update, porque a tag faz parte do estado do post, não de um ciclo de vida à parte.
+     * <p>
+     * Assinalar uma tag que o post já tem é rejeitado pelo mesmo motivo que um update sem mudanças: não
+     * há fato novo a registrar.
+     *
+     * @throws InvalidPostException se o post já tiver essa tag
+     */
+    public Post assignTag(TagRef tag, Instant now, DomainEventPublisher events) {
+        Objects.requireNonNull(tag, "tag");
+        Objects.requireNonNull(now, "now");
+        Objects.requireNonNull(events, "events");
+
+        if (hasTag(tag.tagId())) {
+            throw new InvalidPostException("post já tem a tag " + tag.name());
+        }
+
+        Set<TagRef> resulting = new LinkedHashSet<>(this.tags);
+        resulting.add(tag);
+        return raiseUpdate(this.title, this.content, resulting, now, events);
+    }
+
+    private Post raiseUpdate(PostTitle resultingTitle,
+                             PostContent resultingContent,
+                             Set<TagRef> resultingTags,
+                             Instant now,
+                             DomainEventPublisher events) {
         PostUpdatedEvent event = new PostUpdatedEvent(
-                id, resultingTitle.value(), resultingContent.value(), now
+                id,
+                resultingTitle.value(),
+                resultingContent.value(),
+                resultingTags.stream().map(t -> new PostUpdatedEvent.Tag(t.tagId(), t.name())).toList(),
+                this.version.next().value(),
+                now
         );
 
         events.raise(event);
-        return on(event);
+        on(event);
+        return this;
+    }
+
+    public boolean hasTag(String tagId) {
+        return tags.stream().anyMatch(tag -> tag.tagId().equals(tagId));
+    }
+
+    public boolean hasNoTags() {
+        return tags.isEmpty();
     }
 
     // ---- evoluir: reconstituição a partir do stream ---------------------------------------------
@@ -143,37 +218,40 @@ public final class Post {
      * <p>
      * Sem evento nenhum, o Axon não constrói nada — {@code @InjectEntity Post} lança
      * {@code EntityNotFoundException} e {@code @InjectEntity Optional<Post>} vem vazio. É exatamente
-     * essa diferença que os dois command handlers usam.
+     * essa diferença que os command handlers usam.
      */
     @EntityCreator
-    public static Post createdFrom(PostCreatedEvent event) {
-        return new Post(
-                event.postId(),
-                PostTitle.of(event.title()),
-                PostContent.of(event.content()),
-                Author.of(event.author()),
-                event.occurredAt(),
-                event.occurredAt(),
-                PostVersion.initial()
-        );
+    public Post(PostCreatedEvent event) {
+        this.id = event.postId();
+        this.title = PostTitle.of(event.title());
+        this.content = PostContent.of(event.content());
+        this.author = Author.of(event.author());
+        this.createdAt = event.occurredAt();
+        this.updatedAt = event.occurredAt();
+        this.version = PostVersion.initial();
+        this.tags = new LinkedHashSet<>();
     }
 
     /**
-     * Evolução imutável: devolve o próximo estado em vez de mutar este. O Axon 5 aceita o retorno do
-     * {@code @EventSourcingHandler} como o estado evoluído; {@link #update} usa o mesmo método para
-     * devolver o Post atualizado a quem despachou o command.
+     * Aplica um update ao estado. Muta a instância porque ela é gerenciada pelo JPA — mas continua sendo
+     * o único caminho pelo qual o estado muda, tanto no replay quanto logo depois de uma decisão.
+     * <p>
+     * <b>Idempotente</b>: cada campo recebe um valor absoluto vindo do evento, versão inclusive. Tem de
+     * ser assim porque numa entidade mutável o mesmo evento chega por dois caminhos — o
+     * {@code raiseUpdate} aplica ao decidir, e o Axon aplica ao apendar. Um {@code version.next()} aqui
+     * contaria duas vezes.
      */
     @EventSourcingHandler
-    public Post on(PostUpdatedEvent event) {
-        return new Post(
-                id,
-                PostTitle.of(event.title()),
-                PostContent.of(event.content()),
-                author,
-                createdAt,
-                event.occurredAt(),
-                version.next()
-        );
+    public void on(PostUpdatedEvent event) {
+        this.title = PostTitle.of(event.title());
+        this.content = PostContent.of(event.content());
+        this.updatedAt = event.occurredAt();
+        this.version = new PostVersion(event.version());
+
+        Set<TagRef> next = new LinkedHashSet<>();
+        event.tags().forEach(tag -> next.add(TagRef.of(tag.tagId(), tag.name())));
+        this.tags.clear();
+        this.tags.addAll(next);
     }
 
     // ---- estado ---------------------------------------------------------------------------------
@@ -204,5 +282,9 @@ public final class Post {
 
     public PostVersion version() {
         return version;
+    }
+
+    public List<TagRef> tags() {
+        return List.copyOf(tags);
     }
 }

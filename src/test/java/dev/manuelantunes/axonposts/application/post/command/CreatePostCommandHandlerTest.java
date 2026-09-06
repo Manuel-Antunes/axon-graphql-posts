@@ -1,12 +1,13 @@
 package dev.manuelantunes.axonposts.application.post.command;
 
-import dev.manuelantunes.axonposts.application.post.PostView;
-import dev.manuelantunes.axonposts.mapper.PostViewMapperImpl;
 import dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent;
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
 import dev.manuelantunes.axonposts.domain.post.exception.PostAlreadyExistsException;
+import dev.manuelantunes.axonposts.domain.post.vo.Author;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
-import dev.manuelantunes.axonposts.support.InMemoryPostReadRepository;
+import dev.manuelantunes.axonposts.domain.post.vo.PostTitle;
+import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
+import dev.manuelantunes.axonposts.support.InMemoryPostRepository;
 import dev.manuelantunes.axonposts.support.PostCommandFixtures;
 import org.axonframework.test.fixture.AxonTestFixture;
 import org.junit.jupiter.api.AfterEach;
@@ -21,15 +22,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** Given-when-then do {@link CreatePostCommandHandler}, e só dele. */
 class CreatePostCommandHandlerTest {
 
-    private InMemoryPostReadRepository posts;
+    private InMemoryPostRepository posts;
     private AxonTestFixture fixture;
 
     @BeforeEach
     void setUp() {
-        posts = new InMemoryPostReadRepository();
+        posts = new InMemoryPostRepository();
         fixture = PostCommandFixtures.forHandler(
                 "create-post",
-                config -> new CreatePostCommandHandler(FIXED_CLOCK, posts, new PostViewMapperImpl())
+                config -> new CreatePostCommandHandler(FIXED_CLOCK, posts)
         );
     }
 
@@ -53,7 +54,7 @@ class CreatePostCommandHandlerTest {
     }
 
     @Test
-    void savesTheReadModelWithinTheCommand() {
+    void savesThePostWithinTheCommand() {
         PostId id = PostId.newId();
 
         fixture.given()
@@ -63,8 +64,12 @@ class CreatePostCommandHandlerTest {
                 .then()
                 .success();
 
-        assertThat(posts.findById(id.value()))
-                .contains(new PostView(id.value(), "Axon 5 + GraphQL", "conteúdo", "manuel", NOW, NOW, 1));
+        assertThat(posts.findById(id)).hasValueSatisfying(post -> {
+            assertThat(post.title()).isEqualTo(PostTitle.of("Axon 5 + GraphQL"));
+            assertThat(post.author()).isEqualTo(Author.of("manuel"));
+            assertThat(post.version()).isEqualTo(PostVersion.initial());
+            assertThat(post.tags()).isEmpty();
+        });
     }
 
     @Test

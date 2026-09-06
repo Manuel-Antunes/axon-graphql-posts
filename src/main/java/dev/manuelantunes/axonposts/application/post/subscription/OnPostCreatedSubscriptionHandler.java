@@ -1,6 +1,6 @@
 package dev.manuelantunes.axonposts.application.post.subscription;
 
-import dev.manuelantunes.axonposts.application.post.PostView;
+import dev.manuelantunes.axonposts.dto.controller.PostView;
 import org.axonframework.extension.reactor.messaging.queryhandling.gateway.ReactorQueryGateway;
 import org.axonframework.messaging.queryhandling.annotation.QueryHandler;
 import org.springframework.stereotype.Component;

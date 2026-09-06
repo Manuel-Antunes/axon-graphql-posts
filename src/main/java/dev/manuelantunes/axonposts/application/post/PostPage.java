@@ -1,9 +1,11 @@
 package dev.manuelantunes.axonposts.application.post;
 
+import dev.manuelantunes.axonposts.dto.controller.PostView;
+
 import java.util.List;
 
 /**
- * Uma fatia do read model: as linhas pedidas, de onde elas começam, e se existe mais coisa depois.
+ * Uma fatia de posts: as linhas pedidas, de onde elas começam, e se existe mais coisa depois.
  * <p>
  * Existe para atravessar o query bus do Axon como um <b>tipo concreto</b>. O {@code Window} do Spring
  * Data seria o candidato natural, mas ele é genérico ({@code Window<PostView>}) e o gateway do Axon pede

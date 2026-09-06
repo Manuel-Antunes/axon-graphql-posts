@@ -1,7 +1,8 @@
 package dev.manuelantunes.axonposts.interfaces.graphql;
 
 import dev.manuelantunes.axonposts.application.post.PostPage;
-import dev.manuelantunes.axonposts.application.post.PostView;
+import dev.manuelantunes.axonposts.dto.controller.PostView;
+import dev.manuelantunes.axonposts.dto.controller.PostView;
 import dev.manuelantunes.axonposts.application.post.query.FindAllPostsQuery;
 import dev.manuelantunes.axonposts.application.post.query.FindPostQuery;
 import org.axonframework.extension.reactor.messaging.queryhandling.gateway.ReactorQueryGateway;

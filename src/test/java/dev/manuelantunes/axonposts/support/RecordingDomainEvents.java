@@ -21,6 +21,11 @@ public final class RecordingDomainEvents implements DomainEventPublisher {
         raised.add(event);
     }
 
+    /** Esquece o que foi disparado até aqui — útil para preparar o cenário e só então observar. */
+    public void clear() {
+        raised.clear();
+    }
+
     public List<DomainEvent> raised() {
         return List.copyOf(raised);
     }

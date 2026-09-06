@@ -1,11 +1,13 @@
 package dev.manuelantunes.axonposts.domain.post.vo;
 
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
+import jakarta.persistence.Embeddable;
 
 /**
- * Autor do Post. Value object: quem escreveu é imutável depois da criação — não existe evento que troque
- * o autor, e é por isso que {@code Post.update(...)} nem recebe esse campo.
+ * Autor do Post. Quem escreveu é imutável depois da criação — não existe evento que troque o autor, e é
+ * por isso que {@code Post.update(...)} nem recebe esse campo.
  */
+@Embeddable
 public record Author(String value) {
 
     public Author {
@@ -15,7 +17,6 @@ public record Author(String value) {
         value = value.strip();
     }
 
-    /** Construtor nomeado: valida e normaliza o nome cru que veio de fora. */
     public static Author of(String value) {
         return new Author(value);
     }

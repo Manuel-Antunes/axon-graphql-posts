@@ -1,6 +1,6 @@
 package dev.manuelantunes.axonposts.interfaces.graphql;
 
-import dev.manuelantunes.axonposts.application.post.PostView;
+import dev.manuelantunes.axonposts.dto.controller.PostView;
 import dev.manuelantunes.axonposts.application.post.subscription.OnPostCreatedSubscriptionHandler;
 import dev.manuelantunes.axonposts.application.post.subscription.OnPostUpdatedSubscriptionHandler;
 import org.springframework.graphql.data.method.annotation.Argument;

@@ -12,6 +12,17 @@ type Post {
     updatedAt: String!
     "Quantidade de eventos aplicados (1 = só criado)"
     version: Int!
+    """
+    Tags do post. Um post criado sem tags recebe automaticamente a tag padrão "Untagged",
+    o que gera um PostUpdated — por isso um post recém-criado chega aqui já na versão 2.
+    """
+    tags: [Tag!]!
+}
+
+"Uma tag. Agregado próprio: tem id e stream de eventos independentes do post."
+type Tag {
+    id: ID!
+    name: String!
 }
 
 type Query {

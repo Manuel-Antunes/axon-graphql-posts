@@ -2,6 +2,8 @@ package dev.manuelantunes.axonposts.exceptions;
 
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
 import dev.manuelantunes.axonposts.domain.post.exception.PostAlreadyExistsException;
+import dev.manuelantunes.axonposts.domain.tag.exception.InvalidTagException;
+import dev.manuelantunes.axonposts.domain.tag.exception.TagAlreadyExistsException;
 import graphql.GraphQLError;
 import graphql.GraphqlErrorBuilder;
 import graphql.schema.DataFetchingEnvironment;
@@ -22,9 +24,9 @@ import java.util.stream.Collectors;
  * Fica na camada de interface porque é aqui que se decide como uma falha aparece <b>no protocolo</b>: o
  * domínio lança {@code InvalidPostException} sem saber o que é um status HTTP ou um {@code ErrorType}.
  * <p>
- * As duas portas de entrada de erro de input desembocam no mesmo {@code BAD_REQUEST}:
- * {@link ConstraintViolationException} (Bean Validation, na borda) e {@link InvalidPostException}
- * (invariante do domínio, mais fundo). O cliente não precisa saber qual das duas o pegou.
+ * Todas as portas de entrada de erro de input desembocam no mesmo {@code BAD_REQUEST}:
+ * {@link ConstraintViolationException} (Bean Validation, na borda) e as invariantes dos dois domínios,
+ * Post e Tag, mais fundo. O cliente não precisa saber qual delas o pegou.
  * <p>
  * Uma exceção lançada dentro de um command/query handler atravessa o {@code CompletableFuture} do
  * gateway e pode chegar aqui embrulhada ({@code CompletionException}, {@code CommandExecutionException}
@@ -39,7 +41,8 @@ public class AppGraphQlExceptionHandler {
             if (t instanceof ConstraintViolationException violations) {
                 return error(ErrorType.BAD_REQUEST, describe(violations), env);
             }
-            if (t instanceof InvalidPostException || t instanceof PostAlreadyExistsException) {
+            if (t instanceof InvalidPostException || t instanceof PostAlreadyExistsException
+                    || t instanceof InvalidTagException || t instanceof TagAlreadyExistsException) {
                 return error(ErrorType.BAD_REQUEST, t.getMessage(), env);
             }
             if (t instanceof EntityNotFoundException) {

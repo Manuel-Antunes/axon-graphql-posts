@@ -1,14 +1,17 @@
 package dev.manuelantunes.axonposts.domain.post.vo;
 
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
+import jakarta.persistence.Embeddable;
 
 /**
- * Título do Post. Value object: a invariante ("não vazio, no máximo {@value #MAX_LENGTH} caracteres")
- * e a normalização ({@code strip}) moram <b>aqui</b>, não espalhadas pela entidade ou pelos handlers.
+ * Título do Post. A invariante ("não vazio, no máximo {@value #MAX_LENGTH} caracteres") e a
+ * normalização ({@code strip}) moram aqui, não espalhadas pela entidade ou pelos handlers.
  * <p>
- * Como o construtor canônico já valida, um {@code PostTitle} que existe é sempre válido — a entidade
- * {@code Post} não precisa checar nada ao guardá-lo.
+ * Como {@code @Embeddable}, ele é o próprio mapeamento da coluna: não existe um "PostTitle de domínio"
+ * e um "String de infraestrutura" para manter em sincronia. A entidade declara o
+ * {@code @AttributeOverride} que dá nome à coluna.
  */
+@Embeddable
 public record PostTitle(String value) {
 
     public static final int MAX_LENGTH = 200;
@@ -23,7 +26,6 @@ public record PostTitle(String value) {
         }
     }
 
-    /** Construtor nomeado: valida e normaliza o texto cru que veio de fora. */
     public static PostTitle of(String value) {
         return new PostTitle(value);
     }

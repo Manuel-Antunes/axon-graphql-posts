@@ -1,0 +1,41 @@
+package dev.manuelantunes.axonposts.support;
+
+import dev.manuelantunes.axonposts.domain.post.Post;
+import dev.manuelantunes.axonposts.domain.post.PostRepository;
+import dev.manuelantunes.axonposts.domain.post.vo.PostId;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * Repositório de Posts em memória: o adapter da porta {@link PostRepository} usado nos testes, no lugar
+ * do SQLite. Como salvar é responsabilidade do command handler, é este duplo que prova que ele salvou —
+ * e o que ele salvou.
+ */
+public final class InMemoryPostRepository implements PostRepository {
+
+    private final Map<PostId, Post> byId = new LinkedHashMap<>();
+
+    @Override
+    public void save(Post post) {
+        byId.put(post.id(), post);
+    }
+
+    @Override
+    public Optional<Post> findById(PostId postId) {
+        return Optional.ofNullable(byId.get(postId));
+    }
+
+    @Override
+    public List<Post> findAll(long offset, int limit) {
+        return byId.values().stream().skip(offset).limit(limit).toList();
+    }
+
+    /** Atalho de teste: tudo o que foi salvo, na ordem de inserção. */
+    public List<Post> all() {
+        return new ArrayList<>(byId.values());
+    }
+}

@@ -8,17 +8,20 @@ import dev.manuelantunes.axonposts.domain.post.vo.PostContent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.post.vo.PostTitle;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
+import dev.manuelantunes.axonposts.domain.post.vo.TagRef;
 import dev.manuelantunes.axonposts.support.RecordingDomainEvents;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Testes puros de domínio: decidir e evoluir, sem nenhum framework no caminho. O único colaborador é o
- * {@link RecordingDomainEvents}, que é a porta de saída de eventos do próprio domínio.
+ * Testes puros de domínio: decidir e evoluir, sem nenhum framework no caminho — nem Axon, nem Spring,
+ * nem JPA, mesmo a entidade sendo mapeada. O único colaborador é o {@link RecordingDomainEvents}, que é
+ * a porta de saída de eventos do próprio domínio.
  */
 class PostTest {
 
@@ -39,8 +42,9 @@ class PostTest {
         assertThat(post.content()).isEqualTo(PostContent.of("conteúdo"));
         assertThat(post.author()).isEqualTo(Author.of("manuel"));
         assertThat(post.createdAt()).isEqualTo(T0);
-        assertThat(post.updatedAt()).isEqualTo(T0);
         assertThat(post.version()).isEqualTo(PostVersion.initial());
+        assertThat(post.tags()).isEmpty();
+        assertThat(post.hasNoTags()).isTrue();
     }
 
     @Test
@@ -60,46 +64,89 @@ class PostTest {
     }
 
     @Test
-    void updateRaisesTheEventAndReturnsTheNextStateWithoutTouchingThePrevious() {
-        PostId id = PostId.newId();
-        Post created = Post.createdFrom(new PostCreatedEvent(id, "Título", "conteúdo", "manuel", T0));
+    void updateRaisesTheEventWithTheResultingStateAndKeepsTheTags() {
+        Post post = createdPost();
+        post.assignTag(TagRef.of("tag-1", "Untagged"), T0, events);
+        events.clear();
 
-        Post updated = created.update("Novo título", null, T1, events);
+        post.update("Novo título", null, T1, events);
 
-        assertThat(events.single()).isEqualTo(new PostUpdatedEvent(id, "Novo título", "conteúdo", T1));
-        assertThat(updated.title()).isEqualTo(PostTitle.of("Novo título"));
-        assertThat(updated.content()).isEqualTo(PostContent.of("conteúdo"));
-        assertThat(updated.author()).isEqualTo(Author.of("manuel"));
-        assertThat(updated.createdAt()).isEqualTo(T0);
-        assertThat(updated.updatedAt()).isEqualTo(T1);
-        assertThat(updated.version()).isEqualTo(new PostVersion(2));
-        assertThat(created.title()).isEqualTo(PostTitle.of("Título")); // o estado anterior não muda
-        assertThat(created.version()).isEqualTo(PostVersion.initial());
+        assertThat(events.single()).isEqualTo(new PostUpdatedEvent(
+                post.id(), "Novo título", "conteúdo",
+                List.of(new PostUpdatedEvent.Tag("tag-1", "Untagged")), 3, T1));
+        assertThat(post.title()).isEqualTo(PostTitle.of("Novo título"));
+        assertThat(post.tags()).containsExactly(TagRef.of("tag-1", "Untagged"));
+        assertThat(post.version()).isEqualTo(new PostVersion(3)); // criado + tag + update
+    }
+
+    @Test
+    void assignTagRaisesPostUpdatedWithTheTagInTheList() {
+        Post post = createdPost();
+
+        Post tagged = post.assignTag(TagRef.of("tag-1", "Untagged"), T1, events);
+
+        assertThat(events.single()).isEqualTo(new PostUpdatedEvent(
+                post.id(), "Título", "conteúdo",
+                List.of(new PostUpdatedEvent.Tag("tag-1", "Untagged")), 2, T1));
+        assertThat(tagged.tags()).containsExactly(TagRef.of("tag-1", "Untagged"));
+        assertThat(tagged.version()).isEqualTo(new PostVersion(2));
+        assertThat(tagged.hasTag("tag-1")).isTrue();
+    }
+
+    @Test
+    void assigningTheSameTagTwiceIsRejected() {
+        Post post = createdPost();
+        post.assignTag(TagRef.of("tag-1", "Untagged"), T0, events);
+        events.clear();
+
+        assertThatThrownBy(() -> post.assignTag(TagRef.of("tag-1", "Untagged"), T1, events))
+                .isInstanceOf(InvalidPostException.class);
+
+        assertThat(events.raised()).isEmpty();
     }
 
     @Test
     void theStateReturnedByUpdateIsTheSameAsSourcingTheRaisedEvent() {
-        Post created = Post.createdFrom(new PostCreatedEvent(PostId.newId(), "Título", "conteúdo", "manuel", T0));
+        Post decided = createdPost();
+        Post sourced = createdPost();
 
-        Post returned = created.update(null, "outro conteúdo", T1, events);
-        Post sourced = created.on((PostUpdatedEvent) events.single());
+        decided.update(null, "outro conteúdo", T1, events);
+        sourced.on((PostUpdatedEvent) events.single());
 
         // decidir e reconstituir passam pelo mesmo @EventSourcingHandler: não podem divergir
-        assertThat(returned.title()).isEqualTo(sourced.title());
-        assertThat(returned.content()).isEqualTo(sourced.content());
-        assertThat(returned.author()).isEqualTo(sourced.author());
-        assertThat(returned.createdAt()).isEqualTo(sourced.createdAt());
-        assertThat(returned.updatedAt()).isEqualTo(sourced.updatedAt());
-        assertThat(returned.version()).isEqualTo(sourced.version());
+        assertThat(decided.title()).isEqualTo(sourced.title());
+        assertThat(decided.content()).isEqualTo(sourced.content());
+        assertThat(decided.updatedAt()).isEqualTo(sourced.updatedAt());
+        assertThat(decided.version()).isEqualTo(sourced.version());
+        assertThat(decided.tags()).isEqualTo(sourced.tags());
     }
 
     @Test
     void updateWithoutChangesRaisesNothing() {
-        Post post = Post.createdFrom(new PostCreatedEvent(PostId.newId(), "Título", "conteúdo", "manuel", T0));
+        Post post = createdPost();
 
         assertThatThrownBy(() -> post.update("Título", "conteúdo", T1, events))
                 .isInstanceOf(InvalidPostException.class);
 
         assertThat(events.raised()).isEmpty();
+    }
+
+    @Test
+    void applyingTheSameEventTwiceLeavesTheSameState() {
+        Post post = createdPost();
+        post.assignTag(TagRef.of("tag-1", "Untagged"), T1, events);
+        PostUpdatedEvent event = (PostUpdatedEvent) events.single();
+
+        // é o que acontece de verdade: o domínio aplica ao decidir, e o Axon aplica ao apendar
+        post.on(event);
+        post.on(event);
+
+        assertThat(post.version()).isEqualTo(new PostVersion(2));
+        assertThat(post.tags()).containsExactly(TagRef.of("tag-1", "Untagged"));
+        assertThat(post.updatedAt()).isEqualTo(T1);
+    }
+
+    private Post createdPost() {
+        return new Post(new PostCreatedEvent(PostId.of("post-1"), "Título", "conteúdo", "manuel", T0));
     }
 }
