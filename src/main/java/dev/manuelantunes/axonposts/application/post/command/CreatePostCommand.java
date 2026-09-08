@@ -47,7 +47,7 @@ public class CreatePostCommand {
      * {@code @TargetEntityId} (o {@code @TargetAggregateIdentifier} do Axon 5) é lido pelo
      * {@code @InjectEntity} do {@link #handle} para descobrir <i>qual</i> stream carregar.
      * <p>
-     * O nome da mensagem é explícito ({@code posts/CreatePost/1.0.0}), então aninhar o record não muda
+     * O nome da mensagem é explícito ({@code posts.CreatePost#1.0.0}), então aninhar o record não muda
      * nada no wire: o que trafega no command bus continua sendo esse nome, não o da classe.
      */
     @Command(namespace = "posts", name = "CreatePost", version = "1.0.0")

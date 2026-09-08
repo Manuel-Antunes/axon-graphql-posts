@@ -13,10 +13,10 @@ mutation createPost(input) ──► @Valid  (Bean Validation: campo vazio, tít
                               │
                               ▼
                   mapper.PostInputMapper.toCommand(PostId.newId(), input)   [MapStruct, compile time]
-                              │
+                              │   devolve CreatePostCommand.CreatePost — a mensagem
                               ▼
-                  CreatePostCommand.CreatePost      [aplicação — a mensagem, aninhada no command]
-                  CreatePostCommand                 [aplicação — um arquivo por command]
+                  CreatePostCommand.handle(...)     [aplicação — um arquivo por command: a mensagem
+                     │                               aninhada + o método que a trata, sem classe …Handler]
                      ├─► Post.create(...)           [domínio — valida, DISPARA o evento, devolve o Post]
                      │      events.raise(PostCreatedEvent) ──► DomainEventPublisher (porta do domínio)
                      │                                          └─ AppendingDomainEventPublisher ─► EventAppender
@@ -30,9 +30,9 @@ mutation createPost(input) ──► @Valid  (Bean Validation: campo vazio, tít
                      │
                      └─► AssignDefaultTagOnPostCreated ──► agenda no AFTER_COMMIT:
                               │   (antes do commit, o stream do post ainda não é legível de volta)
-                              ├─► tag "Untagged" no banco?  não ──► CommandGateway.send(CreateTagCommand)
+                              ├─► tag "Untagged" no banco?  não ──► CommandGateway.send(CreateTag)
                               │                                        └─► TagCreatedEvent + linha em tags
-                              └─► CommandGateway.send(AssignTagToPostCommand)
+                              └─► CommandGateway.send(AssignTagToPost)
                                        └─► Post.assignTag(...) ──► PostUpdatedEvent (com a tag na lista)
                                                 └─► PostUpdatedEventHandler ──► emit onPostUpdated
                               │
@@ -63,7 +63,7 @@ As entidades `Post` e `Tag` são mapeadas por JPA e event-sourced pelo Axon ao m
 
 Três regras de camada, e três pacotes na raiz que cruzam todas elas:
 
-1. **Uma classe por handler.** Cada command, evento, query e subscription tem a sua classe de handler, ao lado da mensagem que ela trata. Para saber tudo o que acontece quando um `PostCreated` chega, abrem-se os dois handlers dele — e nada mais.
+1. **Um arquivo por mensagem, e a classe leva o nome dela.** Não existe classe `…Handler`: `CreatePostCommand` **é** o command — traz aninhado o record da mensagem (`CreatePostCommand.CreatePost`) e o método `@CommandHandler` que a trata. Vale igual para query (`FindPostQuery.FindPost`) e subscription (`OnPostUpdatedSubscription.OnPostUpdated`). Quem despacha importa o record e escreve `new CreatePost(...)`. Do lado dos eventos a regra é a mesma, invertida: uma classe por *reação*, em `application.post.event` — para saber tudo o que acontece quando um `PostCreated` chega, abrem-se os dois handlers dele, e nada mais.
 2. **O domínio dispara, a aplicação ouve.** Os *eventos de domínio* vivem em `domain.*.event` e quem os dispara são as entidades, pela porta `DomainEventPublisher`. Os *event handlers* que reagem a eles vivem em `application.post.event`.
 3. **O command decide e salva; o evento notifica e orquestra.** O command chama o domínio, recebe a entidade pronta e a grava. Os event handlers não gravam nada: um emite para as subscriptions, o outro despacha os commands que dão sequência à história.
 
@@ -127,7 +127,7 @@ Schema em `src/main/resources/graphql/posts.graphqls`.
 |---|---|
 | `@Aggregate` + `@AggregateIdentifier` + construtor `@CommandHandler` | `@EventSourced(tagKey, idType)` na entidade; sem campo de identidade anotado |
 | `AggregateLifecycle.apply(evento)` | o domínio chama `events.raise(evento)`; o adapter da aplicação traduz pro `EventAppender.append(evento)` injetado no handler |
-| `@CommandHandler` dentro do agregado | `@CommandHandler` em classe própria **por command**, recebendo `@InjectEntity Post` (ou `Optional<Post>` na criação) |
+| `@CommandHandler` dentro do agregado | `@CommandHandler` em classe própria **por command** — `CreatePostCommand`, com a mensagem `CreatePost` aninhada —, recebendo `@InjectEntity Post` (ou `Optional<Post>` na criação) |
 | `@TargetAggregateIdentifier` | `@TargetEntityId` no command; `@EventTag` no evento liga os dois ao mesmo stream |
 | `EventSourcingRepository` por aggregate type | stream por **tag** (`postId=<id>`), a consistency boundary é dinâmica (DCB) |
 | Saga / `@SagaEventHandler` para encadear agregados | event handler comum despachando command no `ProcessingContext.onAfterCommit(...)` |
@@ -275,7 +275,25 @@ O `PostInputMapper` o MapStruct resolve sozinho (record → record), assim como 
 
 **O domínio dispara; a aplicação ouve.** `Post.create(...)` e `post.update(...)` chamam `events.raise(...)` na porta `DomainEventPublisher`, que é do domínio — a regra de negócio dispara o fato sem conhecer o Axon. Quem implementa a porta é `AppendingDomainEventPublisher`, um invólucro de vida curta sobre o `EventAppender` que o `@CommandHandler` recebe por parâmetro (por isso o append é transacional). Do outro lado, *ouvir* o fato é da aplicação.
 
-**Um arquivo por command, query e subscription.** A classe leva o nome da mensagem (`UpdatePostCommand`) e traz o record dela aninhado (`UpdatePostCommand.UpdatePost`), junto do método que a trata. O ganho é de localidade: tudo o que um `UpdatePost` provoca está num arquivo só. Os dois handlers de `PostCreatedEvent` são um exemplo do porquê — um notifica, o outro orquestra a tag, e são responsabilidades diferentes em arquivos diferentes.
+**Um arquivo por command, query e subscription — e a classe é o command.** Antes eram dois arquivos por mensagem (`UpdatePostCommand` + `UpdatePostCommandHandler`) e um pacote com o dobro de nomes, metade deles só sufixo. Hoje a classe leva o nome do command e o record da mensagem mora aninhado nela:
+
+```java
+@Component
+public class UpdatePostCommand {
+
+    @Command(namespace = "posts", name = "UpdatePost", version = "1.0.0")
+    public record UpdatePost(@TargetEntityId PostId postId, String title, String content) {}
+
+    @CommandHandler
+    public void handle(UpdatePost command, @InjectEntity Post post, EventAppender eventAppender) { … }
+}
+```
+
+Duas coisas caem no lugar. **Localidade:** tudo o que um `UpdatePost` provoca está num arquivo só, e a mensagem não pode divergir de quem a trata porque não há como abrir uma sem a outra. **Nome:** `…Handler` era ruído — a classe não é "quem trata o command", ela *é* o command; o record é só a forma de despachá-lo. Quem despacha importa o tipo aninhado e o call site lê `new UpdatePost(id, título, conteúdo)`, sem sufixo nenhum.
+
+O nome da mensagem no wire vem da anotação (`namespace`/`name`/`version`), não da classe, então aninhar o record não mexeu em contrato nenhum: `posts.UpdatePost#1.0.0` continua igual.
+
+Os eventos ficaram de fora dessa regra de propósito: o evento é um fato do **domínio** (`domain.post.event`) e pode ter N reações na aplicação, então lá vale o inverso — uma classe por reação. Os dois handlers de `PostCreatedEvent` são o exemplo: um notifica, o outro orquestra a tag, e são responsabilidades diferentes em arquivos diferentes.
 
 Como a ordem entre handlers do mesmo processor **não** é garantida, o `PostCreatedEventHandler` monta a view que emite a partir do **payload do evento**, não do banco: assim `onPostCreated` publica sempre o post como ele nasceu (v1, sem tags), tenha a tag sido atribuída antes ou depois. A tag chega logo em seguida pelo `onPostUpdated` — que é a ordem em que os fatos de fato aconteceram.
 
@@ -291,7 +309,7 @@ Os **eventos**, porém, carregam primitivos: evento é contrato, atravessa proce
 
 **`subscriptionQuery` no Axon 5 exige o `@QueryHandler`.** Diferente do 4.x (onde `queryUpdates` nunca despachava a query), o `SimpleQueryBus` do 5 executa o initial result na hora e concatena os updates. Para a semântica de subscription GraphQL o handler devolve `Optional.empty()`; se quiser snapshot + updates, devolva o `PostView` atual ali.
 
-**Filtro por tópico é avaliado no emit.** `OnPostUpdatedSubscription(postId)` é o payload da subscription query e carrega o próprio predicado (`matches`); o event handler chama `emitter.emit(OnPostUpdatedSubscription.class, sub -> sub.matches(view.id()), view)`. Cada subscriber ativo recebe (ou não) conforme o próprio filtro — sem `filter()` no Flux.
+**Filtro por tópico é avaliado no emit.** `OnPostUpdatedSubscription.OnPostUpdated(postId)` é o payload da subscription query e carrega o próprio predicado (`matches`); o event handler chama `emitter.emit(OnPostUpdated.class, sub -> sub.matches(view.id()), view)`. Cada subscriber ativo recebe (ou não) conforme o próprio filtro — sem `filter()` no Flux.
 
 **Emit sai depois do commit.** O `QueryUpdateEmitter` do Axon 5 é ligado ao `ProcessingContext` e adia o emit para o after-commit. Como os event handlers rodam em modo *subscribing*, o `save` do command já aconteceu quando o handler roda — é por isso que o `PostUpdatedEventHandler` consegue ler o post para emitir — e o SQLite já está commitado quando o SSE recebe o `PostView`.
 
