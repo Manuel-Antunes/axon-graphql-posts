@@ -1,5 +1,6 @@
 package dev.manuelantunes.axonposts.application.post.command;
 
+import dev.manuelantunes.axonposts.application.post.command.UpdatePostCommand.UpdatePost;
 import dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent;
 import dev.manuelantunes.axonposts.domain.post.event.PostUpdatedEvent;
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
@@ -23,8 +24,8 @@ import static dev.manuelantunes.axonposts.support.PostCommandFixtures.NOW;
 import static dev.manuelantunes.axonposts.support.PostCommandFixtures.hasCause;
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Given-when-then do {@link UpdatePostCommandHandler}, e só dele. */
-class UpdatePostCommandHandlerTest {
+/** Given-when-then do {@link UpdatePostCommand}, e só dele. */
+class UpdatePostCommandTest {
 
     private InMemoryPostRepository posts;
     private AxonTestFixture fixture;
@@ -32,9 +33,9 @@ class UpdatePostCommandHandlerTest {
     @BeforeEach
     void setUp() {
         posts = new InMemoryPostRepository();
-        fixture = PostCommandFixtures.forHandler(
+        fixture = PostCommandFixtures.forCommand(
                 "update-post",
-                config -> new UpdatePostCommandHandler(FIXED_CLOCK, posts)
+                config -> new UpdatePostCommand(FIXED_CLOCK, posts)
         );
     }
 
@@ -50,7 +51,7 @@ class UpdatePostCommandHandlerTest {
         fixture.given()
                 .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
                 .when()
-                .command(new UpdatePostCommand(id, "novo título", null))
+                .command(new UpdatePost(id, "novo título", null))
                 .then()
                 .success()
                 .events(new PostUpdatedEvent(id, "novo título", "conteúdo", List.of(), 2, NOW));
@@ -64,7 +65,7 @@ class UpdatePostCommandHandlerTest {
                 .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
                 .event(new PostUpdatedEvent(id, "título v2", "conteúdo", List.of(), 2, NOW))
                 .when()
-                .command(new UpdatePostCommand(id, null, "conteúdo v3"))
+                .command(new UpdatePost(id, null, "conteúdo v3"))
                 .then()
                 .success();
 
@@ -86,7 +87,7 @@ class UpdatePostCommandHandlerTest {
                 .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
                 .event(new PostUpdatedEvent(id, "título v2", "conteúdo", List.of(), 2, NOW))
                 .when()
-                .command(new UpdatePostCommand(id, null, "conteúdo v3"))
+                .command(new UpdatePost(id, null, "conteúdo v3"))
                 .then()
                 .success()
                 .events(new PostUpdatedEvent(id, "título v2", "conteúdo v3", List.of(), 3, NOW));
@@ -99,7 +100,7 @@ class UpdatePostCommandHandlerTest {
         fixture.given()
                 .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
                 .when()
-                .command(new UpdatePostCommand(id, "título", null))
+                .command(new UpdatePost(id, "título", null))
                 .then()
                 .noEvents()
                 .exceptionSatisfies(thrown -> assertThat(hasCause(thrown, InvalidPostException.class)).isTrue());
@@ -112,7 +113,7 @@ class UpdatePostCommandHandlerTest {
         fixture.given()
                 .noPriorActivity()
                 .when()
-                .command(new UpdatePostCommand(PostId.newId(), "x", null))
+                .command(new UpdatePost(PostId.newId(), "x", null))
                 .then()
                 .noEvents()
                 .exceptionSatisfies(thrown -> assertThat(hasCause(thrown, EntityNotFoundException.class)).isTrue());

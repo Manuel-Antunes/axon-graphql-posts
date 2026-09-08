@@ -1,12 +1,11 @@
 package dev.manuelantunes.axonposts.interfaces.graphql;
 
 import dev.manuelantunes.axonposts.dto.controller.PostView;
-import dev.manuelantunes.axonposts.application.post.command.CreatePostCommand;
-import dev.manuelantunes.axonposts.application.post.command.UpdatePostCommand;
-import dev.manuelantunes.axonposts.application.post.query.FindPostQuery;
+import dev.manuelantunes.axonposts.application.post.command.CreatePostCommand.CreatePost;
+import dev.manuelantunes.axonposts.application.post.command.UpdatePostCommand.UpdatePost;
+import dev.manuelantunes.axonposts.application.post.query.FindPostQuery.FindPost;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.dto.controller.CreatePostInput;
-import dev.manuelantunes.axonposts.dto.controller.PostView;
 import dev.manuelantunes.axonposts.dto.controller.UpdatePostInput;
 import dev.manuelantunes.axonposts.mapper.PostInputMapper;
 import jakarta.validation.Valid;
@@ -32,7 +31,7 @@ import reactor.core.scheduler.Schedulers;
  * <h2>Threading</h2>
  * O command só é enviado quando o {@code Mono} é assinado, e o {@code SimpleCommandBus} executa o
  * handler (e os event handlers, em modo subscribing) na thread que despacha — daí o
- * {@code boundedElastic}. Como o command handler salva o read model antes de commitar, dá para devolver
+ * {@code boundedElastic}. Como o command salva o read model antes de commitar, dá para devolver
  * o Post já gravado com uma query logo em seguida.
  */
 @Controller
@@ -52,7 +51,7 @@ public class PostMutationController {
 
     @MutationMapping
     public Mono<PostView> createPost(@Argument @Valid CreatePostInput input) {
-        CreatePostCommand command = inputMapper.toCommand(PostId.newId(), input);
+        CreatePost command = inputMapper.toCommand(PostId.newId(), input);
         return commandGateway.send(command, PostId.class)
                 .flatMap(this::savedPost)
                 .subscribeOn(Schedulers.boundedElastic());
@@ -60,13 +59,13 @@ public class PostMutationController {
 
     @MutationMapping
     public Mono<PostView> updatePost(@Argument @Valid UpdatePostInput input) {
-        UpdatePostCommand command = inputMapper.toCommand(input);
+        UpdatePost command = inputMapper.toCommand(input);
         return commandGateway.send(command)
                 .then(savedPost(command.postId()))
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
     private Mono<PostView> savedPost(PostId postId) {
-        return queryGateway.query(new FindPostQuery(postId.value()), PostView.class);
+        return queryGateway.query(new FindPost(postId.value()), PostView.class);
     }
 }

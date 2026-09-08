@@ -1,8 +1,8 @@
 package dev.manuelantunes.axonposts.interfaces.graphql;
 
 import dev.manuelantunes.axonposts.dto.controller.PostView;
-import dev.manuelantunes.axonposts.application.post.subscription.OnPostCreatedSubscriptionHandler;
-import dev.manuelantunes.axonposts.application.post.subscription.OnPostUpdatedSubscriptionHandler;
+import dev.manuelantunes.axonposts.application.post.subscription.OnPostCreatedSubscription;
+import dev.manuelantunes.axonposts.application.post.subscription.OnPostUpdatedSubscription;
 import org.springframework.graphql.data.method.annotation.Argument;
 import org.springframework.graphql.data.method.annotation.SubscriptionMapping;
 import org.springframework.stereotype.Controller;
@@ -23,11 +23,11 @@ import reactor.core.publisher.Flux;
 @Controller
 public class PostSubscriptionController {
 
-    private final OnPostCreatedSubscriptionHandler onPostCreated;
-    private final OnPostUpdatedSubscriptionHandler onPostUpdated;
+    private final OnPostCreatedSubscription onPostCreated;
+    private final OnPostUpdatedSubscription onPostUpdated;
 
-    public PostSubscriptionController(OnPostCreatedSubscriptionHandler onPostCreated,
-                                      OnPostUpdatedSubscriptionHandler onPostUpdated) {
+    public PostSubscriptionController(OnPostCreatedSubscription onPostCreated,
+                                      OnPostUpdatedSubscription onPostUpdated) {
         this.onPostCreated = onPostCreated;
         this.onPostUpdated = onPostUpdated;
     }

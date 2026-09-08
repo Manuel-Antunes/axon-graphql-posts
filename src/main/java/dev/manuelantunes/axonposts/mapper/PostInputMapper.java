@@ -1,7 +1,7 @@
 package dev.manuelantunes.axonposts.mapper;
 
-import dev.manuelantunes.axonposts.application.post.command.CreatePostCommand;
-import dev.manuelantunes.axonposts.application.post.command.UpdatePostCommand;
+import dev.manuelantunes.axonposts.application.post.command.CreatePostCommand.CreatePost;
+import dev.manuelantunes.axonposts.application.post.command.UpdatePostCommand.UpdatePost;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.dto.controller.CreatePostInput;
 import dev.manuelantunes.axonposts.dto.controller.UpdatePostInput;
@@ -27,10 +27,10 @@ public interface PostInputMapper {
     @Mapping(target = "title", source = "input.title")
     @Mapping(target = "content", source = "input.content")
     @Mapping(target = "author", source = "input.author")
-    CreatePostCommand toCommand(PostId postId, CreatePostInput input);
+    CreatePost toCommand(PostId postId, CreatePostInput input);
 
     @Mapping(target = "postId", source = "id")
-    UpdatePostCommand toCommand(UpdatePostInput input);
+    UpdatePost toCommand(UpdatePostInput input);
 
     /** Conversão usada pelo MapStruct para o {@code id} do update: {@code String} → {@link PostId}. */
     default PostId toPostId(String value) {

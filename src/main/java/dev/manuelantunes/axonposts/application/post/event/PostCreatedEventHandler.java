@@ -1,6 +1,6 @@
 package dev.manuelantunes.axonposts.application.post.event;
 
-import dev.manuelantunes.axonposts.application.post.subscription.OnPostCreatedSubscription;
+import dev.manuelantunes.axonposts.application.post.subscription.OnPostCreatedSubscription.OnPostCreated;
 import dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
 import dev.manuelantunes.axonposts.dto.controller.PostView;
@@ -43,7 +43,7 @@ public class PostCreatedEventHandler {
 
         log.debug("PostCreated {} → emitindo para onPostCreated", view.id());
 
-        // tópico global: todo assinante de OnPostCreatedSubscription recebe
-        emitter.emit(OnPostCreatedSubscription.class, subscription -> true, view);
+        // tópico global: todo assinante de OnPostCreated recebe
+        emitter.emit(OnPostCreated.class, subscription -> true, view);
     }
 }

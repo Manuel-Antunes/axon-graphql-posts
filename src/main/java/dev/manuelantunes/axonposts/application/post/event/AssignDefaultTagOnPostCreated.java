@@ -1,7 +1,7 @@
 package dev.manuelantunes.axonposts.application.post.event;
 
-import dev.manuelantunes.axonposts.application.post.command.AssignTagToPostCommand;
-import dev.manuelantunes.axonposts.application.tag.command.CreateTagCommand;
+import dev.manuelantunes.axonposts.application.post.command.AssignTagToPostCommand.AssignTagToPost;
+import dev.manuelantunes.axonposts.application.tag.command.CreateTagCommand.CreateTag;
 import dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.tag.Tag;
@@ -24,10 +24,10 @@ import java.util.concurrent.CompletableFuture;
  * <h2>O que ele faz</h2>
  * <ol>
  *   <li>procura no banco a tag padrão ({@value Tag#DEFAULT_NAME});</li>
- *   <li>se não houver nenhuma tag com esse nome, despacha {@link CreateTagCommand} para criá-la — a Tag é
+ *   <li>se não houver nenhuma tag com esse nome, despacha {@link CreateTag} para criá-la — a Tag é
  *       um agregado próprio, então ela nasce como qualquer agregado nasce: por um command, com o seu
  *       próprio evento e o seu próprio stream;</li>
- *   <li>despacha {@link AssignTagToPostCommand}, que faz o Post disparar o {@code PostUpdatedEvent} com a
+ *   <li>despacha {@link AssignTagToPost}, que faz o Post disparar o {@code PostUpdatedEvent} com a
  *       tag na lista — e é esse evento que o {@code PostUpdatedEventHandler} publica em
  *       {@code onPostUpdated}.</li>
  * </ol>
@@ -37,13 +37,13 @@ import java.util.concurrent.CompletableFuture;
  * {@link CommandGateway} e deixa o framework fazer o resto — carregar o agregado certo, aplicar as regras
  * dele, apendar o evento, disparar os handlers seguintes. Reagir a um evento despachando um command é o
  * jeito do Axon de encadear uma decisão na outra sem que uma conheça a outra: o
- * {@code CreatePostCommandHandler} não sabe que existem tags, e o domínio de Tag não sabe que existem
+ * {@code CreatePostCommand} não sabe que existem tags, e o domínio de Tag não sabe que existem
  * posts.
  *
  * <h2>Por que no {@code AFTER_COMMIT}, e não direto</h2>
- * Este handler roda durante o <i>commit</i> do {@code CreatePostCommand}. Nesse ponto o
+ * Este handler roda durante o <i>commit</i> do {@code CreatePost}. Nesse ponto o
  * {@code PostCreatedEvent} ainda não é legível de volta do event store: despachar o
- * {@link AssignTagToPostCommand} ali faz o Axon tentar reidratar um Post cujo stream ele não enxerga, e
+ * {@link AssignTagToPost} ali faz o Axon tentar reidratar um Post cujo stream ele não enxerga, e
  * o command falha com {@code EntityNotFoundException} — que é exatamente o que acontecia antes de o
  * trabalho ser adiado para {@link ProcessingContext#onAfterCommit}.
  * <p>
@@ -83,7 +83,7 @@ public class AssignDefaultTagOnPostCreated {
 
         return defaultTagId(defaultName)
                 .thenCompose(tagId -> commandGateway
-                        .send(new AssignTagToPostCommand(postId, tagId.value(), defaultName.value()), Void.class)
+                        .send(new AssignTagToPost(postId, tagId.value(), defaultName.value()), Void.class)
                         .thenRun(() -> log.debug("post {} recebeu a tag padrão {} ({})", postId, defaultName, tagId)));
     }
 
@@ -97,7 +97,7 @@ public class AssignDefaultTagOnPostCreated {
                 .orElseGet(() -> {
                     TagId tagId = TagId.newId();
                     log.debug("nenhuma tag {} no banco — criando {}", name, tagId);
-                    return commandGateway.send(new CreateTagCommand(tagId, name.value()), TagId.class);
+                    return commandGateway.send(new CreateTag(tagId, name.value()), TagId.class);
                 });
     }
 }

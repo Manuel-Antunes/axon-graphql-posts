@@ -1,5 +1,6 @@
 package dev.manuelantunes.axonposts.application.tag.command;
 
+import dev.manuelantunes.axonposts.application.tag.command.CreateTagCommand.CreateTag;
 import dev.manuelantunes.axonposts.domain.tag.Tag;
 import dev.manuelantunes.axonposts.domain.tag.event.TagCreatedEvent;
 import dev.manuelantunes.axonposts.domain.tag.exception.InvalidTagException;
@@ -20,8 +21,8 @@ import static dev.manuelantunes.axonposts.support.PostCommandFixtures.NOW;
 import static dev.manuelantunes.axonposts.support.PostCommandFixtures.hasCause;
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Given-when-then do {@link CreateTagCommandHandler}, e só dele. */
-class CreateTagCommandHandlerTest {
+/** Given-when-then do {@link CreateTagCommand}, e só dele. */
+class CreateTagCommandTest {
 
     private InMemoryTagRepository tags;
     private AxonTestFixture fixture;
@@ -35,7 +36,7 @@ class CreateTagCommandHandlerTest {
                         CommandHandlingModule.named("create-tag")
                                 .commandHandlers()
                                 .autodetectedCommandHandlingComponent(
-                                        config -> new CreateTagCommandHandler(FIXED_CLOCK, tags))
+                                        config -> new CreateTagCommand(FIXED_CLOCK, tags))
                 );
         fixture = AxonTestFixture.with(configurer);
     }
@@ -52,7 +53,7 @@ class CreateTagCommandHandlerTest {
         fixture.given()
                 .noPriorActivity()
                 .when()
-                .command(new CreateTagCommand(id, "  Untagged  "))
+                .command(new CreateTag(id, "  Untagged  "))
                 .then()
                 .success()
                 .resultMessagePayload(id)
@@ -66,7 +67,7 @@ class CreateTagCommandHandlerTest {
         fixture.given()
                 .noPriorActivity()
                 .when()
-                .command(new CreateTagCommand(TagId.newId(), "   "))
+                .command(new CreateTag(TagId.newId(), "   "))
                 .then()
                 .noEvents()
                 .exceptionSatisfies(thrown -> assertThat(hasCause(thrown, InvalidTagException.class)).isTrue());
@@ -81,7 +82,7 @@ class CreateTagCommandHandlerTest {
         fixture.given()
                 .event(new TagCreatedEvent(id, "Untagged", NOW))
                 .when()
-                .command(new CreateTagCommand(id, "outra"))
+                .command(new CreateTag(id, "outra"))
                 .then()
                 .noEvents()
                 .exceptionSatisfies(thrown -> assertThat(hasCause(thrown, TagAlreadyExistsException.class)).isTrue());

@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
  * Ficou fino porque não há mais tradução a fazer — {@link Post} é a entidade JPA, então o que sobra é a
  * conversão de {@code offset} para {@link ScrollPosition} e a fronteira transacional.
  * <p>
- * O Axon 5 abre uma transação Spring por {@code ProcessingContext}; como o command handler salva dentro
+ * O Axon 5 abre uma transação Spring por {@code ProcessingContext}; como o command salva dentro
  * dele, o {@code save} entra nessa mesma transação e commita junto.
  */
 @Repository

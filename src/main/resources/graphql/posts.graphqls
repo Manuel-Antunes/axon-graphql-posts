@@ -72,9 +72,9 @@ input UpdatePostInput {
 }
 
 type Mutation {
-    "Despacha CreatePostCommand e devolve o Post já projetado"
+    "Despacha o command CreatePost e devolve o Post já projetado"
     createPost(input: CreatePostInput!): Post!
-    "Despacha UpdatePostCommand e devolve o Post já projetado"
+    "Despacha o command UpdatePost e devolve o Post já projetado"
     updatePost(input: UpdatePostInput!): Post!
 }
 

@@ -28,7 +28,7 @@ import java.util.stream.Collectors;
  * {@link ConstraintViolationException} (Bean Validation, na borda) e as invariantes dos dois domínios,
  * Post e Tag, mais fundo. O cliente não precisa saber qual delas o pegou.
  * <p>
- * Uma exceção lançada dentro de um command/query handler atravessa o {@code CompletableFuture} do
+ * Uma exceção lançada dentro de um command ou de uma query atravessa o {@code CompletableFuture} do
  * gateway e pode chegar aqui embrulhada ({@code CompletionException}, {@code CommandExecutionException}
  * etc.), então a classificação percorre a cadeia de causas.
  */

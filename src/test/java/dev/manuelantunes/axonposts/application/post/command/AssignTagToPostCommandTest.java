@@ -1,5 +1,6 @@
 package dev.manuelantunes.axonposts.application.post.command;
 
+import dev.manuelantunes.axonposts.application.post.command.AssignTagToPostCommand.AssignTagToPost;
 import dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent;
 import dev.manuelantunes.axonposts.domain.post.event.PostUpdatedEvent;
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
@@ -21,8 +22,8 @@ import static dev.manuelantunes.axonposts.support.PostCommandFixtures.NOW;
 import static dev.manuelantunes.axonposts.support.PostCommandFixtures.hasCause;
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Given-when-then do {@link AssignTagToPostCommandHandler}, e só dele. */
-class AssignTagToPostCommandHandlerTest {
+/** Given-when-then do {@link AssignTagToPostCommand}, e só dele. */
+class AssignTagToPostCommandTest {
 
     private InMemoryPostRepository posts;
     private AxonTestFixture fixture;
@@ -30,8 +31,8 @@ class AssignTagToPostCommandHandlerTest {
     @BeforeEach
     void setUp() {
         posts = new InMemoryPostRepository();
-        fixture = PostCommandFixtures.forHandler(
-                "assign-tag", config -> new AssignTagToPostCommandHandler(FIXED_CLOCK, posts));
+        fixture = PostCommandFixtures.forCommand(
+                "assign-tag", config -> new AssignTagToPostCommand(FIXED_CLOCK, posts));
     }
 
     @AfterEach
@@ -46,7 +47,7 @@ class AssignTagToPostCommandHandlerTest {
         fixture.given()
                 .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
                 .when()
-                .command(new AssignTagToPostCommand(id, "tag-1", "Untagged"))
+                .command(new AssignTagToPost(id, "tag-1", "Untagged"))
                 .then()
                 .success()
                 .events(new PostUpdatedEvent(id, "título", "conteúdo",
@@ -67,7 +68,7 @@ class AssignTagToPostCommandHandlerTest {
                 .event(new PostUpdatedEvent(id, "título", "conteúdo",
                         List.of(new PostUpdatedEvent.Tag("tag-1", "Untagged")), 2, NOW))
                 .when()
-                .command(new AssignTagToPostCommand(id, "tag-1", "Untagged"))
+                .command(new AssignTagToPost(id, "tag-1", "Untagged"))
                 .then()
                 .noEvents()
                 .exceptionSatisfies(thrown -> assertThat(hasCause(thrown, InvalidPostException.class)).isTrue());
@@ -78,7 +79,7 @@ class AssignTagToPostCommandHandlerTest {
         fixture.given()
                 .noPriorActivity()
                 .when()
-                .command(new AssignTagToPostCommand(PostId.newId(), "tag-1", "Untagged"))
+                .command(new AssignTagToPost(PostId.newId(), "tag-1", "Untagged"))
                 .then()
                 .noEvents()
                 .exceptionSatisfies(thrown -> assertThat(hasCause(thrown, EntityNotFoundException.class)).isTrue());

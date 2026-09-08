@@ -1,5 +1,6 @@
 package dev.manuelantunes.axonposts.application.post.command;
 
+import dev.manuelantunes.axonposts.application.post.command.CreatePostCommand.CreatePost;
 import dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent;
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
 import dev.manuelantunes.axonposts.domain.post.exception.PostAlreadyExistsException;
@@ -19,8 +20,8 @@ import static dev.manuelantunes.axonposts.support.PostCommandFixtures.NOW;
 import static dev.manuelantunes.axonposts.support.PostCommandFixtures.hasCause;
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Given-when-then do {@link CreatePostCommandHandler}, e só dele. */
-class CreatePostCommandHandlerTest {
+/** Given-when-then do {@link CreatePostCommand}, e só dele. */
+class CreatePostCommandTest {
 
     private InMemoryPostRepository posts;
     private AxonTestFixture fixture;
@@ -28,9 +29,9 @@ class CreatePostCommandHandlerTest {
     @BeforeEach
     void setUp() {
         posts = new InMemoryPostRepository();
-        fixture = PostCommandFixtures.forHandler(
+        fixture = PostCommandFixtures.forCommand(
                 "create-post",
-                config -> new CreatePostCommandHandler(FIXED_CLOCK, posts)
+                config -> new CreatePostCommand(FIXED_CLOCK, posts)
         );
     }
 
@@ -46,7 +47,7 @@ class CreatePostCommandHandlerTest {
         fixture.given()
                 .noPriorActivity()
                 .when()
-                .command(new CreatePostCommand(id, "  Axon 5 + GraphQL  ", "conteúdo", "manuel"))
+                .command(new CreatePost(id, "  Axon 5 + GraphQL  ", "conteúdo", "manuel"))
                 .then()
                 .success()
                 .resultMessagePayload(id)
@@ -60,7 +61,7 @@ class CreatePostCommandHandlerTest {
         fixture.given()
                 .noPriorActivity()
                 .when()
-                .command(new CreatePostCommand(id, "  Axon 5 + GraphQL  ", "conteúdo", "  manuel  "))
+                .command(new CreatePost(id, "  Axon 5 + GraphQL  ", "conteúdo", "  manuel  "))
                 .then()
                 .success();
 
@@ -77,7 +78,7 @@ class CreatePostCommandHandlerTest {
         fixture.given()
                 .noPriorActivity()
                 .when()
-                .command(new CreatePostCommand(PostId.newId(), "   ", "conteúdo", "manuel"))
+                .command(new CreatePost(PostId.newId(), "   ", "conteúdo", "manuel"))
                 .then()
                 .noEvents()
                 .exceptionSatisfies(thrown -> assertThat(hasCause(thrown, InvalidPostException.class)).isTrue());
@@ -92,7 +93,7 @@ class CreatePostCommandHandlerTest {
         fixture.given()
                 .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
                 .when()
-                .command(new CreatePostCommand(id, "outro", "conteúdo", "manuel"))
+                .command(new CreatePost(id, "outro", "conteúdo", "manuel"))
                 .then()
                 .noEvents()
                 .exceptionSatisfies(thrown -> assertThat(hasCause(thrown, PostAlreadyExistsException.class)).isTrue());

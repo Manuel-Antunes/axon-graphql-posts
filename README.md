@@ -2,7 +2,7 @@
 
 POC: **Axon Framework 5** (entidades anotadas + dynamic consistency boundary) + **extensão Reactor** (`ReactorCommandGateway` / `ReactorQueryGateway`) + **Spring for GraphQL** com subscriptions servidas por **Server-Sent Events**, numa API DDD de posts e tags. Estado em **SQLite** via Spring Data JPA; event store em memória.
 
-A ideia central: o input é validado na borda e mapeado para um command → o command handler pede ao domínio que **decida** (e o domínio **dispara** o evento) e **salva** a entidade → a aplicação **ouve** o evento, reage a ele (inclusive despachando outros commands) e faz `emit` numa *subscription query* do Axon → o `Flux` devolvido por `ReactorQueryGateway.subscriptionQuery(...)` é o que o `@SubscriptionMapping` entrega ao cliente como stream SSE.
+A ideia central: o input é validado na borda e mapeado para a mensagem de um command → o command pede ao domínio que **decida** (e o domínio **dispara** o evento) e **salva** a entidade → a aplicação **ouve** o evento, reage a ele (inclusive despachando outros commands) e faz `emit` numa *subscription query* do Axon → o `Flux` devolvido por `ReactorQueryGateway.subscriptionQuery(...)` é o que o `@SubscriptionMapping` entrega ao cliente como stream SSE.
 
 `Post` e `Tag` são, cada uma, **uma classe só**: entidade de domínio com comportamento, mapeamento JPA e entidade event-sourced do Axon. Não existe entidade de infraestrutura espelho — os value objects são `@Embeddable` de verdade e o `PostView` é apenas o DTO de saída do GraphQL.
 
@@ -15,7 +15,8 @@ mutation createPost(input) ──► @Valid  (Bean Validation: campo vazio, tít
                   mapper.PostInputMapper.toCommand(PostId.newId(), input)   [MapStruct, compile time]
                               │
                               ▼
-                  CreatePostCommandHandler          [aplicação — uma classe por command]
+                  CreatePostCommand.CreatePost      [aplicação — a mensagem, aninhada no command]
+                  CreatePostCommand                 [aplicação — um arquivo por command]
                      ├─► Post.create(...)           [domínio — valida, DISPARA o evento, devolve o Post]
                      │      events.raise(PostCreatedEvent) ──► DomainEventPublisher (porta do domínio)
                      │                                          └─ AppendingDomainEventPublisher ─► EventAppender
@@ -64,7 +65,7 @@ Três regras de camada, e três pacotes na raiz que cruzam todas elas:
 
 1. **Uma classe por handler.** Cada command, evento, query e subscription tem a sua classe de handler, ao lado da mensagem que ela trata. Para saber tudo o que acontece quando um `PostCreated` chega, abrem-se os dois handlers dele — e nada mais.
 2. **O domínio dispara, a aplicação ouve.** Os *eventos de domínio* vivem em `domain.*.event` e quem os dispara são as entidades, pela porta `DomainEventPublisher`. Os *event handlers* que reagem a eles vivem em `application.post.event`.
-3. **O command decide e salva; o evento notifica e orquestra.** O command handler chama o domínio, recebe a entidade pronta e a grava. Os event handlers não gravam nada: um emite para as subscriptions, o outro despacha os commands que dão sequência à história.
+3. **O command decide e salva; o evento notifica e orquestra.** O command chama o domínio, recebe a entidade pronta e a grava. Os event handlers não gravam nada: um emite para as subscriptions, o outro despacha os commands que dão sequência à história.
 
 Os três pacotes de raiz — `dto`, `mapper` e `exceptions` — são agrupados **por papel**, não por camada: um lugar só para procurar "todo input", "todo mapeamento" e "toda tradução de erro".
 
@@ -98,14 +99,16 @@ dev.manuelantunes.axonposts
 │   ├── shared/AppendingDomainEventPublisher    #   adapter DomainEventPublisher → EventAppender do Axon
 │   ├── post
 │   │   ├── PostPage                            #   uma fatia de posts (itens + offset + hasNext)
-│   │   ├── command/CreatePostCommand, UpdatePostCommand, AssignTagToPostCommand (+ um handler cada)
+│   │   ├── command/CreatePostCommand, UpdatePostCommand, AssignTagToPostCommand
+│   │   │                                       #   um arquivo por command; a classe leva o nome dele e
+│   │   │                                       #   traz a mensagem aninhada: CreatePostCommand.CreatePost
 │   │   ├── event/PostCreatedEventHandler       #   OUVE: emite onPostCreated
 │   │   ├── event/PostUpdatedEventHandler       #   OUVE: emite onPostUpdated
 │   │   ├── event/AssignDefaultTagOnPostCreated #   OUVE: garante a tag padrão despachando commands
 │   │   ├── event/package-info                  #   @Namespace("post-projection") vale pro pacote inteiro
-│   │   ├── query/FindPostQuery, FindAllPostsQuery (+ um handler cada)
-│   │   └── subscription/OnPostCreated…, OnPostUpdated… (+ um handler cada)
-│   └── tag/command/CreateTagCommand + CreateTagCommandHandler
+│   │   ├── query/FindPostQuery, FindAllPostsQuery        # idem: FindPostQuery.FindPost é a mensagem
+│   │   └── subscription/OnPostCreatedSubscription, OnPostUpdatedSubscription   # idem: .OnPostCreated
+│   └── tag/command/CreateTagCommand            #   com a mensagem CreateTag aninhada
 ├── infrastructure                              # escolhas de deploy; nenhuma regra de negócio
 │   ├── persistence/sqlite/JpaPostRepository, JpaTagRepository        # adapters das portas
 │   ├── persistence/sqlite/SpringDataPostRepository, SpringDataTagRepository
@@ -212,8 +215,8 @@ bash scripts/poc-smoke.sh
 Testes unitários (`./mvnw test`):
 
 - `PostTest` / `TagTest` — domínio puro. O único colaborador é o `RecordingDomainEvents`, um duplo da porta do próprio domínio: dá para afirmar exatamente o que foi disparado sem Axon, sem Spring e sem JPA — mesmo com as entidades mapeadas.
-- `CreatePostCommandHandlerTest`, `UpdatePostCommandHandlerTest`, `AssignTagToPostCommandHandlerTest`, `CreateTagCommandHandlerTest` — given-when-then com o `AxonTestFixture` do Axon 5, um por handler. Cada um monta só o handler que testa, então uma dependência acidental entre dois deles quebra o teste. Como salvar virou responsabilidade do command, os repositórios em memória provam que ele salvou — e o quê.
-- `FindAllPostsQueryHandlerTest` — a mecânica do `limit + 1`: a linha extra nunca vaza para o resultado e o `hasNext` bate.
+- `CreatePostCommandTest`, `UpdatePostCommandTest`, `AssignTagToPostCommandTest`, `CreateTagCommandTest` — given-when-then com o `AxonTestFixture` do Axon 5, um por command. Cada um monta só o command que testa, então uma dependência acidental entre dois deles quebra o teste. Como salvar virou responsabilidade do command, os repositórios em memória provam que ele salvou — e o quê.
+- `FindAllPostsQueryTest` — a mecânica do `limit + 1`: a linha extra nunca vaza para o resultado e o `hasNext` bate.
 - `ConnectionsTest` — a tradução cursor ↔ offset e o recorte em memória, que é a parte da cursor connection que é lógica nossa e não do Spring. É o mesmo código por trás de `posts` e de `Post.tags`.
 
 A orquestração da tag padrão (dois commands encadeados no `AFTER_COMMIT`) e o lote do DataLoader são cobertos pelo smoke test, e não por teste unitário: o que os dois têm de interessante — a ordem entre commit, dispatch e resposta da mutation; quantas vezes a função de lote é chamada — só existe com o Axon e o graphql-java de verdade rodando.
@@ -236,21 +239,21 @@ O preço: a entidade precisa ser mutável — o JPA exige construtor sem argumen
 
 **Decidir termina chamando evoluir.** `Post.create(...)` termina no construtor `@EntityCreator`, e `update`/`assignTag` terminam em `on(evento)` — os mesmos caminhos que o Axon usa para reconstituir a entidade do stream. Existe um único lugar que define como um evento vira estado, então "o que o command acabou de salvar" e "o que sai de um replay" não podem divergir. É o que o teste `theStateReturnedByUpdateIsTheSameAsSourcingTheRaisedEvent` trava.
 
-**A tag padrão: orquestração pelo Axon, e o `AFTER_COMMIT` que a torna possível.** Todo post criado sem tags recebe a tag `Untagged`. Quem faz isso é um event handler (`AssignDefaultTagOnPostCreated`) que não escreve no banco nem monta eventos — ele só **despacha commands** e deixa o framework carregar o agregado certo, aplicar as regras dele e apendar o evento. `CreatePostCommandHandler` não sabe que existem tags; o domínio de `Tag` não sabe que existem posts.
+**A tag padrão: orquestração pelo Axon, e o `AFTER_COMMIT` que a torna possível.** Todo post criado sem tags recebe a tag `Untagged`. Quem faz isso é um event handler (`AssignDefaultTagOnPostCreated`) que não escreve no banco nem monta eventos — ele só **despacha commands** e deixa o framework carregar o agregado certo, aplicar as regras dele e apendar o evento. `CreatePostCommand` não sabe que existem tags; o domínio de `Tag` não sabe que existem posts.
 
-O detalhe que custou uma iteração: despachar o `AssignTagToPostCommand` **direto** falha com `EntityNotFoundException`. O handler roda durante o commit do `CreatePostCommand`, e nesse ponto o `PostCreatedEvent` ainda não é legível de volta do event store — o Axon tenta reidratar um Post cujo stream não enxerga. Passar o `ProcessingContext` do evento para o gateway também não resolve. O que resolve é registrar o trabalho em `context.onAfterCommit(...)`, que roda depois de o stream estar gravado.
+O detalhe que custou uma iteração: despachar o `AssignTagToPost` **direto** falha com `EntityNotFoundException`. O handler roda durante o commit do `CreatePost`, e nesse ponto o `PostCreatedEvent` ainda não é legível de volta do event store — o Axon tenta reidratar um Post cujo stream não enxerga. Passar o `ProcessingContext` do evento para o gateway também não resolve. O que resolve é registrar o trabalho em `context.onAfterCommit(...)`, que roda depois de o stream estar gravado.
 
-E é o mesmo `onAfterCommit` que faz a mutation devolver o post **já com a tag**: ele recebe uma função que devolve um `CompletableFuture`, e o Axon espera por ele antes de concluir o processamento. Logo, `commandGateway.send(CreatePostCommand)` só completa depois de a tag estar atribuída, e o controller consulta o post depois disso. Nenhum polling, nenhuma espera artificial — só a ordem que o processor *subscribing* garante. Por isso um post recém-criado nasce na **versão 2**: um evento de criação, um de atribuição da tag.
+E é o mesmo `onAfterCommit` que faz a mutation devolver o post **já com a tag**: ele recebe uma função que devolve um `CompletableFuture`, e o Axon espera por ele antes de concluir o processamento. Logo, `commandGateway.send(CreatePost)` só completa depois de a tag estar atribuída, e o controller consulta o post depois disso. Nenhum polling, nenhuma espera artificial — só a ordem que o processor *subscribing* garante. Por isso um post recém-criado nasce na **versão 2**: um evento de criação, um de atribuição da tag.
 
 **Agregado referencia agregado por identidade.** `Post` não tem `@ManyToMany Tag`: guarda um `TagRef` (id + nome copiados) num `@ElementCollection`. Uma associação JPA entre os dois criaria fronteira transacional compartilhada, cascatas e lazy loading atravessando o limite de consistência — e tornaria impossível reconstruir o `Post` só a partir dos seus eventos. O nome vem junto porque exibir um post não deveria obrigar a carregar o agregado `Tag`.
 
-**O command decide e salva; o evento notifica.** O command handler chama o domínio, recebe a entidade pronta e a grava — tudo dentro do `ProcessingContext`, então o append do evento e a escrita no SQLite commitam juntos.
+**O command decide e salva; o evento notifica.** O command chama o domínio, recebe a entidade pronta e a grava — tudo dentro do `ProcessingContext`, então o append do evento e a escrita no SQLite commitam juntos.
 
 > **O preço disso:** o estado gravado deixa de ser *derivado* do stream. Um replay dos eventos não o reconstrói, porque os event handlers não escrevem nada. Voltar a projetar no event handler (e tirar o `save` do command) é o que devolve essa propriedade.
 
 **Cursor connection montada pelo Spring, não à mão.** O campo `posts` é uma Relay connection e não há um único tipo de connection escrito neste projeto. Três peças que o Boot autoconfigura por causa do Spring Data no classpath fazem o trabalho: `ScrollSubrange` como parâmetro do controller (decodifica `first`/`after` num `ScrollPosition`), `Window<PostView>` como retorno (o `WindowConnectionAdapter` vira `edges` + `cursor` + `pageInfo`), e o `ConnectionTypeDefinitionConfigurer`, que **gera** `PostConnection`, `PostEdge` e `PageInfo` a partir do sufixo `Connection` — por isso o `.graphqls` declara o campo mas não os tipos.
 
-A tradução acontece em degraus, cada um no seu lugar: o controller converte cursor ↔ `offset`/`limit` (o cursor `T18w` é o base64 de `O_0`, um `OffsetScrollPosition`); a query do Axon carrega só os dois números, porque mensagem não carrega tipo de framework; o query handler decide o `hasNext` pedindo **uma linha a mais** e descartando-a; e o adapter volta para `ScrollPosition`/`Window`, o suporte a scrolling nativo do Spring Data. A ordenação é `createdAt, id` — `createdAt` sozinho não é único, e dois posts do mesmo instante fariam a paginação por offset pular ou repetir linhas. Paginação só para frente (`first`/`after`), declarada assim em vez de aceitar `last`/`before` e ignorá-los.
+A tradução acontece em degraus, cada um no seu lugar: o controller converte cursor ↔ `offset`/`limit` (o cursor `T18w` é o base64 de `O_0`, um `OffsetScrollPosition`); a mensagem `FindAllPosts` carrega só os dois números, porque mensagem não carrega tipo de framework; a query decide o `hasNext` pedindo **uma linha a mais** e descartando-a; e o adapter volta para `ScrollPosition`/`Window`, o suporte a scrolling nativo do Spring Data. A ordenação é `createdAt, id` — `createdAt` sozinho não é único, e dois posts do mesmo instante fariam a paginação por offset pular ou repetir linhas. Paginação só para frente (`first`/`after`), declarada assim em vez de aceitar `last`/`before` e ignorá-los.
 
 **`Post.tags`: connection paginada, servida por DataLoader.** Uma query `posts(first: 20) { edges { node { tags { … } } } }` dispararia 21 consultas — uma para os posts e uma para as tags de cada um. Com o DataLoader, o graphql-java junta os 20 pedidos do mesmo nível de execução e chama a função de lote **uma vez**, com os 20 ids; `findTagsByPostIds` resolve tudo num `join fetch` só. O smoke test prova isso lendo o log: duas queries que trazem dois posts produzem **duas** chamadas de lote de 2 chaves, não quatro de 1.
 
@@ -272,7 +275,7 @@ O `PostInputMapper` o MapStruct resolve sozinho (record → record), assim como 
 
 **O domínio dispara; a aplicação ouve.** `Post.create(...)` e `post.update(...)` chamam `events.raise(...)` na porta `DomainEventPublisher`, que é do domínio — a regra de negócio dispara o fato sem conhecer o Axon. Quem implementa a porta é `AppendingDomainEventPublisher`, um invólucro de vida curta sobre o `EventAppender` que o `@CommandHandler` recebe por parâmetro (por isso o append é transacional). Do outro lado, *ouvir* o fato é da aplicação.
 
-**Uma classe por handler.** Cada command, evento, query e subscription tem a sua. O ganho é de localidade: tudo o que um `UpdatePostCommand` provoca está em `UpdatePostCommandHandler`. Os dois handlers de `PostCreatedEvent` são um exemplo do porquê — um notifica, o outro orquestra a tag, e são responsabilidades diferentes em arquivos diferentes.
+**Um arquivo por command, query e subscription.** A classe leva o nome da mensagem (`UpdatePostCommand`) e traz o record dela aninhado (`UpdatePostCommand.UpdatePost`), junto do método que a trata. O ganho é de localidade: tudo o que um `UpdatePost` provoca está num arquivo só. Os dois handlers de `PostCreatedEvent` são um exemplo do porquê — um notifica, o outro orquestra a tag, e são responsabilidades diferentes em arquivos diferentes.
 
 Como a ordem entre handlers do mesmo processor **não** é garantida, o `PostCreatedEventHandler` monta a view que emite a partir do **payload do evento**, não do banco: assim `onPostCreated` publica sempre o post como ele nasceu (v1, sem tags), tenha a tag sido atribuída antes ou depois. A tag chega logo em seguida pelo `onPostUpdated` — que é a ordem em que os fatos de fato aconteceram.
 
@@ -301,6 +304,6 @@ Os **eventos**, porém, carregam primitivos: evento é contrato, atravessa proce
 - Trocar o `InMemoryEventStorageEngine` pelo event store JPA do Axon (mesmo SQLite) ou Axon Server — só o bean em `AxonConfig` e a exclusão no `application.yml` mudam.
 - Mutations de tag de verdade (`createTag`, `assignTag`, `removeTag`) — o command e o agregado já existem; falta só o `@MutationMapping`.
 - Voltar a projetar o read model nos event handlers (tirando o `save` do command) pra recuperar o read model derivado do stream — e, aí sim, poder rodar o processor em modo pooled streaming (o default do Axon 5) e ver consistência eventual de verdade. Enquanto o command salva, trocar pra pooled só atrasa o `emit`: a escrita no SQLite continua síncrona.
-- Explorar o DCB de verdade: um segundo `@EventSourced` (ex.: `AuthorQuota` com `tagKey = "author"`) carregado no mesmo command handler via `@InjectEntity(idProperty = "author")`, e a consistency boundary passa a cobrir os dois streams.
+- Explorar o DCB de verdade: um segundo `@EventSourced` (ex.: `AuthorQuota` com `tagKey = "author"`) carregado no mesmo command via `@InjectEntity(idProperty = "author")`, e a consistency boundary passa a cobrir os dois streams.
 - `DateTime` scalar (graphql-java-extended-scalars) no lugar de `String` pros timestamps.
 - Paginação por keyset (`KeysetScrollPosition`) no lugar de offset em `posts`: cursor estável mesmo com inserção concorrente, e sem o custo de `OFFSET n` em tabela grande. O `ScrollSubrange` já entrega os dois — só a query do Axon e o adapter mudariam.

@@ -15,7 +15,7 @@ import java.util.stream.Collectors;
 
 /**
  * Repositório de Posts em memória: o adapter da porta {@link PostRepository} usado nos testes, no lugar
- * do SQLite. Como salvar é responsabilidade do command handler, é este duplo que prova que ele salvou —
+ * do SQLite. Como salvar é responsabilidade do command, é este duplo que prova que ele salvou —
  * e o que ele salvou.
  */
 public final class InMemoryPostRepository implements PostRepository {

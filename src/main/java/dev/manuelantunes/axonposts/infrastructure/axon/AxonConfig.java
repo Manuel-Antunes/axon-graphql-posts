@@ -31,7 +31,7 @@ import java.time.Clock;
  *       {@code application.post.event}, que herdam o namespace do {@code package-info.java}. O default
  *       do Axon 5 é pooled streaming (assíncrono); é aqui que se troca para ver consistência
  *       eventual.</li>
- *   <li>{@link Clock} como bean: injetado nos command handlers para carimbar os eventos, e substituível
+ *   <li>{@link Clock} como bean: injetado nos commands para carimbar os eventos, e substituível
  *       por um clock fixo em teste.</li>
  * </ul>
  */

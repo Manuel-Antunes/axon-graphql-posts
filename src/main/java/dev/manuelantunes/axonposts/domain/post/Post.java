@@ -57,7 +57,7 @@ import java.util.Set;
  * pronto para salvar. <b>Evoluir</b> ({@link #on}) aplica o evento ao estado. Decidir termina chamando
  * evoluir, então "o que o command salvou" e "o que sai de um replay" não podem divergir.
  * <p>
- * Command handlers ficam fora, um por command, em {@code application.post.command}. Ouvir os eventos
+ * Os commands ficam fora, um por arquivo, em {@code application.post.command}. Ouvir os eventos
  * disparados é da aplicação também ({@code application.post.event}).
  */
 @Entity
@@ -103,7 +103,7 @@ public class Post {
      * DataLoader, que as busca em lote para todos os posts da resposta numa consulta só — com
      * {@code EAGER} o Hibernate faria um SELECT por post e o lote não teria o que evitar.
      * <p>
-     * No caminho de escrita a coleção sempre está carregada, porque a entidade que o command handler
+     * No caminho de escrita a coleção sempre está carregada, porque a entidade que o command
      * salva vem reconstituída dos eventos pelo Axon, não do banco.
      */
     @ElementCollection(fetch = FetchType.LAZY)
@@ -223,7 +223,7 @@ public class Post {
      * <p>
      * Sem evento nenhum, o Axon não constrói nada — {@code @InjectEntity Post} lança
      * {@code EntityNotFoundException} e {@code @InjectEntity Optional<Post>} vem vazio. É exatamente
-     * essa diferença que os command handlers usam.
+     * essa diferença que os commands usam.
      */
     @EntityCreator
     public Post(PostCreatedEvent event) {

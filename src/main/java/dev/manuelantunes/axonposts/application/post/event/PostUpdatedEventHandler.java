@@ -1,6 +1,6 @@
 package dev.manuelantunes.axonposts.application.post.event;
 
-import dev.manuelantunes.axonposts.application.post.subscription.OnPostUpdatedSubscription;
+import dev.manuelantunes.axonposts.application.post.subscription.OnPostUpdatedSubscription.OnPostUpdated;
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.event.PostUpdatedEvent;
 import dev.manuelantunes.axonposts.dto.controller.PostView;
@@ -42,11 +42,11 @@ public class PostUpdatedEventHandler {
                 .map(viewMapper::toView)
                 .orElseThrow(() -> new IllegalStateException(
                         "PostUpdated de um Post que não está no banco: " + event.postId()
-                                + " — o command handler deveria tê-lo salvo antes do commit"));
+                                + " — o command deveria tê-lo salvo antes do commit"));
 
         log.debug("PostUpdated {} (v{}) → emitindo para onPostUpdated", view.id(), view.version());
 
         // tópico por id: só assinantes sem filtro ou com o mesmo postId recebem
-        emitter.emit(OnPostUpdatedSubscription.class, subscription -> subscription.matches(view.id()), view);
+        emitter.emit(OnPostUpdated.class, subscription -> subscription.matches(view.id()), view);
     }
 }

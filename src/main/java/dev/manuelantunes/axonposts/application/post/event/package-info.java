@@ -10,7 +10,7 @@
  * </ul>
  *
  * <h2>Hoje eles só notificam</h2>
- * Quem grava o read model é o command handler, junto com a decisão e dentro da mesma transação. Quando
+ * Quem grava o read model é o command, junto com a decisão e dentro da mesma transação. Quando
  * um handler daqui roda, a view já está salva — então ele apenas a lê e emite para as subscriptions.
  * <p>
  * A consequência a ter em mente: o read model deixa de ser <i>derivado</i> do stream. Um replay dos

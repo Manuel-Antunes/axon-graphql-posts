@@ -3,8 +3,8 @@ package dev.manuelantunes.axonposts.interfaces.graphql;
 import dev.manuelantunes.axonposts.application.post.PostPage;
 import dev.manuelantunes.axonposts.dto.controller.PostView;
 import dev.manuelantunes.axonposts.dto.controller.PostView;
-import dev.manuelantunes.axonposts.application.post.query.FindAllPostsQuery;
-import dev.manuelantunes.axonposts.application.post.query.FindPostQuery;
+import dev.manuelantunes.axonposts.application.post.query.FindAllPostsQuery.FindAllPosts;
+import dev.manuelantunes.axonposts.application.post.query.FindPostQuery.FindPost;
 import org.axonframework.extension.reactor.messaging.queryhandling.gateway.ReactorQueryGateway;
 import org.springframework.data.domain.ScrollPosition;
 import org.springframework.data.domain.Window;
@@ -53,7 +53,7 @@ public class PostQueryController {
     /** Mono vazio (null no GraphQL) quando o Post não existe. */
     @QueryMapping
     public Mono<PostView> post(@Argument String id) {
-        return queryGateway.query(new FindPostQuery(id), PostView.class)
+        return queryGateway.query(new FindPost(id), PostView.class)
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -62,7 +62,7 @@ public class PostQueryController {
         long offset = Connections.startOffset(subrange);
         int limit = subrange.count().orElse(DEFAULT_PAGE_SIZE);
 
-        return queryGateway.query(new FindAllPostsQuery(offset, limit), PostPage.class)
+        return queryGateway.query(new FindAllPosts(offset, limit), PostPage.class)
                 .map(PostQueryController::toWindow)
                 .subscribeOn(Schedulers.boundedElastic());
     }
