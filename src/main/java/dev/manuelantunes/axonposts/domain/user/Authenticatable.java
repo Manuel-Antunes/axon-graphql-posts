@@ -1,57 +1,79 @@
 package dev.manuelantunes.axonposts.domain.user;
 
-import dev.manuelantunes.axonposts.domain.user.vo.Email;
 import dev.manuelantunes.axonposts.domain.user.vo.PasswordHash;
 
+import java.util.Optional;
+
+
 /**
- * <b>Mixin</b> de autenticação: quem implementa vira uma identidade que se prova por credencial.
+ * <b>Mixin</b> de autenticação: quem implementa é uma credencial — algo que prova uma identidade.
  *
- * <h2>O contrato, em duas metades</h2>
+ * <h2>Ele mudou de classe, e essa foi a razão de ele existir</h2>
+ * Até a migração para o Keycloak quem implementava era o {@code User}. Agora é a {@link Account}, e o
+ * {@code User} não mudou <b>uma linha</b> por causa disso: ele nunca teve os métodos, só delegava ao
+ * mixin. Se a lógica estivesse dentro da classe, mover credencial para uma tabela à parte seria
+ * reescrever {@code User}, {@code Author} e tudo que os toca.
+ * <p>
+ * É o argumento inteiro a favor de separar por interface em vez de por herança: a responsabilidade
+ * migrou de classe sem arrastar a hierarquia junto.
+ *
+ * <h2>O contrato</h2>
  * <ul>
- *   <li><b>o que você implementa</b>: {@link #email()} e {@link #passwordHash()} — as duas propriedades
- *       que formam a credencial;</li>
- *   <li><b>o que você ganha</b>: {@link #authenticates} e {@link #identifiedBy}, com as regras dentro.</li>
+ *   <li><b>você implementa</b>: {@link #provider()}, {@link #subject()} e {@link #passwordHash()};</li>
+ *   <li><b>você ganha</b>: as perguntas que se fazem sobre uma credencial, já respondidas.</li>
  * </ul>
  *
- * <h2>Por que tirar isto de dentro de {@code User}</h2>
- * {@code User} tem duas responsabilidades que só coincidem por acidente de modelagem: <b>ser alguém</b>
- * (id, nome, papel, hierarquia com {@code Author}) e <b>provar que é</b>. A segunda não é sobre usuários
- * — é sobre credenciais, e valeria igual para um cliente de API ou um serviço com chave própria.
- * <p>
- * Separadas, cada uma muda pela sua razão: acrescentar um tipo de usuário mexe em {@code User}, trocar a
- * política de senha mexe aqui. Enquanto estavam na mesma classe, os dois motivos apontavam para o mesmo
- * arquivo.
- *
- * <h2>O algoritmo continua de fora</h2>
- * {@link #authenticates} recebe um {@link PasswordVerifier} em vez de conhecer BCrypt. O mixin sabe as
- * <i>regras</i> — senha vazia nunca autentica, a comparação é contra o hash guardado — e delega a
- * <i>criptografia</i>. É o que mantém o domínio sem import de framework.
+ * <h2>Senha opcional</h2>
+ * {@link #passwordHash()} devolve {@link Optional} porque no modelo do Keycloak <b>algumas contas têm
+ * senha e outras não</b>: uma conta criada por login social nunca teve uma. Um {@code PasswordHash}
+ * anulável obrigaria todo chamador a lembrar disso; o {@code Optional} não deixa esquecer.
  */
 public interface Authenticatable {
 
-    /** A identidade pública da credencial: por onde se faz login. */
-    Email email();
+    /** Quem garante esta identidade. */
+    AuthProvider provider();
 
-    /** O segredo, já derivado. Nunca a senha em claro — ver {@link PasswordHash}. */
-    PasswordHash passwordHash();
+    /**
+     * O identificador da conta <b>no provedor</b> — o {@code sub} do token, no caso do Keycloak.
+     * <p>
+     * Não é o e-mail: e-mail muda, e dois provedores podem afirmar o mesmo e-mail. O par
+     * {@code (provider, subject)} é o que identifica uma credencial de forma estável.
+     */
+    String subject();
+
+    /** Vazio quando a conta não tem senha local — o caso normal depois da migração. */
+    Optional<PasswordHash> passwordHash();
+
+    /** Dá para entrar com senha por esta conta? */
+    default boolean hasPassword() {
+        return passwordHash().isPresent();
+    }
+
+    /** A credencial mora fora daqui? */
+    default boolean isFederated() {
+        return provider().isFederated();
+    }
 
     /**
      * A senha em claro corresponde ao hash guardado?
+     * <p>
+     * Uma conta federada devolve {@code false} sem consultar nada — não há hash, e não deveria haver:
+     * quem verifica a credencial dela é o provedor.
      * <p>
      * A guarda contra vazio vem antes do verifier de propósito: um {@code PasswordEncoder} chamado com
      * {@code null} lança, e com {@code ""} gasta um BCrypt inteiro para dizer não.
      */
     default boolean authenticates(String rawPassword, PasswordVerifier verifier) {
-        return rawPassword != null
-                && !rawPassword.isBlank()
-                && verifier.matches(rawPassword, passwordHash().value());
+        if (rawPassword == null || rawPassword.isBlank()) {
+            return false;
+        }
+        return passwordHash()
+                .map(hash -> verifier.matches(rawPassword, hash.value()))
+                .orElse(false);
     }
 
-    /**
-     * Esta é a credencial deste e-mail? O {@link Email} já normaliza para minúsculas no construtor, então
-     * a comparação é exata — e é aqui que se veria se um dia deixasse de ser.
-     */
-    default boolean identifiedBy(Email candidate) {
-        return candidate != null && email().equals(candidate);
+    /** Esta credencial é a do par {@code (provider, subject)} procurado? */
+    default boolean identifies(AuthProvider provider, String subject) {
+        return provider() == provider && subject().equals(subject);
     }
 }

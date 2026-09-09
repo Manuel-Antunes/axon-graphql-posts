@@ -1,4 +1,4 @@
-package dev.manuelantunes.axonposts.infrastructure.persistence.sqlite;
+package dev.manuelantunes.axonposts.infrastructure.persistence.jpa;
 
 import dev.manuelantunes.axonposts.domain.tag.Tag;
 import dev.manuelantunes.axonposts.domain.tag.TagRepository;
@@ -9,7 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
 
-/** Adapter: implementa a porta {@link TagRepository} com Spring Data JPA sobre SQLite. */
+/** Adapter: implementa a porta {@link TagRepository} com Spring Data JPA sobre PostgreSQL. */
 @Repository
 public class JpaTagRepository implements TagRepository {
 

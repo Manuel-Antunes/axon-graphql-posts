@@ -1,4 +1,4 @@
-package dev.manuelantunes.axonposts.infrastructure.persistence.sqlite;
+package dev.manuelantunes.axonposts.infrastructure.persistence.jpa;
 
 import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
@@ -18,7 +18,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
- * Adapter: implementa a porta {@link PostRepository} com Spring Data JPA sobre SQLite.
+ * Adapter: implementa a porta {@link PostRepository} com Spring Data JPA sobre PostgreSQL.
  * <p>
  * Ficou fino porque não há mais tradução a fazer — {@link Post} é a entidade JPA, então o que sobra é a
  * conversão de {@code offset} para {@link ScrollPosition} e a fronteira transacional.

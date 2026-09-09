@@ -32,7 +32,7 @@ import static dev.manuelantunes.axonposts.application.shared.AppendingDomainEven
  * O {@link #handle} faz as duas coisas: pede ao domínio que crie o Post ({@code Post.create}, que valida,
  * dispara o {@code PostCreatedEvent} e devolve a entidade pronta) e <b>grava</b> o resultado no read
  * model. Como isso acontece dentro do {@code ProcessingContext} do command, o append do evento e a
- * escrita no SQLite commitam juntos: ou os dois valem, ou nenhum.
+ * escrita no Postgres commitam juntos: ou os dois valem, ou nenhum.
  * <p>
  * O event handler correspondente não projeta nada — quando ele roda, a view já está salva; ele só emite
  * para as subscriptions.

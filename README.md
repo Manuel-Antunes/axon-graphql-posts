@@ -1,6 +1,6 @@
 # axon-graphql-posts
 
-POC: **Axon Framework 5** (entidades anotadas + dynamic consistency boundary) + **extensão Reactor** (`ReactorCommandGateway` / `ReactorQueryGateway`) + **Spring for GraphQL** com subscriptions servidas por **Server-Sent Events**, numa API DDD de posts e tags. Estado em **SQLite** via Spring Data JPA; event store em memória.
+POC: **Axon Framework 5** (entidades anotadas + dynamic consistency boundary) + **extensão Reactor** (`ReactorCommandGateway` / `ReactorQueryGateway`) + **Spring for GraphQL** com subscriptions servidas por **Server-Sent Events**, numa API DDD de posts e tags. Estado em **PostgreSQL** via Spring Data JPA; autenticação delegada ao **Keycloak** (OAuth2 resource server); event store em memória. Infra local por `docker compose`.
 
 A ideia central: o input é validado na borda e mapeado para a mensagem de um command → o command pede ao domínio que **decida** (e o domínio **dispara** o evento) e **salva** a entidade → a aplicação **ouve** o evento, reage a ele (inclusive despachando outros commands) e faz `emit` numa *subscription query* do Axon → o `Flux` devolvido por `ReactorQueryGateway.subscriptionQuery(...)` é o que o `@SubscriptionMapping` entrega ao cliente como stream SSE.
 
@@ -53,7 +53,11 @@ mutation createPost(input) ──► @Valid  (Bean Validation: campo vazio, tít
 | Spring Boot (WebFlux + GraphQL + Data JPA) | 3.5.x |
 | Axon Framework (`axon-spring-boot-starter`, sem Axon Server) | 5.3.x |
 | Axon Reactor extension (`axon-reactor`) | 5.3.x |
-| SQLite (`sqlite-jdbc`) + `hibernate-community-dialects` | gerenciados pelo Boot |
+| PostgreSQL (`postgresql`) | gerenciado pelo Boot |
+| Spring Security (WebFlux + OAuth2 resource server) | gerenciado pelo Boot |
+| Keycloak (broker de identidade, em container) | 26.0 |
+| Testcontainers (`postgresql`, `junit-jupiter`) | gerenciado pelo Boot |
+| Testcontainers Keycloak (`com.github.dasniko`) | 3.7.0 |
 | Bean Validation (`spring-boot-starter-validation` / Hibernate Validator) | gerenciado pelo Boot |
 | MapStruct (`mapstruct` + `mapstruct-processor`) | 1.6.3 |
 
@@ -139,11 +143,38 @@ Schema em `src/main/resources/graphql/posts.graphqls`.
 
 ## Rodando
 
+A infra vem primeiro: Postgres (dois bancos) e Keycloak (realm já importado).
+
 ```bash
+docker compose up -d          # espera o healthcheck do Keycloak (~30s na primeira vez)
 ./mvnw spring-boot:run
 # ou
 ./mvnw package && java -jar target/axon-graphql-posts-0.2.0-SNAPSHOT.jar
 ```
+
+| Serviço | URL | Credenciais |
+|---|---|---|
+| Aplicação | http://localhost:8080/graphiql | token do Keycloak no header |
+| Keycloak (admin) | http://localhost:8081 | `admin` / `admin` |
+| Realm | `axon-posts` | cliente público `axon-posts-api` |
+| Postgres (app) | `localhost:5432/axonposts` | `axonposts` / `axonposts` |
+| Postgres (Keycloak) | `localhost:5432/keycloak` | `keycloak` / `keycloak` |
+
+Usuários semeados no realm (senha `segredo123`):
+
+| Usuário | Role | Vira |
+|---|---|---|
+| `manuel@example.com` | `author` | `Author` local, pode escrever |
+| `leitor@example.com` | — | `Reader` local, só lê |
+| `promovido@example.com` | `author` | demonstra a promoção `User` → `Author` |
+
+**Dois bancos, dois usuários, um servidor.** O `docker/postgres/init/01-keycloak-role.sql` cria o papel e o
+banco do Keycloak separados dos da aplicação: pools de conexão independentes, o `ddl-auto` da aplicação
+sem enxergar as tabelas do Keycloak, e o usuário da aplicação sem alcance às tabelas de credencial.
+
+**Nenhum usuário é cadastrado na aplicação.** O `users`/`accounts` local é preenchido *just-in-time*: na
+primeira requisição com um token novo, o `UserProvisioning` cria o perfil e liga a conta — ou, se o
+e-mail já existir localmente, **liga a conta ao usuário existente** (account linking).
 
 Endpoints (tudo em `/graphql`, transporte escolhido pelo `Accept` / upgrade):
 
@@ -152,6 +183,23 @@ Endpoints (tudo em `/graphql`, transporte escolhido pelo `Accept` / upgrade):
 - WebSocket em `/graphql` (graphql-ws) → só pra GraphiQL: http://localhost:8080/graphiql
 
 ## Testando na mão
+
+Primeiro, um token de verdade do Keycloak:
+
+```bash
+TOKEN=$(curl -s -X POST \
+  http://localhost:8081/realms/axon-posts/protocol/openid-connect/token \
+  -d grant_type=password -d client_id=axon-posts-api \
+  -d username=manuel@example.com -d password=segredo123 | jq -r .access_token)
+
+curl -s -X POST http://localhost:8080/graphql \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
+  -d '{"query":"{ me { __typename id name email accounts { provider subject hasPassword } ... on Author { bio } } }"}'
+```
+
+O `grant_type=password` só funciona porque o realm importa o cliente com `directAccessGrantsEnabled` —
+é o que torna a POC testável por `curl`. Num cliente de produção isso ficaria desligado e o token viria
+do *authorization code* + PKCE.
 
 Terminal 1 — abre a subscription global (fica pendurado):
 
@@ -165,8 +213,12 @@ Terminal 2 — dispara o command:
 
 ```bash
 curl -s -X POST http://localhost:8080/graphql -H 'Content-Type: application/json' \
-  -d '{"query":"mutation { createPost(input:{title:\"Axon 5 + GraphQL\", content:\"oi\", author:\"manuel\"}) { id title version tags(first: 5) { edges { node { id name } } } } }"}'
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"query":"mutation { createPost(input:{title:\"Axon 5 + GraphQL\", content:\"oi\"}) { id title version author { name } tags(first: 5) { edges { node { id name } } } } }"}'
 ```
+
+O input **não tem** campo `author`: ele vem do token. Sem `Authorization`, ou com o token do leitor, a
+mutation devolve `FORBIDDEN`.
 
 O terminal 1 recebe:
 
@@ -218,8 +270,34 @@ Testes unitários (`./mvnw test`):
 - `CreatePostCommandTest`, `UpdatePostCommandTest`, `AssignTagToPostCommandTest`, `CreateTagCommandTest` — given-when-then com o `AxonTestFixture` do Axon 5, um por command. Cada um monta só o command que testa, então uma dependência acidental entre dois deles quebra o teste. Como salvar virou responsabilidade do command, os repositórios em memória provam que ele salvou — e o quê.
 - `FindAllPostsQueryTest` — a mecânica do `limit + 1`: a linha extra nunca vaza para o resultado e o `hasNext` bate.
 - `ConnectionsTest` — a tradução cursor ↔ offset e o recorte em memória, que é a parte da cursor connection que é lógica nossa e não do Spring. É o mesmo código por trás de `posts` e de `Post.tags`.
+- `SoftDeletableTest` / `AuthenticatableTest` — os dois mixins isolados. O `Authenticatable` migrou de `User` para `Account` na adoção do Keycloak, e os casos do teste **não mudaram**: só de quem se pergunta.
 
-A orquestração da tag padrão (dois commands encadeados no `AFTER_COMMIT`) e o lote do DataLoader são cobertos pelo smoke test, e não por teste unitário: o que os dois têm de interessante — a ordem entre commit, dispatch e resposta da mutation; quantas vezes a função de lote é chamada — só existe com o Axon e o graphql-java de verdade rodando.
+Testes com **Testcontainers** (exigem Docker rodando). Um Postgres e um Keycloak sobem **uma vez** para
+a suíte inteira (`support/Containers`, containers estáticos iniciados em paralelo), e as classes ponta a
+ponta compartilham o mesmo contexto Spring — só a primeira paga a subida:
+
+- `e2e/PostLifecycleE2ETest` — o ciclo inteiro pela API: criar → tag padrão chegando no `AFTER_COMMIT`
+  (por isso um post nasce na versão 2) → editar preservando tags → apagar (some das consultas, linha
+  permanece) → restaurar (volta com autor e tags). Mais as guardas do mixin e a paginação por cursor.
+- `e2e/AuthorizationE2ETest` — a matriz de permissão como teste parametrizado sobre as quatro mutations
+  de escrita. Enumerar as operações numa fonte de argumentos é o que faz uma mutation nova sem
+  `@PreAuthorize` aparecer: o risco não é o caso que falha, é o que ninguém escreveu.
+- `e2e/IdentityProvisioningE2ETest` — a costura Keycloak ↔ banco local: provisionamento just-in-time,
+  idempotência, account linking por e-mail (o usuário mantém id e posts), e a promoção `Reader` → `Author`
+  quando a role chega depois.
+- `e2e/NewsletterSubscriptionE2ETest` — subscriptions filtradas por autor, **sobre SSE de verdade**. O
+  `HttpGraphQlTester` recusa subscriptions sobre HTTP, então há um `SseSubscriptions` que fala o protocolo
+  GraphQL over SSE direto. O caso que importa é o negativo: um assinante de outro autor não pode receber
+  e descartar — o post não pode chegar nele.
+- `e2e/BatchLoadingE2ETest` — os DataLoaders, medidos pela estatística do Hibernate em vez de linhas de
+  log: a mesma consulta com 1 e com 5 posts precisa custar **o mesmo número de statements**. É a
+  propriedade que importa (o custo não acompanhar o tamanho do resultado), não um número mágico que muda
+  a cada ajuste de mapeamento.
+- `UserSoftDeleteJpaTest` — a exclusão lógica contra o Postgres. Metade do que ele verifica é SQL: o
+  `@SQLDelete` por tabela da herança `JOINED`, o `@SQLRestriction`, o INSERT nativo da promoção.
+
+Estes testes substituem o `scripts/poc-smoke.sh`, que continua no repositório como roteiro manual: o que
+antes se conferia numa sessão de terminal agora quebra o build.
 
 ## Decisões que valem comentar
 

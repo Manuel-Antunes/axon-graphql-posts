@@ -2,7 +2,6 @@ package dev.manuelantunes.axonposts.domain.user;
 
 import dev.manuelantunes.axonposts.domain.user.vo.DisplayName;
 import dev.manuelantunes.axonposts.domain.user.vo.Email;
-import dev.manuelantunes.axonposts.domain.user.vo.PasswordHash;
 import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -56,21 +55,19 @@ public class Author extends User {
     protected Author() {
     }
 
-    private Author(UserId id, Email email, DisplayName name, PasswordHash passwordHash, String bio, Instant createdAt) {
-        super(id, email, name, passwordHash, createdAt);
+    private Author(UserId id, Email email, DisplayName name, String bio, Instant createdAt) {
+        super(id, email, name, createdAt);
         this.bio = bio;
     }
 
-    /** Um autor: lê e escreve. */
-    public static Author register(UserId id, String email, String name, String passwordHash, String bio, Instant now) {
-        return new Author(
-                id,
-                Email.of(email),
-                DisplayName.of(name),
-                PasswordHash.of(passwordHash),
-                bio == null || bio.isBlank() ? "—" : bio.strip(),
-                now
-        );
+    /** Um autor: lê e escreve. Como o {@code User}, nasce sem credencial — quem liga é {@code link}. */
+    public static Author register(UserId id, String email, String name, String bio, Instant now) {
+        return new Author(id, Email.of(email), DisplayName.of(name), normalized(bio), now);
+    }
+
+    /** Bio em branco vira travessão: a coluna é NOT NULL, e é isso que a subclasse existe para permitir. */
+    static String normalized(String bio) {
+        return bio == null || bio.isBlank() ? "—" : bio.strip();
     }
 
     /**

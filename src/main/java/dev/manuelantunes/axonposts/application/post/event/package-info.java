@@ -25,7 +25,7 @@
  * <p>
  * Em modo <b>subscribing</b> os handlers executam na mesma thread e no mesmo {@code ProcessingContext}
  * (e transação) do command — é isso que garante que o {@code save} do command já aconteceu quando o
- * handler roda, e que o emit sai uma única vez, depois do commit no SQLite.
+ * handler roda, e que o emit sai uma única vez, depois do commit no Postgres.
  */
 @Namespace(PostProjection.PROCESSOR)
 package dev.manuelantunes.axonposts.application.post.event;

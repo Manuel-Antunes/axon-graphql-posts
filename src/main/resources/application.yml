@@ -2,19 +2,27 @@ spring:
   application:
     name: axon-graphql-posts
 
-  # ---- Read model: SQLite via Spring Data JPA ------------------------------------------
+  # ---- Read model: PostgreSQL via Spring Data JPA (docker compose up -d) ---------------
   datasource:
-    # WAL + busy_timeout: leituras não bloqueiam escritas e um writer espera o outro em vez de SQLITE_BUSY
-    url: jdbc:sqlite:./data/posts.db?journal_mode=WAL&busy_timeout=5000
-    driver-class-name: org.sqlite.JDBC
-    hikari:
-      maximum-pool-size: 4
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/axonposts}
+    username: ${SPRING_DATASOURCE_USERNAME:axonposts}
+    password: ${SPRING_DATASOURCE_PASSWORD:axonposts}
   jpa:
-    database-platform: org.hibernate.community.dialect.SQLiteDialect
+    # sem database-platform: o Hibernate reconhece o Postgres pela conexão. O dialeto do SQLite era o
+    # único motivo de a propriedade existir
     hibernate:
       ddl-auto: update
     open-in-view: false
     show-sql: false
+
+  # ---- Autenticação: resource server do realm do Keycloak ------------------------------
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # o Boot busca o /.well-known/openid-configuration deste issuer, descobre o JWKS e monta o
+          # decoder sozinho — não há chave nem segredo neste projeto
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8081/realms/axon-posts}
 
   # ---- Spring for GraphQL ----------------------------------------------------------------
   graphql:
@@ -26,7 +34,7 @@ spring:
       sse:
         keep-alive: 15s      # ping periódico pra manter o stream SSE vivo atrás de proxies
 
-  # ---- Axon 5: sem os autoconfigs JPA/JDBC (event store e token store em memória, nenhuma tabela do Axon no SQLite)
+  # ---- Axon 5: sem os autoconfigs JPA/JDBC (event store e token store em memória, nenhuma tabela do Axon no Postgres)
   autoconfigure:
     exclude:
       - org.axonframework.extension.springboot.autoconfig.JpaAutoConfiguration
@@ -43,15 +51,6 @@ axon:
   #   processors:
   #     post-projection:
   #       mode: subscribing
-
-# ---- Autenticação -----------------------------------------------------------------------
-app:
-  jwt:
-    # POC: segredo em claro no arquivo. Em produção viria do ambiente (${JWT_SECRET}) ou de um cofre —
-    # quem tem este valor consegue forjar qualquer token, inclusive um com ROLE_AUTHOR.
-    secret: ${JWT_SECRET:troque-este-segredo-de-desenvolvimento-com-32-bytes-ou-mais}
-    issuer: axon-graphql-posts
-    expiration: 12h
 
 logging:
   level:

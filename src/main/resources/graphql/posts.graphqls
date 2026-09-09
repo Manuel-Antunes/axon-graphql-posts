@@ -15,6 +15,37 @@ interface User {
     name: String!
     "Resolvido em lote (@BatchMapping sobre a interface): N usuários numa resposta = 1 consulta"
     email: String!
+    """
+    As credenciais ligadas a este usuário — uma por provedor.
+
+    É o account linking visível: a mesma pessoa pode ter entrado pelo Keycloak e ter uma conta
+    CREDENTIAL com senha própria. Também resolvido em lote, sobre a interface.
+    """
+    accounts: [Account!]!
+}
+
+"De onde vem uma credencial"
+enum AuthProvider {
+    "Senha guardada localmente"
+    CREDENTIAL
+    "O broker: depois da migração, é por aqui que todo mundo entra"
+    KEYCLOAK
+    GOOGLE
+    GITHUB
+}
+
+"""
+Uma credencial. Modelo do better-auth: identidade em `users`, credencial em `accounts`, uma linha
+por provedor — ligar um provedor novo é inserir, não alterar a tabela de usuários.
+"""
+type Account {
+    provider: AuthProvider!
+    "O identificador da conta NO provedor (o `sub` do token). Não é o e-mail"
+    subject: String!
+    "Se dá para entrar com senha por esta conta. Falso para toda conta federada"
+    hasPassword: Boolean!
+    "ISO-8601 (UTC)"
+    linkedAt: String!
 }
 
 "Usuário que só lê. É o `User` do Java sem linha na tabela `authors`."
@@ -22,6 +53,7 @@ type Reader implements User {
     id: ID!
     name: String!
     email: String!
+    accounts: [Account!]!
 }
 
 """
@@ -34,6 +66,7 @@ type Author implements User {
     id: ID!
     name: String!
     email: String!
+    accounts: [Account!]!
     "Bio: campo que só a subclasse tem, e por isso pode ser NOT NULL na tabela `authors`"
     bio: String!
     """
@@ -117,7 +150,10 @@ type Query {
         after: String
     ): PostConnection!
     """
-    Quem está logado. Exige Authorization: Bearer <token>.
+    Quem está logado. Exige Authorization: Bearer <token emitido pelo Keycloak>.
+
+    Na primeira vez que um token novo aparece, o usuário local é criado (ou ligado, se o e-mail já
+    existir) — just-in-time provisioning.
 
     Devolve a interface: use um fragmento para pegar o que só existe em Author.
         me { id name email ... on Author { bio posts(first: 5) { edges { node { title } } } } }
@@ -128,19 +164,6 @@ type Query {
 # ---------------------------------------------------------------------------------------------------
 # Mutations
 # ---------------------------------------------------------------------------------------------------
-
-input LoginInput {
-    email: String!
-    password: String!
-}
-
-"Token e quem ele representa"
-type AuthPayload {
-    token: String!
-    "ISO-8601 (UTC)"
-    expiresAt: String!
-    user: User!
-}
 
 input CreatePostInput {
     title: String!
@@ -156,8 +179,6 @@ input UpdatePostInput {
 }
 
 type Mutation {
-    "Troca e-mail e senha por um JWT. Único ponto de entrada sem autenticação"
-    login(input: LoginInput!): AuthPayload!
     """
     Despacha o command CreatePost e devolve o Post já projetado.
 

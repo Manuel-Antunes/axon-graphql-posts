@@ -25,6 +25,8 @@
         <!-- MapStruct: mapeamento input GraphQL -> command, gerado em tempo de compilação
              (código-fonte legível em target/generated-sources, zero reflexão em runtime). -->
         <mapstruct.version>1.6.3</mapstruct.version>
+        <!-- Módulo Testcontainers do Keycloak; não está no BOM do Boot -->
+        <testcontainers-keycloak.version>3.7.0</testcontainers-keycloak.version>
     </properties>
 
     <dependencyManagement>
@@ -65,18 +67,18 @@
             <version>${mapstruct.version}</version>
         </dependency>
 
-        <!-- Read model: Spring Data JPA sobre SQLite -->
+        <!-- Read model: Spring Data JPA sobre PostgreSQL.
+             Saiu o SQLite (e com ele o hibernate-community-dialects, que só existia para o dialeto dele):
+             o Keycloak precisa de um banco de verdade, e rodar os dois no mesmo Postgres do compose é o
+             que torna o ambiente reproduzível. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.xerial</groupId>
-            <artifactId>sqlite-jdbc</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.hibernate.orm</groupId>
-            <artifactId>hibernate-community-dialects</artifactId>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
         </dependency>
 
         <!-- Segurança: WebFlux reativo + resource server JWT.
@@ -120,9 +122,54 @@
             <artifactId>reactor-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- Testcontainers: os testes sobem Postgres e Keycloak de verdade.
+             O spring-boot-testcontainers dá o @ServiceConnection, que dispensa escrever
+             @DynamicPropertySource para o datasource. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Módulo comunitário do Keycloak: sobe o container já com o realm importado -->
+        <dependency>
+            <groupId>com.github.dasniko</groupId>
+            <artifactId>testcontainers-keycloak</artifactId>
+            <version>${testcontainers-keycloak.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.graphql</groupId>
+            <artifactId>spring-graphql-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
+        <testResources>
+            <testResource>
+                <directory>src/test/resources</directory>
+            </testResource>
+            <!-- O realm do Keycloak entra no classpath de teste a partir de docker/, e não de uma cópia:
+                 o container dos testes importa exatamente o mesmo arquivo que o docker compose monta.
+                 Duas cópias divergiriam, e a divergência só apareceria quando um deles quebrasse. -->
+            <testResource>
+                <directory>docker/keycloak</directory>
+                <includes>
+                    <include>realm-*.json</include>
+                </includes>
+            </testResource>
+        </testResources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

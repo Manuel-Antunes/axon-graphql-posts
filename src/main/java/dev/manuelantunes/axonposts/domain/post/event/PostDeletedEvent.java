@@ -13,7 +13,7 @@ import java.time.Instant;
  *
  * <h2>Por que a exclusão lógica precisa de evento aqui, e no {@code User} não</h2>
  * O {@code Post} é event-sourced: o estado dele <b>é</b> o stream. Marcar {@code deleted_at} na linha do
- * SQLite sem apendar um evento criaria um post que some do banco mas continua vivo em qualquer replay —
+ * Postgres sem apendar um evento criaria um post que some do banco mas continua vivo em qualquer replay —
  * as duas verdades divergiriam na primeira reconstituição.
  * <p>
  * O {@code User} não tem stream: a linha é a verdade inteira, e um {@code users.save(...)} basta.

@@ -3,23 +3,30 @@ package dev.manuelantunes.axonposts.domain.user;
 import dev.manuelantunes.axonposts.domain.shared.SoftDeletable;
 import dev.manuelantunes.axonposts.domain.shared.SoftDeletion;
 import dev.manuelantunes.axonposts.domain.user.vo.DisplayName;
+import dev.manuelantunes.axonposts.domain.user.exception.InvalidUserException;
+import dev.manuelantunes.axonposts.domain.user.vo.AccountId;
 import dev.manuelantunes.axonposts.domain.user.vo.Email;
 import dev.manuelantunes.axonposts.domain.user.vo.PasswordHash;
 import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import jakarta.persistence.AttributeOverride;
 import jakarta.persistence.Column;
 import jakarta.persistence.Embedded;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Inheritance;
 import jakarta.persistence.InheritanceType;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 
 import java.time.Instant;
 import java.util.EnumSet;
+import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -39,14 +46,18 @@ import java.util.Set;
  * O preço é o join, e ele é real: {@code select ... from users u left join authors a on u.id = a.id}
  * em toda leitura polimórfica. Com dois níveis e este volume, é o negócio certo.
  *
- * <h2>Dois mixins, duas preocupações que não são "ser usuário"</h2>
- * {@link Authenticatable} traz a credencial ({@code authenticates}, {@code identifiedBy});
- * {@link SoftDeletable} traz a exclusão lógica ({@code delete}, {@code restore}, {@code isDeleted}).
- * Nenhum dos dois é sobre usuários em particular, e é por isso que saíram daqui: esta classe voltou a
- * ser só identidade e hierarquia.
+ * <h2>Identidade aqui, credencial na {@link Account}</h2>
+ * Esta classe responde "quem é" — id, e-mail, nome, papel. <b>Como</b> a pessoa prova que é ela mora nas
+ * {@link Account}s, uma por provedor. É o desenho do better-auth, e é o que o account linking exige:
+ * ligar o Google a uma conta que já entra pelo Keycloak é inserir uma linha em {@code accounts}, não
+ * acrescentar coluna em {@code users}.
  * <p>
- * Repare que {@code Author} herda os dois de graça, sem uma linha — é a diferença entre mixin e herança:
- * a hierarquia {@code User}/{@code Author} continua livre para significar o que significa.
+ * O {@code Authenticatable} morava aqui até a migração para o Keycloak e foi para a {@code Account} sem
+ * que <b>esta classe mudasse uma linha</b> por causa disso — a vantagem inteira de a responsabilidade
+ * estar numa interface e não no corpo da classe.
+ * <p>
+ * O que ficou foi o {@link SoftDeletable}. E {@code Author} herda o mixin de graça, sem uma linha: é a
+ * diferença entre mixin e herança — a hierarquia continua livre para significar o que significa.
  *
  * <h2>Não é event-sourced, e isso é deliberado</h2>
  * {@code Post} e {@code Tag} são agregados com stream próprio; {@code User} não. Autenticação é estado
@@ -70,7 +81,7 @@ import java.util.Set;
  */
 @SQLRestriction(User.ALIVE)
 @SQLDelete(sql = "update users set deleted_at = current_timestamp where id = ?")
-public class User implements Authenticatable, SoftDeletable {
+public class User implements SoftDeletable {
 
     /** Predicado de "não apagado", em SQL. Uma constante para os dois usos não divergirem. */
     public static final String ALIVE = SoftDeletion.COLUMN + " is null";
@@ -87,12 +98,28 @@ public class User implements Authenticatable, SoftDeletable {
     @AttributeOverride(name = "value", column = @Column(name = "name", length = DisplayName.MAX_LENGTH, nullable = false))
     private DisplayName name;
 
-    @Embedded
-    @AttributeOverride(name = "value", column = @Column(name = "password_hash", nullable = false))
-    private PasswordHash passwordHash;
-
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
+
+    /**
+     * As credenciais deste usuário, uma por provedor.
+     * <p>
+     * {@code cascade} + {@code orphanRemoval} porque {@code Account} é entidade <b>dentro</b> deste
+     * agregado: nasce, vive e morre com o dono, e ninguém a manipula por fora. É a diferença para o
+     * {@code Post.tags}, onde a {@code Tag} é agregado próprio e por isso não leva cascade nenhum.
+     * <p>
+     * <b>{@code LAZY}, e isso foi medido.</b> A intuição era {@code EAGER} — são poucas por usuário, e
+     * quem carrega um usuário autenticado quer saber por onde ele entrou. Mas todo {@code join fetch
+     * p.author} de uma consulta de posts também carrega o autor, e com {@code EAGER} o Hibernate honrava
+     * a coleção com um SELECT <b>por autor</b> depois. Numa resposta com N autores, isso é um N+1 — o
+     * mesmo que os DataLoaders desta aplicação existem para evitar, entrando pela porta dos fundos.
+     * <p>
+     * Foi o {@code BatchLoadingE2ETest} que pegou: ele compara o custo de uma resposta com um autor e com
+     * dois, e a diferença não podia existir. Agora quem precisa das contas pede com {@code join fetch}
+     * (ver {@code SpringDataUserRepository}); quem só precisa do autor de um post não paga por elas.
+     */
+    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    private Set<Account> accounts = new LinkedHashSet<>();
 
     /** O estado que o mixin {@link SoftDeletable} pede. Nasce vazio: todo usuário nasce vivo. */
     @Embedded
@@ -102,11 +129,10 @@ public class User implements Authenticatable, SoftDeletable {
     protected User() {
     }
 
-    protected User(UserId id, Email email, DisplayName name, PasswordHash passwordHash, Instant createdAt) {
+    protected User(UserId id, Email email, DisplayName name, Instant createdAt) {
         this.id = Objects.requireNonNull(id, "id");
         this.email = Objects.requireNonNull(email, "email");
         this.name = Objects.requireNonNull(name, "name");
-        this.passwordHash = Objects.requireNonNull(passwordHash, "passwordHash");
         this.createdAt = Objects.requireNonNull(createdAt, "createdAt");
     }
 
@@ -120,12 +146,48 @@ public class User implements Authenticatable, SoftDeletable {
         this.name = Objects.requireNonNull(name, "name");
     }
 
-    /** Um usuário comum: lê posts, não escreve. */
-    public static User register(UserId id, String email, String name, String passwordHash, Instant now) {
-        return new User(id, Email.of(email), DisplayName.of(name), PasswordHash.of(passwordHash), now);
+    /** Um usuário comum: lê posts, não escreve. Nasce sem credencial — quem liga é {@link #link}. */
+    public static User register(UserId id, String email, String name, Instant now) {
+        return new User(id, Email.of(email), DisplayName.of(name), now);
     }
 
     // ---- comportamento --------------------------------------------------------------------------
+
+    // ---- credenciais ----------------------------------------------------------------------------
+
+    /**
+     * Liga uma credencial a este usuário. <b>O único jeito de criar uma {@link Account}</b> — o
+     * construtor dela é pacote-visível justamente para que nenhuma conta exista sem dono.
+     * <p>
+     * Ligar o mesmo provedor duas vezes é recusado: dois {@code sub} do Keycloak apontando para o mesmo
+     * usuário local seria a maneira silenciosa de perder o rastro de qual é o bom.
+     */
+    public Account link(AuthProvider provider, String subject, PasswordHash passwordHash, Instant now) {
+        if (isLinkedTo(provider)) {
+            throw new InvalidUserException("usuário " + id + " já tem conta em " + provider);
+        }
+        Account account = new Account(AccountId.newId(), this, provider, subject, passwordHash, now);
+        accounts.add(account);
+        return account;
+    }
+
+    /** Atalho para o caso normal depois da migração: conta federada, sem senha local. */
+    public Account link(AuthProvider provider, String subject, Instant now) {
+        return link(provider, subject, null, now);
+    }
+
+    public Optional<Account> accountFor(AuthProvider provider) {
+        return accounts.stream().filter(account -> account.provider() == provider).findFirst();
+    }
+
+    public boolean isLinkedTo(AuthProvider provider) {
+        return accountFor(provider).isPresent();
+    }
+
+    /** Cópia defensiva: quem quiser mexer nas contas passa por {@link #link}. */
+    public Set<Account> accounts() {
+        return Set.copyOf(accounts);
+    }
 
     /**
      * As roles deste usuário, derivadas do tipo. Um {@link Author} sobrescreve para acrescentar
@@ -164,12 +226,6 @@ public class User implements Authenticatable, SoftDeletable {
     }
 
     // ---- o que os mixins pedem ------------------------------------------------------------------
-
-    /** Exigido por {@link Authenticatable}. Público porque a interface é pública; ver {@link PasswordHash}. */
-    @Override
-    public PasswordHash passwordHash() {
-        return passwordHash;
-    }
 
     /**
      * A guarda contra o {@code null} do Hibernate: quando <b>todas</b> as colunas de um {@code @Embedded}

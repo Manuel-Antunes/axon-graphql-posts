@@ -1,5 +1,7 @@
 package dev.manuelantunes.axonposts.support;
 
+import dev.manuelantunes.axonposts.domain.user.Author;
+import dev.manuelantunes.axonposts.domain.user.AuthProvider;
 import dev.manuelantunes.axonposts.domain.user.User;
 import dev.manuelantunes.axonposts.domain.user.UserRepository;
 import dev.manuelantunes.axonposts.domain.user.vo.Email;
@@ -33,6 +35,35 @@ public final class InMemoryUserRepository implements UserRepository {
     @Override
     public Optional<User> findById(UserId userId) {
         return users.stream().filter(user -> user.id().equals(userId)).findFirst();
+    }
+
+    @Override
+    public Optional<User> findByAccount(AuthProvider provider, String subject) {
+        return users.stream()
+                .filter(user -> user.accountFor(provider)
+                        .filter(account -> account.subject().equals(subject))
+                        .isPresent())
+                .findFirst();
+    }
+
+    /**
+     * No adapter real isto é um INSERT na tabela filha, porque o JPA não muda o tipo de uma linha. Aqui
+     * a instância é trocada por um {@code Author} com o mesmo estado — o efeito observável é o mesmo, que
+     * é o que o teste do provisionamento verifica: a leitura seguinte devolve um {@code Author}.
+     */
+    @Override
+    public void promoteToAuthor(UserId userId, String bio) {
+        findById(userId).ifPresent(user -> {
+            if (user.isAuthor()) {
+                return;
+            }
+            Author promoted = Author.register(user.id(), user.email().value(), user.name().value(),
+                    bio, user.createdAt());
+            user.accounts().forEach(account ->
+                    promoted.link(account.provider(), account.subject(), account.linkedAt()));
+            users.remove(user);
+            users.add(promoted);
+        });
     }
 
     @Override

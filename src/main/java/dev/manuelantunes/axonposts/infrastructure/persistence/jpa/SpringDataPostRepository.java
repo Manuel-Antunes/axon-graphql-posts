@@ -1,4 +1,4 @@
-package dev.manuelantunes.axonposts.infrastructure.persistence.sqlite;
+package dev.manuelantunes.axonposts.infrastructure.persistence.jpa;
 
 import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
@@ -16,7 +16,7 @@ import java.util.Collection;
 import java.util.List;
 
 /**
- * Repositório Spring Data JPA gerado em runtime — o "driver" do SQLite. Trabalha direto sobre a entidade
+ * Repositório Spring Data JPA gerado em runtime — o "driver" do PostgreSQL. Trabalha direto sobre a entidade
  * de domínio {@link Post}, que é ela própria a entidade JPA.
  * <p>
  * A leitura paginada usa o suporte nativo a <i>scrolling</i> do Spring Data: {@link ScrollPosition} de

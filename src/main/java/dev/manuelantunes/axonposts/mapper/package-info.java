@@ -19,7 +19,7 @@
  *
  * <h2>O preço de agrupar por tipo</h2>
  * Um pacote de mappers na raiz enxerga todas as camadas — inclusive a entidade JPA, que de outra forma
- * ficaria fechada dentro de {@code infrastructure.persistence.sqlite}. É a troca consciente de
+ * ficaria fechada dentro de {@code infrastructure.persistence.jpa}. É a troca consciente de
  * "agrupado por camada" por "agrupado por papel": fácil achar todo mapeamento, ao custo de um pacote que
  * cruza fronteiras.
  */

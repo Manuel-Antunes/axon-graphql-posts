@@ -18,7 +18,19 @@ public interface UserRepository {
 
     Optional<User> findById(UserId userId);
 
-    /** Usada no login: o e-mail é a credencial de entrada. */
+    /**
+     * O usuário dono de uma credencial. É <b>a</b> consulta do caminho autenticado: o token traz
+     * {@code (provider, sub)} e é daqui que sai quem ele é.
+     * <p>
+     * Devolve o {@code User} e não a {@code Account} de propósito — {@code Account} é entidade dentro
+     * deste agregado, e quem se carrega é a raiz.
+     */
+    Optional<User> findByAccount(AuthProvider provider, String subject);
+
+    /**
+     * Usada no account linking: um e-mail que já existe localmente e chega por um provedor novo é a
+     * mesma pessoa, não uma segunda.
+     */
     Optional<User> findByEmail(Email email);
 
     /**
@@ -33,6 +45,21 @@ public interface UserRepository {
      * {@code merge} faz por dentro, então restaurar precisa de uma escrita que passe por fora do filtro.
      */
     void restore(UserId userId);
+
+    /**
+     * Transforma um {@code User} existente em {@code Author}, preservando id, e-mail e posts.
+     *
+     * <h3>Por que isto não é {@code save(new Author(...))}</h3>
+     * Numa herança {@code JOINED} o tipo de uma linha é <b>onde ela existe</b>: quem tem linha em
+     * {@code authors} é autor. O JPA não muda o tipo de uma entidade gerenciada — não há
+     * {@code user.becomeAuthor()}, e recriar significaria apagar e reinserir, levando junto a chave
+     * estrangeira dos posts.
+     * <p>
+     * A operação certa é inserir a linha filha que falta, e isso é um INSERT direto. É o preço de modelar
+     * papel como subclasse, e ele só aparece quando quem manda no papel passa a ser outro sistema — aqui,
+     * o Keycloak, onde a role pode ser concedida depois de o usuário já existir.
+     */
+    void promoteToAuthor(UserId userId, String bio);
 
     boolean isEmpty();
 }

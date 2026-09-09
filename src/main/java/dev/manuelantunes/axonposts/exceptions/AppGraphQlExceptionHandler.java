@@ -10,7 +10,6 @@ import dev.manuelantunes.axonposts.domain.tag.exception.TagNotFoundException;
 import dev.manuelantunes.axonposts.domain.user.exception.InvalidUserException;
 import dev.manuelantunes.axonposts.domain.user.exception.NotAnAuthorException;
 import dev.manuelantunes.axonposts.domain.user.exception.UserNotFoundException;
-import dev.manuelantunes.axonposts.domain.user.vo.InvalidCredentialsException;
 import graphql.GraphQLError;
 import graphql.GraphqlErrorBuilder;
 import graphql.schema.DataFetchingEnvironment;
@@ -57,8 +56,8 @@ public class AppGraphQlExceptionHandler {
                     || t instanceof AlreadyDeletedException || t instanceof NotDeletedException) {
                 return error(ErrorType.BAD_REQUEST, t.getMessage(), env);
             }
-            // credencial ruim e requisição sem token são a mesma resposta: "identifique-se"
-            if (t instanceof InvalidCredentialsException || t instanceof AuthenticationException) {
+            // token ausente, expirado ou de outro emissor: tudo "identifique-se"
+            if (t instanceof AuthenticationException) {
                 return error(ErrorType.UNAUTHORIZED, "credenciais inválidas ou ausentes", env);
             }
             // autenticado, mas sem permissão. A mensagem não diz o que faltou, só que faltou

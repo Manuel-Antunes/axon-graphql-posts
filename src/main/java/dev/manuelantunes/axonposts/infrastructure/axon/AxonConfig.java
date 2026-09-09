@@ -16,14 +16,14 @@ import java.time.Clock;
  * regra de Post aparece neste arquivo, e trocar qualquer um destes beans não muda uma linha de domínio
  * ou de aplicação.
  * <ul>
- *   <li><b>Event store em memória</b>: os eventos vivem só no processo (somem no restart); o SQLite
+ *   <li><b>Event store em memória</b>: os eventos vivem só no processo (somem no restart); o Postgres
  *       guarda apenas o read model. Sem este bean o starter cairia no
- *       {@code AggregateBasedJpaEventStorageEngine} (JPA no mesmo SQLite) — os autoconfigs JPA do Axon
+ *       {@code AggregateBasedJpaEventStorageEngine} (JPA no mesmo Postgres) — os autoconfigs JPA do Axon
  *       estão excluídos no {@code application.yml} para não criar as tabelas dele. Trocar por
  *       JPA/Axon Server = remover o bean e a exclusão.</li>
  *   <li><b>Token store em memória</b>: só entra em jogo se o processor virar pooled streaming (o
  *       subscribing não usa token). Sem este bean o starter registraria um {@code JdbcTokenStore} no
- *       SQLite — o autoconfig JDBC também está excluído no {@code application.yml}.</li>
+ *       Postgres — o autoconfig JDBC também está excluído no {@code application.yml}.</li>
  *   <li><b>Sem Axon Server</b>: o connector não está no classpath, então o Axon usa
  *       {@code SimpleCommandBus} + {@code SimpleQueryBus} locais.</li>
  *   <li><b>Processor "post-projection" em modo subscribing</b>: o {@code subscribingMatching} seleciona

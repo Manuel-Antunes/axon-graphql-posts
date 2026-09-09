@@ -1,6 +1,7 @@
-package dev.manuelantunes.axonposts.infrastructure.persistence.sqlite;
+package dev.manuelantunes.axonposts.infrastructure.persistence.jpa;
 
 import dev.manuelantunes.axonposts.domain.user.Author;
+import dev.manuelantunes.axonposts.domain.user.AuthProvider;
 import dev.manuelantunes.axonposts.domain.user.User;
 import dev.manuelantunes.axonposts.domain.user.UserRepository;
 import dev.manuelantunes.axonposts.domain.user.vo.Email;
@@ -12,6 +13,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.context.annotation.Import;
+import dev.manuelantunes.axonposts.support.Containers;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 
 import java.time.Instant;
@@ -29,17 +33,25 @@ import static org.assertj.core.api.Assertions.assertThat;
  * voltaria de um restore como se fosse um leitor, sem bio.
  * <p>
  * É o tipo de bug que nenhum teste de unidade pega e que só aparece no ciclo apagar → restaurar inteiro.
+ * <p>
+ * Roda sobre um <b>Postgres de verdade</b> em Testcontainers, o mesmo do compose — ver
+ * {@link Containers} sobre por que não um banco em memória.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({JpaUserRepository.class, JpaPostRepository.class})
-@TestPropertySource(properties = {
-        "spring.datasource.url=jdbc:sqlite:target/soft-delete-test.db",
-        "spring.datasource.driver-class-name=org.sqlite.JDBC",
-        "spring.jpa.database-platform=org.hibernate.community.dialect.SQLiteDialect",
-        "spring.jpa.hibernate.ddl-auto=create-drop"
-})
+@TestPropertySource(properties = "spring.jpa.hibernate.ddl-auto=update")
 class UserSoftDeleteJpaTest {
+
+    /**
+     * O <b>mesmo</b> Postgres do resto da suíte. Este é um {@code @DataJpaTest}, que sobe um contexto
+     * diferente do dos testes ponta a ponta — apontar os dois para o mesmo container é o que faz uma
+     * única imagem servir a suíte inteira.
+     */
+    @DynamicPropertySource
+    static void datasource(DynamicPropertyRegistry registry) {
+        Containers.registerDatasource(registry);
+    }
 
     private static final Instant NOW = Instant.parse("2026-09-05T12:00:00Z");
 
@@ -57,7 +69,9 @@ class UserSoftDeleteJpaTest {
     @BeforeEach
     void setUp() {
         authorId = UserId.newId();
-        users.save(Author.register(authorId, "autor@example.com", "Autor", "hash", "bio do autor", NOW));
+        Author author = Author.register(authorId, "autor@example.com", "Autor", "bio do autor", NOW);
+        author.link(AuthProvider.KEYCLOAK, "kc-" + authorId.value(), NOW);
+        users.save(author);
         flushAndClear();
     }
 

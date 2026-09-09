@@ -51,7 +51,7 @@ import java.util.Set;
  * <ul>
  *   <li>{@code @Entity} + {@code @Table}: o estado atual é gravado direto, com os value objects como
  *       {@code @Embedded} e as tags como {@code @ManyToMany}. JPA é agnóstico de banco, então o
- *       mapeamento vale para SQLite, Postgres ou qualquer outro;</li>
+ *       mapeamento vale para Postgres, MySQL ou qualquer outro;</li>
  *   <li>{@code @EventSourced(tagKey = "postId", idType = PostId.class)}: o histórico são os eventos com
  *       a tag {@code postId=<id>}, e é deles que o Axon reidrata a entidade ao tratar um command;</li>
  *   <li>o comportamento: {@link #create}, {@link #update} e {@link #assignTag} validam invariantes e
@@ -102,7 +102,8 @@ public class Post implements SoftDeletable {
     @AttributeOverride(name = "value", column = @Column(name = "title", length = 200, nullable = false))
     private PostTitle title;
 
-    // TEXT em vez de @Lob: o driver sqlite-jdbc não implementa a API de CLOB do JDBC
+    // TEXT em vez de @Lob: no Postgres o @Lob viraria um large object com OID à parte, e o corpo de um
+    // post é texto comum. TEXT é o tipo certo e não tem limite prático
     @Embedded
     @AttributeOverride(name = "value", column = @Column(name = "content", columnDefinition = "TEXT", nullable = false))
     private PostContent content;

@@ -4,6 +4,7 @@ import dev.manuelantunes.axonposts.domain.user.Author;
 import dev.manuelantunes.axonposts.domain.user.User;
 import dev.manuelantunes.axonposts.domain.user.UserRepository;
 import dev.manuelantunes.axonposts.domain.user.vo.UserId;
+import dev.manuelantunes.axonposts.dto.controller.AccountView;
 import dev.manuelantunes.axonposts.dto.controller.AuthorView;
 import dev.manuelantunes.axonposts.dto.controller.UserView;
 import org.slf4j.Logger;
@@ -64,6 +65,28 @@ public class UserFieldsController {
         return load(sources, user -> user.email().value());
     }
 
+    /**
+     * {@code User.accounts} — também na interface, e também em lote.
+     * <p>
+     * As contas já vêm com o usuário ({@code @OneToMany EAGER}), então este método não gera consulta
+     * extra: a mesma leitura que resolveu o e-mail resolve as credenciais.
+     */
+    @BatchMapping(typeName = "User", field = "accounts")
+    public Mono<Map<UserView, List<AccountView>>> accounts(List<UserView> sources) {
+        return byId(sources).map(byId -> sources.stream()
+                .filter(source -> byId.containsKey(source.id()))
+                .collect(Collectors.toMap(
+                        Function.identity(),
+                        source -> byId.get(source.id()).accounts().stream()
+                                .map(account -> new AccountView(
+                                        account.provider().name(),
+                                        account.subject(),
+                                        account.hasPassword(),
+                                        account.linkedAt()))
+                                .toList(),
+                        (first, second) -> first)));
+    }
+
     /** {@code Author.bio} — só a subclasse tem, então o mapeamento é no tipo concreto. */
     @BatchMapping(typeName = "Author", field = "bio")
     public Mono<Map<AuthorView, String>> bio(List<AuthorView> sources) {
@@ -77,20 +100,22 @@ public class UserFieldsController {
      * resposta silenciosamente errada.
      */
     private <V extends UserView> Mono<Map<V, String>> load(List<V> sources, Function<User, String> field) {
+        return byId(sources).map(byId -> sources.stream()
+                .filter(source -> byId.containsKey(source.id()))
+                .collect(Collectors.toMap(
+                        Function.identity(),
+                        source -> field.apply(byId.get(source.id())),
+                        (first, second) -> first)));
+    }
+
+    /** A consulta em lote, compartilhada pelos três campos: uma ida ao banco por resposta GraphQL. */
+    private Mono<Map<String, User>> byId(List<? extends UserView> sources) {
         return Mono.fromCallable(() -> {
                     log.debug("lote de usuários: {} numa consulta", sources.size());
-
-                    Map<String, User> byId = users
+                    return users
                             .findAllById(sources.stream().map(source -> UserId.of(source.id())).toList())
                             .stream()
                             .collect(Collectors.toMap(user -> user.id().value(), Function.identity()));
-
-                    return sources.stream()
-                            .filter(source -> byId.containsKey(source.id()))
-                            .collect(Collectors.toMap(
-                                    Function.identity(),
-                                    source -> field.apply(byId.get(source.id())),
-                                    (first, second) -> first));
                 })
                 .subscribeOn(Schedulers.boundedElastic());
     }

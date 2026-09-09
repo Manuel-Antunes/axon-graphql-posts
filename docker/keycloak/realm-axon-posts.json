@@ -1,0 +1,83 @@
+{
+  "realm": "axon-posts",
+  "displayName": "Axon GraphQL Posts",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "verifyEmail": false,
+  "accessTokenLifespan": 1800,
+
+  "roles": {
+    "realm": [
+      {
+        "name": "user",
+        "description": "Todo usuario autenticado. Corresponde a Role.USER e vira ROLE_USER."
+      },
+      {
+        "name": "author",
+        "description": "Pode escrever posts. Corresponde a Role.AUTHOR, vira ROLE_AUTHOR e faz o provisionamento criar uma linha em authors."
+      }
+    ]
+  },
+
+  "clients": [
+    {
+      "clientId": "axon-posts-api",
+      "name": "Axon Posts API",
+      "description": "Cliente publico. directAccessGrantsEnabled permite o grant password, que e o que torna a POC testavel por curl e pelos testes de integracao. Num cliente de producao isso ficaria desligado, e o token viria do authorization code + PKCE.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["*"],
+      "webOrigins": ["*"],
+      "fullScopeAllowed": true,
+      "attributes": {
+        "post.logout.redirect.uris": "+"
+      }
+    }
+  ],
+
+  "users": [
+    {
+      "username": "manuel@example.com",
+      "email": "manuel@example.com",
+      "emailVerified": true,
+      "firstName": "Manuel",
+      "lastName": "Antunes",
+      "enabled": true,
+      "credentials": [
+        { "type": "password", "value": "segredo123", "temporary": false }
+      ],
+      "realmRoles": ["user", "author"]
+    },
+    {
+      "username": "leitor@example.com",
+      "email": "leitor@example.com",
+      "emailVerified": true,
+      "firstName": "Leitor",
+      "lastName": "Anonimo",
+      "enabled": true,
+      "credentials": [
+        { "type": "password", "value": "segredo123", "temporary": false }
+      ],
+      "realmRoles": ["user"]
+    },
+    {
+      "username": "promovido@example.com",
+      "email": "promovido@example.com",
+      "emailVerified": true,
+      "firstName": "Autor",
+      "lastName": "Recente",
+      "enabled": true,
+      "credentials": [
+        { "type": "password", "value": "segredo123", "temporary": false }
+      ],
+      "realmRoles": ["user", "author"]
+    }
+  ]
+}

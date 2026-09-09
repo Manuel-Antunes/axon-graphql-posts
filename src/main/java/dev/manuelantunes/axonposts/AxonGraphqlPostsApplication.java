@@ -3,25 +3,16 @@ package dev.manuelantunes.axonposts;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-
+/**
+ * Ponto de entrada.
+ * <p>
+ * A criação do diretório {@code ./data} saiu junto com o SQLite: o banco agora é um serviço, não um
+ * arquivo — {@code docker compose up -d} antes de subir a aplicação.
+ */
 @SpringBootApplication
 public class AxonGraphqlPostsApplication {
 
     public static void main(String[] args) {
-        ensureSqliteDirectory();
         SpringApplication.run(AxonGraphqlPostsApplication.class, args);
-    }
-
-    /** O driver SQLite cria o arquivo, mas não o diretório de ./data/posts.db. */
-    private static void ensureSqliteDirectory() {
-        try {
-            Files.createDirectories(Path.of("data"));
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
     }
 }

@@ -1,15 +1,17 @@
 package dev.manuelantunes.axonposts.infrastructure.security;
 
+import dev.manuelantunes.axonposts.application.auth.Identity;
+import dev.manuelantunes.axonposts.application.auth.UserProvisioning;
 import dev.manuelantunes.axonposts.domain.user.Author;
+import dev.manuelantunes.axonposts.domain.user.AuthProvider;
 import dev.manuelantunes.axonposts.domain.user.User;
-import dev.manuelantunes.axonposts.domain.user.UserRepository;
 import dev.manuelantunes.axonposts.domain.user.exception.NotAnAuthorException;
-import dev.manuelantunes.axonposts.domain.user.exception.UserNotFoundException;
-import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import org.springframework.security.authentication.AuthenticationCredentialsNotFoundException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -17,56 +19,78 @@ import reactor.core.scheduler.Schedulers;
 /**
  * Quem está logado, como entidade de domínio.
  *
- * <h2>Do token para a entidade</h2>
- * O {@code SecurityContext} reativo entrega o {@code sub} do JWT — um id, e nada mais. Esta classe o
- * troca pela entidade concreta do banco, que é onde mora a verdade sobre o tipo: um id de autor volta
- * como {@code Author} porque existe linha em {@code authors}, não porque o token disse que sim.
+ * <h2>Do token do Keycloak para o usuário local</h2>
+ * O {@code sub} do token identifica a pessoa <b>no Keycloak</b>. A ponte até o {@code User} daqui é a
+ * tabela {@code accounts}: o par {@code (provider, sub)} é a chave, e é o {@link UserProvisioning} que a
+ * resolve — criando ou ligando o usuário na primeira vez que aquele token aparece.
  * <p>
- * Vale a ida ao banco: o token pode ter sido emitido antes de o papel ser revogado, e a versão barata da
- * verificação ({@code hasRole}) é justamente a que não sabe disso.
+ * Antes da migração este método fazia {@code users.findById(sub)}, porque o {@code sub} <b>era</b> o id
+ * local. Agora são dois espaços de identidade distintos, e confundi-los seria amarrar as chaves
+ * primárias da aplicação às do broker — que é exatamente o que a tabela de contas existe para evitar.
  *
- * <h2>Por que {@code ReactiveSecurityContextHolder}</h2>
- * Em WebFlux o {@code SecurityContext} vive no contexto do Reactor, não num {@code ThreadLocal} — é o
- * que faz ele sobreviver ao {@code subscribeOn(boundedElastic())} das mutations. O Spring GraphQL
- * propaga esse contexto para dentro dos data fetchers, então isto funciona igual num
- * {@code @MutationMapping} e num {@code @QueryMapping}.
+ * <h2>O tipo continua vindo do banco</h2>
+ * A role {@code author} do token diz o que a pessoa <i>pode</i>; a linha em {@code authors} diz o que ela
+ * <i>é</i>. {@link #requireAuthor()} continua confirmando com {@code instanceof}, e o provisionamento
+ * cuida de manter as duas em dia.
  */
 @Component
 public class CurrentUser {
 
-    private final UserRepository users;
+    private final UserProvisioning provisioning;
 
-    public CurrentUser(UserRepository users) {
-        this.users = users;
+    public CurrentUser(UserProvisioning provisioning) {
+        this.provisioning = provisioning;
     }
 
-    /** O id de quem está autenticado; erro se a requisição for anônima. */
-    public Mono<UserId> id() {
+    /** O token cru de quem está autenticado; erro se a requisição for anônima. */
+    public Mono<Jwt> token() {
         return ReactiveSecurityContextHolder.getContext()
                 .map(SecurityContext::getAuthentication)
                 .filter(Authentication::isAuthenticated)
-                .map(authentication -> UserId.of(authentication.getName()))
+                .filter(JwtAuthenticationToken.class::isInstance)
+                .cast(JwtAuthenticationToken.class)
+                .map(JwtAuthenticationToken::getToken)
                 .switchIfEmpty(Mono.error(() -> new AuthenticationCredentialsNotFoundException(
-                        "requisição sem token: mande Authorization: Bearer <token>")));
+                        "requisição sem token: mande Authorization: Bearer <token do Keycloak>")));
     }
 
-    /** O usuário autenticado, no tipo concreto dele. */
+    /** O usuário local correspondente ao token, criado ou ligado na primeira vez. */
     public Mono<User> require() {
-        return id().flatMap(userId -> Mono
-                .fromCallable(() -> users.findById(userId).orElseThrow(() -> new UserNotFoundException(userId)))
+        return token().flatMap(jwt -> Mono
+                .fromCallable(() -> provisioning.provision(identityOf(jwt)))
                 .subscribeOn(Schedulers.boundedElastic()));
     }
 
     /**
-     * O usuário autenticado <b>como autor</b>.
-     * <p>
-     * Este é o upcast que o {@code @PreAuthorize("hasRole('AUTHOR')")} do controller torna seguro: quando
-     * o método chega a rodar, a claim já garantiu o papel, e o {@code instanceof} só confirma contra o
-     * banco. O {@code else} existe para quando as duas discordam — e aí quem manda é a tabela.
+     * O usuário autenticado <b>como autor</b>. O {@code @PreAuthorize("hasRole('AUTHOR')")} do controller
+     * já barrou pela role do token; este {@code instanceof} confirma contra o banco.
      */
     public Mono<Author> requireAuthor() {
         return require().flatMap(user -> user instanceof Author author
                 ? Mono.just(author)
                 : Mono.error(new NotAnAuthorException(user.id())));
+    }
+
+    /**
+     * Claims → {@link Identity}. É aqui, e só aqui, que o formato do token do Keycloak é
+     * conhecido.
+     * <p>
+     * {@code identity_provider} aparece quando o Keycloak intermediou um login social: o provedor
+     * registrado passa a ser o de origem ({@code GOOGLE}, {@code GITHUB}), não o broker. É o que faz duas
+     * entradas diferentes da mesma pessoa virarem duas linhas em {@code accounts} — e o account linking
+     * ter o que ligar.
+     */
+    private static Identity identityOf(Jwt jwt) {
+        String email = jwt.getClaimAsString("email");
+        String preferredUsername = jwt.getClaimAsString("preferred_username");
+        String name = jwt.getClaimAsString("name");
+
+        return new Identity(
+                AuthProvider.fromAlias(jwt.getClaimAsString("identity_provider")),
+                jwt.getSubject(),
+                email != null ? email : preferredUsername,
+                name != null && !name.isBlank() ? name : preferredUsername,
+                KeycloakRealmRolesConverter.hasAuthorRole(jwt)
+        );
     }
 }

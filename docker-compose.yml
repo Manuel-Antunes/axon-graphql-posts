@@ -1,0 +1,63 @@
+# Ambiente de desenvolvimento: Postgres (dois bancos) + Keycloak com o realm já importado.
+#
+#   docker compose up -d
+#   ./mvnw spring-boot:run
+#
+# Keycloak:  http://localhost:8081  (admin / admin)
+# Realm:     axon-posts
+# Usuários:  manuel@example.com / segredo123  (role author)
+#            leitor@example.com / segredo123  (sem role author)
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: axonposts-postgres
+    environment:
+      POSTGRES_DB: axonposts
+      POSTGRES_USER: axonposts
+      POSTGRES_PASSWORD: axonposts
+    ports:
+      - "5432:5432"
+    volumes:
+      # O init roda só quando o volume está vazio. Para reexecutar: docker compose down -v
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # -d é importante: sem ele o pg_isready responde antes de o init script ter rodado
+      test: ["CMD-SHELL", "pg_isready -U axonposts -d axonposts"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: axonposts-keycloak
+    # start-dev: HTTP puro e sem hostname fixo. Em produção seria `start` com TLS e KC_HOSTNAME.
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # O banco e o usuário criados pelo 01-keycloak-role.sql — não os da aplicação
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      # 8081 fora, 8080 dentro: 8080 é da aplicação
+      - "8081:8080"
+    volumes:
+      - ./docker/keycloak/realm-axon-posts.json:/opt/keycloak/data/import/realm-axon-posts.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # A imagem não tem curl nem wget; o Keycloak 25+ expõe o health por esta porta de gestão
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000; echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '\"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+volumes:
+  postgres-data:

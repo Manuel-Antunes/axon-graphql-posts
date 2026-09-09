@@ -1,4 +1,4 @@
-package dev.manuelantunes.axonposts.infrastructure.persistence.sqlite;
+package dev.manuelantunes.axonposts.infrastructure.persistence.jpa;
 
 import dev.manuelantunes.axonposts.domain.tag.Tag;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
