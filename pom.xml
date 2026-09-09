@@ -27,6 +27,8 @@
         <mapstruct.version>1.6.3</mapstruct.version>
         <!-- Módulo Testcontainers do Keycloak; não está no BOM do Boot -->
         <testcontainers-keycloak.version>3.7.0</testcontainers-keycloak.version>
+        <!-- JaCoCo: cobertura dos testes. O parent do Boot não gerencia a versão deste plugin -->
+        <jacoco.version>0.8.13</jacoco.version>
     </properties>
 
     <dependencyManagement>
@@ -50,6 +52,23 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-graphql</artifactId>
+        </dependency>
+
+        <!-- DevTools: reinício automático quando as classes mudam, e LiveReload.
+             `optional` para não vazar para quem depender deste artefato; o spring-boot-maven-plugin já o
+             exclui do jar executável, então isto é ferramenta de desenvolvimento e nada mais.
+
+             ATENÇÃO ao que um reinício significa aqui: o event store é em memória (AxonConfig), então
+             cada restart apaga os eventos enquanto as LINHAS continuam no Postgres. Um post criado antes
+             do restart continua aparecendo em `post(id:)` e some do `updatePost`, que reidrata o agregado
+             do stream — EntityNotFoundException, NOT_FOUND. Não é bug do DevTools; é a POC. Para uma
+             sessão longa de edição, ou se recria os dados depois de cada restart, ou se troca o
+             InMemoryEventStorageEngine pelo event store JPA. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-devtools</artifactId>
+            <scope>runtime</scope>
+            <optional>true</optional>
         </dependency>
 
         <!-- Bean Validation (Hibernate Validator): valida os inputs do GraphQL na borda.
@@ -217,6 +236,29 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <!-- JaCoCo: o agente entra no surefire por prepare-agent e o relatório sai em
+                 target/site/jacoco (HTML, XML e CSV) ao fim da fase test. Nenhum `check` com mínimo por
+                 enquanto: cobertura aqui é instrumento de leitura, não portão de build. -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

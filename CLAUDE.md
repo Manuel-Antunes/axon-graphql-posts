@@ -19,10 +19,18 @@ docker compose down -v         # reset total (volume + init scripts do Postgres)
 ./mvnw test -Dtest=PostLifecycleE2ETest#aNewPostArrivesAlreadyTaggedAtVersionTwo   # um método
 ./mvnw test -Dtest='*E2ETest'                                # só os ponta a ponta
 bash scripts/poc-smoke.sh      # roteiro manual: builda, sobe, abre SSE, dispara mutations (.poc-logs/)
+open target/site/jacoco/index.html   # cobertura — o JaCoCo roda junto com `test`, sem alvo separado
 ```
+
+`spring-boot:run` reinicia sozinho quando uma classe muda (DevTools; ~0,8s contra ~3,8s do arranque frio).
+**Cada reinício apaga o event store, que é em memória**: as linhas continuam no Postgres, os eventos não.
+Um post criado antes do restart segue respondendo em `post(id:)` e passa a dar `NOT_FOUND` no `updatePost`,
+que reidrata o agregado do stream. Para editar sem perder os dados a cada compilação, descomente o
+`spring.devtools.restart.trigger-file` no `application.yml` — aí o restart só acontece com `touch .reload`.
 
 Não há plugin de lint/format configurado. O gate de qualidade que existe é o compilador: MapStruct roda
 com `-Amapstruct.unmappedTargetPolicy=ERROR`, então um campo de destino sem origem **quebra o build**.
+O JaCoCo também não tem `check` com mínimo: cobertura aqui é instrumento de leitura, não portão.
 
 Token para testar à mão (o realm habilita `directAccessGrantsEnabled` só por isso):
 

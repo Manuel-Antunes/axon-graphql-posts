@@ -36,6 +36,21 @@ spring:
           # decoder sozinho — não há chave nem segredo neste projeto
           issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8081/realms/axon-posts}
 
+  # ---- DevTools (só em desenvolvimento; desliga sozinho em teste e no jar empacotado) ----
+  devtools:
+    restart:
+      enabled: true
+      # O reinício apaga o event store, que é em memória — as linhas ficam no Postgres, os eventos não.
+      # Um post de antes do restart continua respondendo em `post(id:)` e passa a falhar no `updatePost`,
+      # que reidrata o agregado do stream. Se isso incomodar numa sessão de edição, descomente o
+      # trigger-file: aí o restart só acontece quando você tocar o arquivo, e não a cada classe salva.
+      #   touch .reload
+      # trigger-file: .reload
+    livereload:
+      # a aplicação não serve HTML próprio (só o GraphiQL, que é estático): não há o que recarregar,
+      # e desligado evita abrir a porta 35729
+      enabled: false
+
   # ---- Spring for GraphQL ----------------------------------------------------------------
   graphql:
     graphiql:
