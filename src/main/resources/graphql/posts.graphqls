@@ -140,10 +140,11 @@ type Query {
     """
     Posts em ordem de criação, como Relay cursor connection.
 
-    Os tipos PostConnection / PostEdge / PageInfo NÃO são declarados aqui de propósito: o
-    ConnectionTypeDefinitionConfigurer do Spring GraphQL os gera a partir do sufixo "Connection"
-    quando a app sobe. O controller devolve um Window<PostView> do Spring Data e o
-    WindowConnectionAdapter monta edges, cursores e pageInfo.
+    Os tipos PostConnection / PostEdge / PageInfo são os do bloco gerado no fim deste arquivo: quem os
+    escreve é o ConnectionTypeDefinitionConfigurer do Spring GraphQL, a partir do sufixo "Connection",
+    e o GeneratedConnectionTypesTest só os traz para cá — porque o IDE e os geradores de cliente leem
+    este arquivo, não a memória da aplicação. O controller devolve um Window<PostView> do Spring Data e
+    o WindowConnectionAdapter monta edges, cursores e pageInfo.
 
     Paginação só para frente (first/after): é o que o read model, ordenado por criação, comporta.
     """
@@ -237,3 +238,40 @@ type Subscription {
     """
     onPostUpdated(postId: ID, authorId: ID): Post!
 }
+
+# >>> GERADO por GeneratedConnectionTypesTest — não editar à mão
+#
+# São os tipos que o ConnectionTypeDefinitionConfigurer do Spring GraphQL criaria sozinho, a partir
+# do sufixo "Connection" dos campos acima. Estão aqui porque o SDL é lido também pelo IDE e por
+# geradores de cliente, para quem o que o Spring monta em memória não existe.
+#
+# Para atualizar: ./mvnw test -Dtest=GeneratedConnectionTypesTest
+
+type PageInfo {
+  hasPreviousPage: Boolean!
+  hasNextPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+type PostConnection {
+  edges: [PostEdge]!
+  pageInfo: PageInfo!
+}
+
+type PostEdge {
+  cursor: String!
+  node: Post!
+}
+
+type TagConnection {
+  edges: [TagEdge]!
+  pageInfo: PageInfo!
+}
+
+type TagEdge {
+  cursor: String!
+  node: Tag!
+}
+
+# <<< fim do bloco gerado

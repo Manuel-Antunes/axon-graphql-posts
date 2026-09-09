@@ -1,0 +1,27 @@
+# Escopo do schema para o plugin GraphQL do IDE. Não é lido pela aplicação — o Spring monta o schema a
+# partir de classpath:graphql/**, e nada aqui muda runtime.
+#
+# Por que existir, já que o plugin descobre .graphqls sozinho: descoberta automática junta TODO arquivo
+# de schema do projeto num só. Uma cópia em target/classes/graphql/ (que existe depois de cada build) ou
+# um segundo schema no futuro viram "tipo redefinido", e o erro aparece longe da causa. Aqui a lista é
+# explícita: estes dois arquivos, e mais nenhum.
+schema:
+  # o schema inteiro, tipos de connection inclusos (bloco gerado no fim do arquivo)
+  - src/main/resources/graphql/posts.graphqls
+
+extensions:
+  endpoints:
+    # Executa do editor a query em que o cursor está (o ícone na margem), inclusive as injetadas com
+    # //language=GraphQL nos testes. Exige `docker compose up -d` e a app de pé.
+    local:
+      url: http://localhost:8080/graphql
+      headers:
+        # queries são abertas; para mutations, exporte um token antes de abrir o IDE:
+        #   export GRAPHQL_TOKEN=$(curl -s -X POST \
+        #     http://localhost:8081/realms/axon-posts/protocol/openid-connect/token \
+        #     -d grant_type=password -d client_id=axon-posts-api \
+        #     -d username=manuel@example.com -d password=segredo123 | jq -r .access_token)
+        Authorization: Bearer ${env:GRAPHQL_TOKEN}
+      # o schema vem dos arquivos acima, não da introspecção: assim ele continua correto com a app
+      # desligada, que é quando se edita o .graphqls
+      introspect: false

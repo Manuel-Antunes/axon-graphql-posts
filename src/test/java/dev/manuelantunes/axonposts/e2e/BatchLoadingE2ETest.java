@@ -33,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class BatchLoadingE2ETest extends AbstractGraphQlE2ETest {
 
     /** Pede tudo o que é resolvido à parte: tags, e-mail do autor e os posts dele. */
+    //language=GraphQL
     private static final String FAT_QUERY = """
             query Tudo($n: Int!) {
               posts(first: $n) {

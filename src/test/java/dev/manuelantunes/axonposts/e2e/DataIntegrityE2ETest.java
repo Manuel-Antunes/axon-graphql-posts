@@ -121,7 +121,9 @@ class DataIntegrityE2ETest extends AbstractGraphQlE2ETest {
         // a FK não atrapalha quem tem direito: o autor do token escreve normalmente
         createPost(asAuthor(), "Do autor de verdade", "conteúdo");
 
-        anonymous.document("{ posts(first: 5) { edges { node { title } } } }").execute()
+        anonymous.document(
+                //language=GraphQL
+                "{ posts(first: 5) { edges { node { title } } } }").execute()
                 .path("posts.edges").entityList(Object.class).hasSize(1);
         assertThat(KeycloakContainerConfig.AUTHOR_USERNAME).isNotBlank();
     }

@@ -38,13 +38,18 @@ class AuthorizationE2ETest extends AbstractGraphQlE2ETest {
         @Override
         public Stream<? extends Arguments> provideArguments(ExtensionContext context) {
             return Stream.of(
+
                     Arguments.of("createPost",
+                            //language=GraphQL
                             "mutation { createPost(input: {title: \"x\", content: \"y\"}) { id } }"),
                     Arguments.of("updatePost",
+                            //language=GraphQL
                             "mutation { updatePost(input: {id: \"nao-existe\", title: \"x\"}) { id } }"),
                     Arguments.of("deletePost",
+                            //language=GraphQL
                             "mutation { deletePost(id: \"nao-existe\") }"),
                     Arguments.of("restorePost",
+                            //language=GraphQL
                             "mutation { restorePost(id: \"nao-existe\") { id } }"));
         }
     }
@@ -63,7 +68,9 @@ class AuthorizationE2ETest extends AbstractGraphQlE2ETest {
 
     @Test
     void aDeniedRequestProvisionsNothing() {
-        asReader().document("mutation { createPost(input: {title: \"x\", content: \"y\"}) { id } }")
+        asReader().document(
+                //language=GraphQL
+                "mutation { createPost(input: {title: \"x\", content: \"y\"}) { id } }")
                 .execute()
                 .errors().expect(error -> true).verify();
 
@@ -77,7 +84,9 @@ class AuthorizationE2ETest extends AbstractGraphQlE2ETest {
         createPost(asAuthor(), "Público", "qualquer um lê");
 
         // queries não exigem token: é o que permite a home do blog funcionar deslogado
-        anonymous.document("{ posts(first: 5) { edges { node { title author { name } } } } }")
+        anonymous.document(
+                //language=GraphQL
+                "{ posts(first: 5) { edges { node { title author { name } } } } }")
                 .execute()
                 .path("posts.edges").entityList(Object.class).hasSize(1)
                 .path("posts.edges[0].node.author.name").entity(String.class).isEqualTo("Manuel Antunes");
@@ -85,18 +94,26 @@ class AuthorizationE2ETest extends AbstractGraphQlE2ETest {
 
     @Test
     void meRequiresATokenButAnyRoleServes() {
-        anonymous.document("{ me { id } }").execute()
+        anonymous.document(
+                //language=GraphQL
+                "{ me { id } }").execute()
                 .errors().expect(error -> error.getExtensions().get("classification") != null).verify();
 
-        asReader().document("{ me { __typename email } }").execute()
+        asReader().document(
+                //language=GraphQL
+                "{ me { __typename email } }").execute()
                 .path("me.__typename").entity(String.class).isEqualTo("Reader");
     }
 
     @Test
     void theRealmRoleDecidesTheLocalType() {
-        asAuthor().document("{ me { __typename } }").execute()
+        asAuthor().document(
+                //language=GraphQL
+                "{ me { __typename } }").execute()
                 .path("me.__typename").entity(String.class).isEqualTo("Author");
-        asReader().document("{ me { __typename } }").execute()
+        asReader().document(
+                //language=GraphQL
+                "{ me { __typename } }").execute()
                 .path("me.__typename").entity(String.class).isEqualTo("Reader");
 
         // e as duas contas ficaram ligadas ao provedor certo
@@ -116,13 +133,19 @@ class AuthorizationE2ETest extends AbstractGraphQlE2ETest {
         String alheio = createPost(asAuthor(), "Do Manuel", "conteúdo");
         HttpGraphQlTester outro = as(KeycloakContainerConfig.PROMOTED_USERNAME);
 
-        expectForbidden(outro.document("mutation E($id: ID!) { updatePost(input: {id: $id, title: \"x\"}) { id } }")
+        expectForbidden(outro.document(
+                //language=GraphQL
+                "mutation E($id: ID!) { updatePost(input: {id: $id, title: \"x\"}) { id } }")
                 .variable("id", alheio).execute());
-        expectForbidden(outro.document("mutation D($id: ID!) { deletePost(id: $id) }")
+        expectForbidden(outro.document(
+                //language=GraphQL
+                "mutation D($id: ID!) { deletePost(id: $id) }")
                 .variable("id", alheio).execute());
 
         // e o post continua intacto
-        anonymous.document("query P($id: ID!) { post(id: $id) { title } }")
+        anonymous.document(
+                //language=GraphQL
+                "query P($id: ID!) { post(id: $id) { title } }")
                 .variable("id", alheio).execute()
                 .path("post.title").entity(String.class).isEqualTo("Do Manuel");
     }
@@ -132,12 +155,18 @@ class AuthorizationE2ETest extends AbstractGraphQlE2ETest {
         HttpGraphQlTester author = asAuthor();
         String meu = createPost(author, "Meu", "conteúdo");
 
-        author.document("mutation E($id: ID!) { updatePost(input: {id: $id, title: \"Meu, editado\"}) { title } }")
+        author.document(
+                //language=GraphQL
+                "mutation E($id: ID!) { updatePost(input: {id: $id, title: \"Meu, editado\"}) { title } }")
                 .variable("id", meu).execute()
                 .path("updatePost.title").entity(String.class).isEqualTo("Meu, editado");
-        author.document("mutation D($id: ID!) { deletePost(id: $id) }").variable("id", meu).execute()
+        author.document(
+                //language=GraphQL
+                "mutation D($id: ID!) { deletePost(id: $id) }").variable("id", meu).execute()
                 .path("deletePost").entity(Boolean.class).isEqualTo(true);
-        author.document("mutation R($id: ID!) { restorePost(id: $id) { title } }").variable("id", meu).execute()
+        author.document(
+                //language=GraphQL
+                "mutation R($id: ID!) { restorePost(id: $id) { title } }").variable("id", meu).execute()
                 .path("restorePost.title").entity(String.class).isEqualTo("Meu, editado");
     }
 
@@ -149,10 +178,14 @@ class AuthorizationE2ETest extends AbstractGraphQlE2ETest {
     void ownershipHoldsEvenWhenThePostIsHiddenBySoftDelete() {
         HttpGraphQlTester author = asAuthor();
         String meu = createPost(author, "Some e volta", "conteúdo");
-        author.document("mutation D($id: ID!) { deletePost(id: $id) }").variable("id", meu).execute();
+        author.document(
+                //language=GraphQL
+                "mutation D($id: ID!) { deletePost(id: $id) }").variable("id", meu).execute();
 
         expectForbidden(as(KeycloakContainerConfig.PROMOTED_USERNAME)
-                .document("mutation R($id: ID!) { restorePost(id: $id) { id } }")
+                .document(
+                        //language=GraphQL
+                        "mutation R($id: ID!) { restorePost(id: $id) { id } }")
                 .variable("id", meu).execute());
     }
 

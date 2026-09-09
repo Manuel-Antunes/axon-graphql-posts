@@ -62,7 +62,9 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
     void theFirstRequestWithATokenCreatesTheLocalUser() {
         assertThat(users.findByEmail(Email.of(KeycloakContainerConfig.AUTHOR_USERNAME))).isEmpty();
 
-        asAuthor().document("{ me { __typename id name email } }")
+        asAuthor().document(
+                //language=GraphQL
+                "{ me { __typename id name email } }")
                 .execute()
                 .path("me.__typename").entity(String.class).isEqualTo("Author")
                 .path("me.name").entity(String.class).isEqualTo("Manuel Antunes")
@@ -82,8 +84,12 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
     void provisioningIsIdempotent() {
         HttpGraphQlTester author = asAuthor();
 
-        String first = author.document("{ me { id } }").execute().path("me.id").entity(String.class).get();
-        String second = author.document("{ me { id } }").execute().path("me.id").entity(String.class).get();
+        String first = author.document(
+                //language=GraphQL
+                "{ me { id } }").execute().path("me.id").entity(String.class).get();
+        String second = author.document(
+                //language=GraphQL
+                "{ me { id } }").execute().path("me.id").entity(String.class).get();
 
         assertThat(second).isEqualTo(first);
         assertThat(jdbc.queryForObject("select count(*) from users", Integer.class)).isEqualTo(1);
@@ -92,7 +98,9 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
 
     @Test
     void theAccountIsVisibleAndHasNoLocalPassword() {
-        asAuthor().document("{ me { accounts { provider subject hasPassword } } }")
+        asAuthor().document(
+                //language=GraphQL
+                "{ me { accounts { provider subject hasPassword } } }")
                 .execute()
                 .path("me.accounts").entityList(Object.class).hasSize(1)
                 .path("me.accounts[0].provider").entity(String.class).isEqualTo("KEYCLOAK")
@@ -105,7 +113,9 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
         // já existe alguém local com este e-mail, sem conta nenhuma ligada
         UserId existingId = registerLocally(KeycloakContainerConfig.READER_USERNAME, "Cadastro Antigo", false);
 
-        asReader().document("{ me { id } }").execute()
+        asReader().document(
+                //language=GraphQL
+                "{ me { id } }").execute()
                 .path("me.id").entity(String.class).isEqualTo(existingId.value());
 
         // account linking: a mesma pessoa, uma conta a mais — e não um segundo usuário
@@ -117,13 +127,17 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
     @Test
     void linkingASecondProviderKeepsTheSameUserAndItsPosts() {
         HttpGraphQlTester author = asAuthor();
-        String userId = author.document("{ me { id } }").execute().path("me.id").entity(String.class).get();
+        String userId = author.document(
+                //language=GraphQL
+                "{ me { id } }").execute().path("me.id").entity(String.class).get();
         createPost(author, "Escrito antes do segundo provedor", "conteúdo");
 
         // a mesma pessoa passa a entrar também pelo Google: uma credencial a mais no MESMO agregado
         commandGateway.sendAndWait(new LinkAccount(UserId.of(userId), AuthProvider.GOOGLE, "google-sub-1"));
 
-        author.document("""
+        author.document(
+                //language=GraphQL
+                """
                         { me { id accounts { provider }
                                ... on Author { posts(first: 5) { edges { node { title } } } } } }""")
                 .execute()
@@ -155,7 +169,9 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
         assertThat(users.findById(readerId).orElseThrow().isAuthor()).isFalse();
 
         String authorId = as(KeycloakContainerConfig.PROMOTED_USERNAME)
-                .document("{ me { __typename id } }")
+                .document(
+                        //language=GraphQL
+                        "{ me { __typename id } }")
                 .execute()
                 .path("me.__typename").entity(String.class).isEqualTo("Author")
                 .path("me.id").entity(String.class).get();
@@ -191,7 +207,9 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
         // a promoção precisa valer já nesta requisição: o CurrentUser relê para pegar o tipo novo
         createPost(as(KeycloakContainerConfig.PROMOTED_USERNAME), "Primeiro depois da promoção", "c");
 
-        anonymous.document("{ posts(first: 5) { edges { node { title author { name } } } } }")
+        anonymous.document(
+                //language=GraphQL
+                "{ posts(first: 5) { edges { node { title author { name } } } } }")
                 .execute()
                 .path("posts.edges").entityList(Object.class).hasSize(1);
     }
@@ -214,10 +232,14 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
     @Test
     void deletingTheAccountHidesItAndLoggingInAgainBringsItBack() {
         HttpGraphQlTester author = asAuthor();
-        String userId = author.document("{ me { id } }").execute().path("me.id").entity(String.class).get();
+        String userId = author.document(
+                //language=GraphQL
+                "{ me { id } }").execute().path("me.id").entity(String.class).get();
         createPost(author, "Escrito antes de apagar a conta", "conteúdo");
 
-        author.document("mutation { deleteMe }").execute()
+        author.document(
+                //language=GraphQL
+                "mutation { deleteMe }").execute()
                 .path("deleteMe").entity(Boolean.class).isEqualTo(true);
 
         // some das consultas, mas a linha continua marcada
@@ -227,11 +249,15 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
                 .isEqualTo(1);
 
         // enquanto apagado, os posts dele também somem — ver deletingTheAccountAlsoHidesTheAuthorsPosts
-        anonymous.document("{ posts(first: 5) { edges { node { title } } } }").execute()
+        anonymous.document(
+                //language=GraphQL
+                "{ posts(first: 5) { edges { node { title } } } }").execute()
                 .path("posts.edges").entityList(Object.class).hasSize(0);
 
         // entrar de novo reativa: mesmo id, mesmos posts, e nenhum usuário a mais
-        asAuthor().document("{ me { id ... on Author { posts(first: 5) { edges { node { title } } } } } }")
+        asAuthor().document(
+                //language=GraphQL
+                "{ me { id ... on Author { posts(first: 5) { edges { node { title } } } } } }")
                 .execute()
                 .path("me.id").entity(String.class).isEqualTo(userId)
                 .path("me.posts.edges").entityList(Object.class).hasSize(1);
@@ -254,19 +280,29 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
     void deletingTheAccountAlsoHidesTheAuthorsPosts() {
         HttpGraphQlTester author = asAuthor();
         createPost(author, "Some com o autor", "conteúdo");
-        anonymous.document("{ posts(first: 5) { edges { node { title } } } }").execute()
+        anonymous.document(
+                //language=GraphQL
+                "{ posts(first: 5) { edges { node { title } } } }").execute()
                 .path("posts.edges").entityList(Object.class).hasSize(1);
 
-        author.document("mutation { deleteMe }").execute();
+        author.document(
+                //language=GraphQL
+                "mutation { deleteMe }").execute();
 
         assertThat(jdbc.queryForObject("select count(*) from posts", Integer.class))
                 .as("a linha do post continua no banco: quem sumiu foi o autor").isEqualTo(1);
-        anonymous.document("{ posts(first: 5) { edges { node { title } } } }").execute()
+        anonymous.document(
+                //language=GraphQL
+                "{ posts(first: 5) { edges { node { title } } } }").execute()
                 .path("posts.edges").entityList(Object.class).hasSize(0);
 
         // e reativar traz tudo de volta, sem nada ter sido reescrito
-        asAuthor().document("{ me { id } }").execute();
-        anonymous.document("{ posts(first: 5) { edges { node { title } } } }").execute()
+        asAuthor().document(
+                //language=GraphQL
+                "{ me { id } }").execute();
+        anonymous.document(
+                //language=GraphQL
+                "{ posts(first: 5) { edges { node { title } } } }").execute()
                 .path("posts.edges").entityList(Object.class).hasSize(1);
     }
 
@@ -296,7 +332,9 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
 
         // o login seguinte conclui o que faltou
         as(KeycloakContainerConfig.PROMOTED_USERNAME)
-                .document("{ me { __typename id } }")
+                .document(
+                        //language=GraphQL
+                        "{ me { __typename id } }")
                 .execute()
                 .path("me.__typename").entity(String.class).isEqualTo("Author")
                 // no MESMO id que já estava gravado em supersededBy: o destino era determinístico
@@ -318,7 +356,10 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
                 .uri("/graphql")
                 .header("Authorization", "Bearer nao.e.um.jwt")
                 .header("Content-Type", "application/json")
-                .bodyValue("{\"query\":\"{ me { id } }\"}")
+                .bodyValue(
+                        // JSON, e não GraphQL: aqui a query vai dentro do corpo, escapada
+                        //language=JSON
+                        "{\"query\":\"{ me { id } }\"}")
                 .exchange()
                 .expectStatus().isUnauthorized();
     }

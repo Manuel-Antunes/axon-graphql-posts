@@ -31,7 +31,9 @@ class NewsletterSubscriptionE2ETest extends AbstractGraphQlE2ETest {
 
     /** O id <b>local</b> do autor: o filtro é sobre a identidade daqui, não sobre o {@code sub} do token. */
     private String localIdOf(HttpGraphQlTester tester) {
-        return tester.document("{ me { id } }").execute().path("me.id").entity(String.class).get();
+        return tester.document(
+                //language=GraphQL
+                "{ me { id } }").execute().path("me.id").entity(String.class).get();
     }
 
     /** {@code HashMap} e não {@code Map.of}: o filtro nulo é um caso legítimo (tópico global). */
@@ -43,6 +45,7 @@ class NewsletterSubscriptionE2ETest extends AbstractGraphQlE2ETest {
 
     private Flux<String> onPostCreatedOf(String authorId) {
         return SseSubscriptions.subscribe(port,
+                //language=GraphQL
                 "subscription Newsletter($id: ID) { onPostCreated(authorId: $id) { title } }",
                 filter(authorId), "onPostCreated.title", String.class);
     }
@@ -92,6 +95,7 @@ class NewsletterSubscriptionE2ETest extends AbstractGraphQlE2ETest {
         String authorId = localIdOf(author);
 
         Flux<Integer> versions = SseSubscriptions.subscribe(port,
+                //language=GraphQL
                 "subscription Edicoes($id: ID) { onPostUpdated(authorId: $id) { version } }",
                 filter(authorId), "onPostUpdated.version", Integer.class);
 

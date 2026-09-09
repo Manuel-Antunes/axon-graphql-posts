@@ -97,7 +97,9 @@ public abstract class AbstractGraphQlE2ETest {
 
     /** Cria um post pelo caminho normal (mutation autenticada) e devolve o id. */
     protected String createPost(HttpGraphQlTester tester, String title, String content) {
-        return tester.document("""
+        return tester.document(
+                //language=GraphQL
+                """
                         mutation Criar($t: String!, $c: String!) {
                           createPost(input: {title: $t, content: $c}) { id }
                         }""")

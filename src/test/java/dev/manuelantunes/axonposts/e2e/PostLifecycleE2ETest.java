@@ -21,6 +21,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class PostLifecycleE2ETest extends AbstractGraphQlE2ETest {
 
+    // um selection set, não um documento: o prefix/suffix dá ao IDE o contexto que falta
+    //language=GraphQL prefix={posts{edges{node{ suffix=}}}}
     private static final String POST_FIELDS = """
             id title content version
             author { __typename name }
@@ -29,7 +31,9 @@ class PostLifecycleE2ETest extends AbstractGraphQlE2ETest {
 
     @Test
     void aNewPostArrivesAlreadyTaggedAtVersionTwo() {
-        asAuthor().document("mutation { createPost(input: {title: \"Nasce\", content: \"c\"}) { " + POST_FIELDS + " } }")
+        asAuthor().document(
+                //language=GraphQL
+                "mutation { createPost(input: {title: \"Nasce\", content: \"c\"}) { " + POST_FIELDS + " } }")
                 .execute()
                 .path("createPost.title").entity(String.class).isEqualTo("Nasce")
                 // 1 = criado, 2 = tag padrão atribuída. A mutation espera o AFTER_COMMIT completar
@@ -55,7 +59,9 @@ class PostLifecycleE2ETest extends AbstractGraphQlE2ETest {
         HttpGraphQlTester author = asAuthor();
         String id = createPost(author, "Título original", "conteúdo");
 
-        author.document("""
+        author.document(
+                //language=GraphQL
+                """
                         mutation Editar($id: ID!) {
                           updatePost(input: {id: $id, title: "Título editado"}) { title content version
                             tags(first: 5) { edges { node { name } } } }
@@ -74,7 +80,9 @@ class PostLifecycleE2ETest extends AbstractGraphQlE2ETest {
         HttpGraphQlTester author = asAuthor();
         String id = createPost(author, "Igual", "conteúdo");
 
-        author.document("""
+        author.document(
+                //language=GraphQL
+                """
                         mutation Editar($id: ID!) {
                           updatePost(input: {id: $id, title: "Igual"}) { version }
                         }""")
@@ -92,13 +100,17 @@ class PostLifecycleE2ETest extends AbstractGraphQlE2ETest {
 
         assertThat(postCount()).isEqualTo(1);
 
-        author.document("mutation Apagar($id: ID!) { deletePost(id: $id) }")
+        author.document(
+                //language=GraphQL
+                "mutation Apagar($id: ID!) { deletePost(id: $id) }")
                 .variable("id", id).execute()
                 .path("deletePost").entity(Boolean.class).isEqualTo(true);
 
         // some das consultas...
         assertThat(postCount()).isZero();
-        anonymous.document("query Um($id: ID!) { post(id: $id) { id } }")
+        anonymous.document(
+                //language=GraphQL
+                "query Um($id: ID!) { post(id: $id) { id } }")
                 .variable("id", id).execute()
                 .path("post").valueIsNull();
 
@@ -107,7 +119,9 @@ class PostLifecycleE2ETest extends AbstractGraphQlE2ETest {
                 "select count(*) from posts where id = ? and deleted_at is not null", Integer.class, id))
                 .isEqualTo(1);
 
-        author.document("mutation Restaurar($id: ID!) { restorePost(id: $id) { " + POST_FIELDS + " } }")
+        author.document(
+                //language=GraphQL
+                "mutation Restaurar($id: ID!) { restorePost(id: $id) { " + POST_FIELDS + " } }")
                 .variable("id", id).execute()
                 // 2 = criado+tag, 3 = apagado, 4 = restaurado. Apagar e restaurar são fatos, e versionam
                 .path("restorePost.version").entity(Integer.class).isEqualTo(4)
@@ -125,13 +139,19 @@ class PostLifecycleE2ETest extends AbstractGraphQlE2ETest {
         String id = createPost(author, "Guardas", "c");
 
         // restaurar o que está vivo
-        expectBadRequest(author.document("mutation R($id: ID!) { restorePost(id: $id) { id } }")
+        expectBadRequest(author.document(
+                //language=GraphQL
+                "mutation R($id: ID!) { restorePost(id: $id) { id } }")
                 .variable("id", id).execute());
 
-        author.document("mutation D($id: ID!) { deletePost(id: $id) }").variable("id", id).execute();
+        author.document(
+                //language=GraphQL
+                "mutation D($id: ID!) { deletePost(id: $id) }").variable("id", id).execute();
 
         // apagar o que já está apagado
-        expectBadRequest(author.document("mutation D($id: ID!) { deletePost(id: $id) }")
+        expectBadRequest(author.document(
+                //language=GraphQL
+                "mutation D($id: ID!) { deletePost(id: $id) }")
                 .variable("id", id).execute());
     }
 
@@ -142,14 +162,18 @@ class PostLifecycleE2ETest extends AbstractGraphQlE2ETest {
         createPost(author, "B", "c");
         createPost(author, "C", "c");
 
-        String cursor = anonymous.document("{ posts(first: 2) { edges { cursor node { title } } pageInfo { hasNextPage endCursor } } }")
+        String cursor = anonymous.document(
+                //language=GraphQL
+                "{ posts(first: 2) { edges { cursor node { title } } pageInfo { hasNextPage endCursor } } }")
                 .execute()
                 .path("posts.edges").entityList(Object.class).hasSize(2)
                 .path("posts.edges[0].node.title").entity(String.class).isEqualTo("A")
                 .path("posts.pageInfo.hasNextPage").entity(Boolean.class).isEqualTo(true)
                 .path("posts.pageInfo.endCursor").entity(String.class).get();
 
-        anonymous.document("query P($after: String!) { posts(first: 2, after: $after) { edges { node { title } } pageInfo { hasNextPage } } }")
+        anonymous.document(
+                //language=GraphQL
+                "query P($after: String!) { posts(first: 2, after: $after) { edges { node { title } } pageInfo { hasNextPage } } }")
                 .variable("after", cursor)
                 .execute()
                 .path("posts.edges").entityList(Object.class).hasSize(1)
@@ -164,7 +188,9 @@ class PostLifecycleE2ETest extends AbstractGraphQlE2ETest {
     }
 
     private int postCount() {
-        return anonymous.document("{ posts(first: 50) { edges { node { id } } } }")
+        return anonymous.document(
+                //language=GraphQL
+                "{ posts(first: 50) { edges { node { id } } } }")
                 .execute()
                 .path("posts.edges").entityList(Object.class).get().size();
     }
