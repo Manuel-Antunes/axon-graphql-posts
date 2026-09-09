@@ -83,7 +83,7 @@ public class AssignDefaultTagOnPostCreated {
 
         return defaultTagId(defaultName)
                 .thenCompose(tagId -> commandGateway
-                        .send(new AssignTagToPost(postId, tagId.value(), defaultName.value()), Void.class)
+                        .send(new AssignTagToPost(postId, tagId), Void.class)
                         .thenRun(() -> log.debug("post {} recebeu a tag padrão {} ({})", postId, defaultName, tagId)));
     }
 

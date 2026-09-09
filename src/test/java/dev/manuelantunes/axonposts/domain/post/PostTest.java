@@ -8,7 +8,9 @@ import dev.manuelantunes.axonposts.domain.post.vo.PostContent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.post.vo.PostTitle;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
-import dev.manuelantunes.axonposts.domain.post.vo.TagRef;
+import dev.manuelantunes.axonposts.domain.tag.Tag;
+import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
+import dev.manuelantunes.axonposts.domain.tag.vo.TagName;
 import dev.manuelantunes.axonposts.support.RecordingDomainEvents;
 import org.junit.jupiter.api.Test;
 
@@ -27,6 +29,12 @@ class PostTest {
 
     private static final Instant T0 = Instant.parse("2026-09-05T12:00:00Z");
     private static final Instant T1 = T0.plusSeconds(60);
+
+    /**
+     * A Tag como o domínio a vê aqui: uma referência, com id e nome e nada mais. É a mesma forma que o
+     * replay produz, e basta — {@code Post} só compara tags por id.
+     */
+    private static final Tag UNTAGGED = Tag.reference(TagId.of("tag-1"), TagName.of("Untagged"));
 
     private final RecordingDomainEvents events = new RecordingDomainEvents();
 
@@ -66,7 +74,7 @@ class PostTest {
     @Test
     void updateRaisesTheEventWithTheResultingStateAndKeepsTheTags() {
         Post post = createdPost();
-        post.assignTag(TagRef.of("tag-1", "Untagged"), T0, events);
+        post.assignTag(UNTAGGED, T0, events);
         events.clear();
 
         post.update("Novo título", null, T1, events);
@@ -75,7 +83,7 @@ class PostTest {
                 post.id(), "Novo título", "conteúdo",
                 List.of(new PostUpdatedEvent.Tag("tag-1", "Untagged")), 3, T1));
         assertThat(post.title()).isEqualTo(PostTitle.of("Novo título"));
-        assertThat(post.tags()).containsExactly(TagRef.of("tag-1", "Untagged"));
+        assertThat(post.tags()).containsExactly(UNTAGGED);
         assertThat(post.version()).isEqualTo(new PostVersion(3)); // criado + tag + update
     }
 
@@ -83,23 +91,23 @@ class PostTest {
     void assignTagRaisesPostUpdatedWithTheTagInTheList() {
         Post post = createdPost();
 
-        Post tagged = post.assignTag(TagRef.of("tag-1", "Untagged"), T1, events);
+        Post tagged = post.assignTag(UNTAGGED, T1, events);
 
         assertThat(events.single()).isEqualTo(new PostUpdatedEvent(
                 post.id(), "Título", "conteúdo",
                 List.of(new PostUpdatedEvent.Tag("tag-1", "Untagged")), 2, T1));
-        assertThat(tagged.tags()).containsExactly(TagRef.of("tag-1", "Untagged"));
+        assertThat(tagged.tags()).containsExactly(UNTAGGED);
         assertThat(tagged.version()).isEqualTo(new PostVersion(2));
-        assertThat(tagged.hasTag("tag-1")).isTrue();
+        assertThat(tagged.hasTag(TagId.of("tag-1"))).isTrue();
     }
 
     @Test
     void assigningTheSameTagTwiceIsRejected() {
         Post post = createdPost();
-        post.assignTag(TagRef.of("tag-1", "Untagged"), T0, events);
+        post.assignTag(UNTAGGED, T0, events);
         events.clear();
 
-        assertThatThrownBy(() -> post.assignTag(TagRef.of("tag-1", "Untagged"), T1, events))
+        assertThatThrownBy(() -> post.assignTag(UNTAGGED, T1, events))
                 .isInstanceOf(InvalidPostException.class);
 
         assertThat(events.raised()).isEmpty();
@@ -134,7 +142,7 @@ class PostTest {
     @Test
     void applyingTheSameEventTwiceLeavesTheSameState() {
         Post post = createdPost();
-        post.assignTag(TagRef.of("tag-1", "Untagged"), T1, events);
+        post.assignTag(UNTAGGED, T1, events);
         PostUpdatedEvent event = (PostUpdatedEvent) events.single();
 
         // é o que acontece de verdade: o domínio aplica ao decidir, e o Axon aplica ao apendar
@@ -142,7 +150,7 @@ class PostTest {
         post.on(event);
 
         assertThat(post.version()).isEqualTo(new PostVersion(2));
-        assertThat(post.tags()).containsExactly(TagRef.of("tag-1", "Untagged"));
+        assertThat(post.tags()).containsExactly(UNTAGGED);
         assertThat(post.updatedAt()).isEqualTo(T1);
     }
 

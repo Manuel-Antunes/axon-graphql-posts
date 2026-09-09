@@ -20,9 +20,10 @@ import java.util.Objects;
  * A Tag: como o {@code Post}, uma classe só — entidade de domínio, entidade event-sourced e mapeamento
  * JPA, com os value objects como {@code @Embedded}.
  * <p>
- * Agregado independente, com o seu próprio stream ({@code tagId=<id>}). Um Post guarda apenas uma cópia
- * do id e do nome ({@code TagRef}); nenhuma associação JPA liga os dois, para que a fronteira de
- * consistência de cada um continue sendo só o seu próprio stream.
+ * Agregado independente, com o seu próprio stream ({@code tagId=<id>}). O {@code Post} referencia a Tag
+ * pela própria entidade ({@code @ManyToMany Set<Tag>} sobre {@code post_tags}), mas <b>só de leitura</b>:
+ * nenhum cascade sai do Post, e é sempre o Post quem dispara o evento do vínculo. A Tag não tem evento
+ * nenhum sobre posts.
  * <p>
  * Hoje uma Tag só nasce — não há evento que a renomeie ou apague, então não existe
  * {@code @EventSourcingHandler}: todo o estado vem do {@link TagCreatedEvent}.
@@ -70,6 +71,35 @@ public class Tag {
         return new Tag(event);
     }
 
+    // ---- referência -----------------------------------------------------------------------------
+
+    /**
+     * Uma Tag <b>não carregada</b>: identidade e nome, sem {@code createdAt} — o equivalente ao
+     * {@code Ref<Tag>} de um ORM com identity map, ou ao {@code getReference} do Hibernate.
+     * <p>
+     * <b>Para que existe:</b> quando o Axon reconstitui um {@link dev.manuelantunes.axonposts.domain.post.Post}
+     * do stream dele, o {@code PostUpdatedEvent} traz o id e o nome de cada tag, e não há sessão JPA para
+     * resolver a entidade de verdade. Buscar no banco ali dentro tornaria o replay dependente do estado
+     * atual da tabela — o mesmo stream reconstituído amanhã daria outro Post. Então o replay produz
+     * referências, e só elas.
+     * <p>
+     * <b>O que não fazer com o resultado:</b> nunca salvar. Uma referência tem {@code createdAt} nulo e
+     * sobrescreveria a linha real da tag. Ela existe para virar linha em {@code post_tags} — o que o
+     * {@code merge} faz pelo id, sem tocar em {@code tags} — e para responder {@link #id()} e
+     * {@link #name()} a quem já tem o dado em mãos.
+     */
+    public static Tag reference(TagId id, TagName name) {
+        Tag tag = new Tag();
+        tag.id = Objects.requireNonNull(id, "id");
+        tag.name = Objects.requireNonNull(name, "name");
+        return tag;
+    }
+
+    /** {@code true} se esta instância é uma referência do replay, e não uma Tag carregada. */
+    public boolean isReference() {
+        return createdAt == null;
+    }
+
     // ---- evoluir --------------------------------------------------------------------------------
 
     /** O Axon chama com o primeiro (e único) evento do stream da Tag. */
@@ -92,5 +122,32 @@ public class Tag {
 
     public Instant createdAt() {
         return createdAt;
+    }
+
+    // ---- identidade -----------------------------------------------------------------------------
+
+    /**
+     * Duas Tags são a mesma se têm o mesmo id — <b>não</b> o mesmo estado. É o que define entidade, e
+     * agora é obrigatório: as tags de um Post vivem num {@code Set}, onde uma referência do replay e a
+     * entidade carregada do banco têm de colidir para o mesmo elemento.
+     * <p>
+     * {@code instanceof} em vez de {@code getClass()}: o Hibernate entrega proxies, que são subclasses.
+     */
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        return other instanceof Tag tag && id != null && id.equals(tag.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hashCode(id);
+    }
+
+    @Override
+    public String toString() {
+        return name == null ? String.valueOf(id) : name.value();
     }
 }

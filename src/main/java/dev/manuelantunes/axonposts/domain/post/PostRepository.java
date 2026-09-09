@@ -1,7 +1,7 @@
 package dev.manuelantunes.axonposts.domain.post;
 
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
-import dev.manuelantunes.axonposts.domain.post.vo.TagRef;
+import dev.manuelantunes.axonposts.domain.tag.Tag;
 
 import java.util.Collection;
 import java.util.List;
@@ -36,5 +36,5 @@ public interface PostRepository {
      * Posts sem tag simplesmente não aparecem no mapa — cabe a quem chama tratar a ausência como lista
      * vazia.
      */
-    Map<PostId, List<TagRef>> findTagsByPostIds(Collection<PostId> postIds);
+    Map<PostId, List<Tag>> findTagsByPostIds(Collection<PostId> postIds);
 }

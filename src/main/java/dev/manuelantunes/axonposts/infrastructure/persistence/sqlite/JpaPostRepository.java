@@ -3,7 +3,7 @@ package dev.manuelantunes.axonposts.infrastructure.persistence.sqlite;
 import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
-import dev.manuelantunes.axonposts.domain.post.vo.TagRef;
+import dev.manuelantunes.axonposts.domain.tag.Tag;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.ScrollPosition;
 import org.springframework.stereotype.Repository;
@@ -63,7 +63,7 @@ public class JpaPostRepository implements PostRepository {
 
     @Override
     @Transactional(readOnly = true)
-    public Map<PostId, List<TagRef>> findTagsByPostIds(Collection<PostId> postIds) {
+    public Map<PostId, List<Tag>> findTagsByPostIds(Collection<PostId> postIds) {
         if (postIds.isEmpty()) {
             return Map.of();
         }

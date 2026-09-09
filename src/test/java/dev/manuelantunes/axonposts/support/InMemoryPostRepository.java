@@ -3,7 +3,7 @@ package dev.manuelantunes.axonposts.support;
 import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
-import dev.manuelantunes.axonposts.domain.post.vo.TagRef;
+import dev.manuelantunes.axonposts.domain.tag.Tag;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -38,7 +38,7 @@ public final class InMemoryPostRepository implements PostRepository {
     }
 
     @Override
-    public Map<PostId, List<TagRef>> findTagsByPostIds(Collection<PostId> postIds) {
+    public Map<PostId, List<Tag>> findTagsByPostIds(Collection<PostId> postIds) {
         return postIds.stream()
                 .map(byId::get)
                 .filter(java.util.Objects::nonNull)

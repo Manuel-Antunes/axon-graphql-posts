@@ -4,6 +4,7 @@ import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
 import dev.manuelantunes.axonposts.domain.post.exception.PostAlreadyExistsException;
 import dev.manuelantunes.axonposts.domain.tag.exception.InvalidTagException;
 import dev.manuelantunes.axonposts.domain.tag.exception.TagAlreadyExistsException;
+import dev.manuelantunes.axonposts.domain.tag.exception.TagNotFoundException;
 import graphql.GraphQLError;
 import graphql.GraphqlErrorBuilder;
 import graphql.schema.DataFetchingEnvironment;
@@ -44,6 +45,9 @@ public class AppGraphQlExceptionHandler {
             if (t instanceof InvalidPostException || t instanceof PostAlreadyExistsException
                     || t instanceof InvalidTagException || t instanceof TagAlreadyExistsException) {
                 return error(ErrorType.BAD_REQUEST, t.getMessage(), env);
+            }
+            if (t instanceof TagNotFoundException) {
+                return error(ErrorType.NOT_FOUND, t.getMessage(), env);
             }
             if (t instanceof EntityNotFoundException) {
                 return error(ErrorType.NOT_FOUND, "Post não encontrado", env);

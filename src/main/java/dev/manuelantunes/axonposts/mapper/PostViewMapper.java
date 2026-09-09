@@ -1,7 +1,7 @@
 package dev.manuelantunes.axonposts.mapper;
 
 import dev.manuelantunes.axonposts.domain.post.Post;
-import dev.manuelantunes.axonposts.domain.post.vo.TagRef;
+import dev.manuelantunes.axonposts.domain.tag.Tag;
 import dev.manuelantunes.axonposts.dto.controller.PostView;
 import dev.manuelantunes.axonposts.dto.controller.TagView;
 import org.mapstruct.Mapper;
@@ -14,8 +14,7 @@ import java.util.List;
  * achatados em primitivos.
  * <p>
  * O {@link PostView} não tem tags: elas são um campo resolvido à parte, por DataLoader. O que este mapper
- * empresta para lá é o {@link #toTagViews(List)} — a conversão {@code TagRef} → {@link TagView}, que o
- * MapStruct gera sozinho por serem dois records.
+ * empresta para lá é o {@link #toTagViews(List)} — a conversão {@link Tag} → {@link TagView}.
  *
  * <h2>Por que aqui as origens são {@code expression}</h2>
  * O MapStruct descobre propriedades por acessor JavaBean ({@code getTitle()}) ou por componente de
@@ -39,9 +38,10 @@ public interface PostViewMapper {
     @Mapping(target = "version", expression = "java(post.version().value())")
     PostView toView(Post post);
 
-    /** {@code TagRef} e {@code TagView} são records; só o nome do id difere. */
-    @Mapping(target = "id", source = "tagId")
-    TagView toTagView(TagRef tag);
+    /** Mesma razão do {@link #toView(Post)}: {@link Tag} é entidade de domínio, não record nem bean. */
+    @Mapping(target = "id", expression = "java(tag.id().value())")
+    @Mapping(target = "name", expression = "java(tag.name().value())")
+    TagView toTagView(Tag tag);
 
-    List<TagView> toTagViews(List<TagRef> tags);
+    List<TagView> toTagViews(List<Tag> tags);
 }

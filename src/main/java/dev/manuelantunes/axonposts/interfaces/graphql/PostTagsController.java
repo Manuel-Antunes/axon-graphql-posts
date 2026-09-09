@@ -2,7 +2,7 @@ package dev.manuelantunes.axonposts.interfaces.graphql;
 
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
-import dev.manuelantunes.axonposts.domain.post.vo.TagRef;
+import dev.manuelantunes.axonposts.domain.tag.Tag;
 import dev.manuelantunes.axonposts.dto.controller.PostView;
 import dev.manuelantunes.axonposts.dto.controller.TagView;
 import dev.manuelantunes.axonposts.mapper.PostViewMapper;
@@ -90,7 +90,7 @@ public class PostTagsController {
         // é esta linha que prova o lote: uma chamada por resposta GraphQL, não uma por post
         log.debug("lote de tags: {} post(s) numa consulta", postIds.size());
 
-        Map<PostId, List<TagRef>> byPost =
+        Map<PostId, List<Tag>> byPost =
                 posts.findTagsByPostIds(postIds.stream().map(PostId::of).toList());
 
         return byPost.entrySet().stream().collect(Collectors.toMap(

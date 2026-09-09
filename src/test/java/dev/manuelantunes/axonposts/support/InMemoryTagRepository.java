@@ -2,6 +2,7 @@ package dev.manuelantunes.axonposts.support;
 
 import dev.manuelantunes.axonposts.domain.tag.Tag;
 import dev.manuelantunes.axonposts.domain.tag.TagRepository;
+import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagName;
 
 import java.util.ArrayList;
@@ -16,6 +17,11 @@ public final class InMemoryTagRepository implements TagRepository {
     @Override
     public void save(Tag tag) {
         tags.add(tag);
+    }
+
+    @Override
+    public Optional<Tag> findById(TagId tagId) {
+        return tags.stream().filter(tag -> tag.id().equals(tagId)).findFirst();
     }
 
     @Override

@@ -8,25 +8,29 @@ import dev.manuelantunes.axonposts.domain.post.vo.PostContent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.post.vo.PostTitle;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
-import dev.manuelantunes.axonposts.domain.post.vo.TagRef;
 import dev.manuelantunes.axonposts.domain.shared.DomainEventPublisher;
+import dev.manuelantunes.axonposts.domain.tag.Tag;
+import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
+import dev.manuelantunes.axonposts.domain.tag.vo.TagName;
 import jakarta.persistence.AttributeOverride;
-import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
-import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Embedded;
 import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinTable;
+import jakarta.persistence.ManyToMany;
 import jakarta.persistence.Table;
 import org.axonframework.eventsourcing.annotation.EventSourcingHandler;
 import org.axonframework.eventsourcing.annotation.reflection.EntityCreator;
 import org.axonframework.extension.spring.stereotype.EventSourced;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -37,7 +41,7 @@ import java.util.Set;
  * <h2>As três anotações e por que elas convivem</h2>
  * <ul>
  *   <li>{@code @Entity} + {@code @Table}: o estado atual é gravado direto, com os value objects como
- *       {@code @Embedded} e as tags como {@code @ElementCollection}. JPA é agnóstico de banco, então o
+ *       {@code @Embedded} e as tags como {@code @ManyToMany}. JPA é agnóstico de banco, então o
  *       mapeamento vale para SQLite, Postgres ou qualquer outro;</li>
  *   <li>{@code @EventSourced(tagKey = "postId", idType = PostId.class)}: o histórico são os eventos com
  *       a tag {@code postId=<id>}, e é deles que o Axon reidrata a entidade ao tratar um command;</li>
@@ -96,19 +100,37 @@ public class Post {
     private PostVersion version;
 
     /**
-     * As tags do post, gravadas direto em {@code post_tags} como coleção de embeddables — o estado do
-     * relacionamento mora no próprio agregado, sem entidade de ligação nem associação a {@code Tag}.
+     * As tags do post: a própria entidade {@link Tag}, ligada por {@code post_tags}.
+     *
+     * <h3>Sem cascade nenhum, e é isso que mantém a fronteira de pé</h3>
+     * O Post escreve <b>só as linhas de {@code post_tags}</b>; a tabela {@code tags} é intocável a partir
+     * daqui. Sem {@code cascade}, o {@code merge} de um Post resolve cada elemento pelo id e grava a
+     * linha de ligação — nunca um INSERT ou UPDATE em {@code tags}. Cada agregado continua dono do seu
+     * stream: a Tag não tem evento sobre posts, e o vínculo é sempre um {@code PostUpdatedEvent}.
      * <p>
-     * {@code LAZY}: no caminho de leitura ninguém navega por aqui. Quem serve as tags ao GraphQL é um
-     * DataLoader, que as busca em lote para todos os posts da resposta numa consulta só — com
-     * {@code EAGER} o Hibernate faria um SELECT por post e o lote não teria o que evitar.
+     * O preço, honesto: assinalar uma tag inexistente agora viola a foreign key em vez de gravar uma
+     * referência solta. Por isso {@code AssignTagToPostCommand} carrega a Tag antes de decidir.
+     *
+     * <h3>Carregada ou referência</h3>
+     * Um elemento pode ser uma Tag carregada do banco (caminho de leitura, e o command que assinala) ou
+     * uma referência montada pelo replay ({@link Tag#reference}), que só tem id e nome. As duas são o
+     * mesmo elemento do {@code Set} porque {@code Tag.equals} é por id.
+     *
+     * <h3>Por que LAZY</h3>
+     * No caminho de leitura ninguém navega por aqui. Quem serve as tags ao GraphQL é um DataLoader, que
+     * as busca em lote para todos os posts da resposta numa consulta só — com {@code EAGER} o Hibernate
+     * faria um SELECT por post e o lote não teria o que evitar.
      * <p>
-     * No caminho de escrita a coleção sempre está carregada, porque a entidade que o command
-     * salva vem reconstituída dos eventos pelo Axon, não do banco.
+     * No caminho de escrita a coleção sempre está carregada, porque a entidade que o command salva vem
+     * reconstituída dos eventos pelo Axon, não do banco.
      */
-    @ElementCollection(fetch = FetchType.LAZY)
-    @CollectionTable(name = "post_tags", joinColumns = @JoinColumn(name = "post_id"))
-    private Set<TagRef> tags = new LinkedHashSet<>();
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+            name = "post_tags",
+            joinColumns = @JoinColumn(name = "post_id"),
+            inverseJoinColumns = @JoinColumn(name = "tag_id")
+    )
+    private Set<Tag> tags = new LinkedHashSet<>();
 
     /** Exigido pelo JPA. Nenhum código de aplicação constrói um Post por aqui. */
     protected Post() {
@@ -174,30 +196,30 @@ public class Post {
      *
      * @throws InvalidPostException se o post já tiver essa tag
      */
-    public Post assignTag(TagRef tag, Instant now, DomainEventPublisher events) {
+    public Post assignTag(Tag tag, Instant now, DomainEventPublisher events) {
         Objects.requireNonNull(tag, "tag");
         Objects.requireNonNull(now, "now");
         Objects.requireNonNull(events, "events");
 
-        if (hasTag(tag.tagId())) {
+        if (hasTag(tag.id())) {
             throw new InvalidPostException("post já tem a tag " + tag.name());
         }
 
-        Set<TagRef> resulting = new LinkedHashSet<>(this.tags);
+        Set<Tag> resulting = new LinkedHashSet<>(this.tags);
         resulting.add(tag);
         return raiseUpdate(this.title, this.content, resulting, now, events);
     }
 
     private Post raiseUpdate(PostTitle resultingTitle,
                              PostContent resultingContent,
-                             Set<TagRef> resultingTags,
+                             Set<Tag> resultingTags,
                              Instant now,
                              DomainEventPublisher events) {
         PostUpdatedEvent event = new PostUpdatedEvent(
                 id,
                 resultingTitle.value(),
                 resultingContent.value(),
-                resultingTags.stream().map(t -> new PostUpdatedEvent.Tag(t.tagId(), t.name())).toList(),
+                resultingTags.stream().map(t -> new PostUpdatedEvent.Tag(t.id().value(), t.name().value())).toList(),
                 this.version.next().value(),
                 now
         );
@@ -207,8 +229,8 @@ public class Post {
         return this;
     }
 
-    public boolean hasTag(String tagId) {
-        return tags.stream().anyMatch(tag -> tag.tagId().equals(tagId));
+    public boolean hasTag(TagId tagId) {
+        return tags.stream().anyMatch(tag -> tag.id().equals(tagId));
     }
 
     public boolean hasNoTags() {
@@ -253,8 +275,19 @@ public class Post {
         this.updatedAt = event.occurredAt();
         this.version = new PostVersion(event.version());
 
-        Set<TagRef> next = new LinkedHashSet<>();
-        event.tags().forEach(tag -> next.add(TagRef.of(tag.tagId(), tag.name())));
+        // identity map do agregado: uma Tag que já está no Set (carregada do banco, com createdAt)
+        // sobrevive; só um id desconhecido vira referência. Sem isto, decidir e logo aplicar o evento
+        // rebaixaria a Tag carregada pelo command a uma referência do replay antes do save.
+        Map<TagId, Tag> current = new LinkedHashMap<>();
+        this.tags.forEach(tag -> current.put(tag.id(), tag));
+
+        Set<Tag> next = new LinkedHashSet<>();
+        event.tags().forEach(tag -> {
+            TagId tagId = TagId.of(tag.tagId());
+            Tag known = current.get(tagId);
+            next.add(known != null ? known : Tag.reference(tagId, TagName.of(tag.name())));
+        });
+
         this.tags.clear();
         this.tags.addAll(next);
     }
@@ -289,7 +322,7 @@ public class Post {
         return version;
     }
 
-    public List<TagRef> tags() {
+    public List<Tag> tags() {
         return List.copyOf(tags);
     }
 }
