@@ -114,12 +114,13 @@ public class CreatePostCommand {
         if (existing.isPresent()) {
             throw new PostAlreadyExistsException(command.postId());
         }
+        Author author = Author.reference(command.authorId());
 
         Post post = Post.create(
                 command.postId(),
                 command.title(),
                 command.content(),
-                Author.reference(command.authorId()),
+                author,
                 clock.instant(),
                 appendingTo(eventAppender)
         );

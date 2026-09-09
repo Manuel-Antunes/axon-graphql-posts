@@ -68,6 +68,8 @@ public class AssignDefaultTagOnPostCreated {
     private final TagRepository tags;
     private final CommandGateway commandGateway;
 
+    // o gateway vem do registry de componentes do Axon, não de um @Bean: a inspeção do IDE não o vê
+    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
     public AssignDefaultTagOnPostCreated(TagRepository tags, CommandGateway commandGateway) {
         this.tags = tags;
         this.commandGateway = commandGateway;

@@ -59,6 +59,8 @@ public class PostMutationController {
     private final PostInputMapper inputMapper;
     private final AuthenticatedUser currentUser;
 
+    // o gateway vem do registry de componentes do Axon, não de um @Bean: a inspeção do IDE não o vê
+    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
     public PostMutationController(ReactorCommandGateway commandGateway,
                                   ReactorQueryGateway queryGateway,
                                   PostInputMapper inputMapper,

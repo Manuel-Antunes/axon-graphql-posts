@@ -58,6 +58,8 @@ public class UserProvisioning {
     private final UserRepository users;
     private final CommandGateway commandGateway;
 
+    // o gateway vem do registry de componentes do Axon, não de um @Bean: a inspeção do IDE não o vê
+    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
     public UserProvisioning(UserRepository users, CommandGateway commandGateway) {
         this.users = users;
         this.commandGateway = commandGateway;

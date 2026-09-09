@@ -33,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class DataIntegrityE2ETest extends AbstractGraphQlE2ETest {
 
+    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")  // bean do registry do Axon
     @Autowired
     private CommandGateway commandGateway;
 

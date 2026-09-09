@@ -212,6 +212,11 @@ Surefire roda tudo em `./mvnw test`, inclusive os `*E2ETest` — **Docker precis
   O `graphql.config.yml` na raiz é só do IDE: fixa o escopo do schema nesse arquivo (sem ele o plugin
   junta todo `.graphqls` do projeto, inclusive a cópia em `target/classes/`) e aponta o endpoint local,
   o que permite executar do editor a query onde está o cursor.
+- **Injetar gateway do Axon leva `@SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")`**
+  no construtor. Não existe `@Bean` para `CommandGateway`/`ReactorCommandGateway`/`ReactorQueryGateway`:
+  o `axon-reactor` registra os gateways no registry do Axon por `META-INF/services` e o
+  `SpringComponentRegistry` os publica como beans em runtime — invisível para a inspeção do IDE, que
+  acusa erro num ponto de injeção que funciona. O porquê completo está no javadoc do `AxonConfig`.
 - O nome da mensagem no wire vem da anotação (`@Command(namespace, name, version)`), não da classe — mover
   ou renomear a classe Java não muda contrato; mexer na anotação, sim.
 

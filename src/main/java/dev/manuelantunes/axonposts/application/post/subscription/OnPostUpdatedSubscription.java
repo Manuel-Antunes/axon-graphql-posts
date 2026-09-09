@@ -45,6 +45,8 @@ public class OnPostUpdatedSubscription {
 
     private final ReactorQueryGateway queryGateway;
 
+    // o gateway vem do registry de componentes do Axon, não de um @Bean: a inspeção do IDE não o vê
+    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
     public OnPostUpdatedSubscription(ReactorQueryGateway queryGateway) {
         this.queryGateway = queryGateway;
     }

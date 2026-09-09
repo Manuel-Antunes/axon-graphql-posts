@@ -52,6 +52,8 @@ public class AuthorPostsController {
 
     static final int DEFAULT_PAGE_SIZE = 20;
 
+    // o gateway vem do registry de componentes do Axon, não de um @Bean: a inspeção do IDE não o vê
+    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
     public AuthorPostsController(ReactorQueryGateway queryGateway, BatchLoaderRegistry registry) {
         registry.<String, List<PostView>>forName(LOADER).registerMappedBatchLoader(
                 (authorIds, environment) -> {

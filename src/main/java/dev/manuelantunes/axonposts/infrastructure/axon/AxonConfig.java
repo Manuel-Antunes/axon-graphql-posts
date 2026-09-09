@@ -34,6 +34,18 @@ import java.time.Clock;
  *   <li>{@link Clock} como bean: injetado nos commands para carimbar os eventos, e substituível
  *       por um clock fixo em teste.</li>
  * </ul>
+ *
+ * <h2>Por que os gateways levam {@code @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")}</h2>
+ * Quem injeta {@code CommandGateway}, {@code ReactorCommandGateway} ou {@code ReactorQueryGateway} leva
+ * essa anotação no construtor. Não é tapume sobre um problema: <b>não existe {@code @Bean} nenhum</b> para
+ * esses tipos. O {@code axon-reactor} não traz auto-configuration — traz um
+ * {@code META-INF/services/…ConfigurationEnhancer} apontando para o {@code ReactorConfigurationDefaults},
+ * que registra os gateways no <i>registry de componentes do Axon</i>; o {@code SpringComponentRegistry} do
+ * {@code axon-spring} é que os publica como beans do Spring, em tempo de execução.
+ * <p>
+ * Nada disso é visível estaticamente, então a inspeção do IntelliJ acusa "No beans of type found" num
+ * ponto de injeção que funciona — como a suíte ponta a ponta demonstra a cada execução. A anotação fica no
+ * construtor, e não na classe, para que a inspeção continue valendo para todo o resto.
  */
 @Configuration
 public class AxonConfig {

@@ -70,10 +70,11 @@ public class UpdatePostCommand {
     public void handle(UpdatePost command,
                        @InjectEntity Post post,
                        EventAppender eventAppender) {
+        Author author = Author.reference(command.actingAuthor());
         Post updated = post.update(
                 command.title(),
                 command.content(),
-                Author.reference(command.actingAuthor()),
+                author,
                 clock.instant(),
                 appendingTo(eventAppender)
         );

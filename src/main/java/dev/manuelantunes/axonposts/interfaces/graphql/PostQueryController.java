@@ -46,6 +46,8 @@ public class PostQueryController {
 
     private final ReactorQueryGateway queryGateway;
 
+    // o gateway vem do registry de componentes do Axon, não de um @Bean: a inspeção do IDE não o vê
+    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
     public PostQueryController(ReactorQueryGateway queryGateway) {
         this.queryGateway = queryGateway;
     }

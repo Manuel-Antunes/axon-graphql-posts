@@ -61,6 +61,8 @@ public class PostTagsController {
     /** Página usada quando o cliente não manda {@code first}. */
     static final int DEFAULT_PAGE_SIZE = 20;
 
+    // o gateway vem do registry de componentes do Axon, não de um @Bean: a inspeção do IDE não o vê
+    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
     public PostTagsController(ReactorQueryGateway queryGateway, BatchLoaderRegistry registry) {
         registry.<String, List<TagView>>forName(LOADER).registerMappedBatchLoader(
                 (postIds, environment) -> {

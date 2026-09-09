@@ -15,7 +15,7 @@ import java.util.Optional;
  *
  * <h2>A ponte command → evento → Flux, no Axon 5</h2>
  * <ol>
- *   <li>{@link #subscribe()} chama {@code subscriptionQuery}, que registra o {@code QueryMessage} no
+ *   <li>{@link #subscribe(String)} chama {@code subscriptionQuery}, que registra o {@code QueryMessage} no
  *       {@code QueryBus} (fica lá enquanto o Flux estiver assinado) e devolve <b>initial result +
  *       updates</b> num único Flux;</li>
  *   <li>o initial result é o {@link #initialResult} abaixo. Como a semântica de subscription GraphQL é
@@ -52,6 +52,8 @@ public class OnPostCreatedSubscription {
 
     private final ReactorQueryGateway queryGateway;
 
+    // o gateway vem do registry de componentes do Axon, não de um @Bean: a inspeção do IDE não o vê
+    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
     public OnPostCreatedSubscription(ReactorQueryGateway queryGateway) {
         this.queryGateway = queryGateway;
     }

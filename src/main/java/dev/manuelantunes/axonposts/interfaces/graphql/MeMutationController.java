@@ -26,6 +26,7 @@ public class MeMutationController {
     private final ReactorCommandGateway commandGateway;
     private final AuthenticatedUser currentUser;
 
+    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
     public MeMutationController(ReactorCommandGateway commandGateway, AuthenticatedUser currentUser) {
         this.commandGateway = commandGateway;
         this.currentUser = currentUser;

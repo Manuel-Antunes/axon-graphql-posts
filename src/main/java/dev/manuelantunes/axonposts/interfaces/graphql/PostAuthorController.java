@@ -43,6 +43,8 @@ public class PostAuthorController {
     /** Nome no registry: o valor do loader é {@code UserView}, um tipo que o resolver do Spring não casa. */
     static final String LOADER = "Post.author";
 
+    // o gateway vem do registry de componentes do Axon, não de um @Bean: a inspeção do IDE não o vê
+    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
     public PostAuthorController(ReactorQueryGateway queryGateway, BatchLoaderRegistry registry) {
         registry.<String, UserView>forName(LOADER).registerMappedBatchLoader(
                 (authorIds, environment) -> {

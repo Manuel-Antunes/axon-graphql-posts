@@ -42,6 +42,7 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
     @Autowired
     private Clock clock;
 
+    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")  // bean do registry do Axon
     @Autowired
     private CommandGateway commandGateway;
 
