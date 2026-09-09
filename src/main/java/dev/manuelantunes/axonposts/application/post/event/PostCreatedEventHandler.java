@@ -3,7 +3,6 @@ package dev.manuelantunes.axonposts.application.post.event;
 import dev.manuelantunes.axonposts.application.post.subscription.OnPostCreatedSubscription.OnPostCreated;
 import dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
-import dev.manuelantunes.axonposts.dto.controller.AuthorView;
 import dev.manuelantunes.axonposts.dto.controller.PostView;
 import org.axonframework.messaging.eventhandling.annotation.EventHandler;
 import org.axonframework.messaging.queryhandling.QueryUpdateEmitter;
@@ -32,21 +31,21 @@ public class PostCreatedEventHandler {
 
     @EventHandler
     public void on(PostCreatedEvent event, QueryUpdateEmitter emitter) {
-        // o AuthorView sai do próprio payload: o evento carrega id e nome, que é exatamente o que este
-        // DTO tem. Os campos email/bio são resolvidos em lote depois, se a query os pedir.
+        // só o id do autor: o campo Post.author é resolvido à parte, pelo DataLoader de usuários.
+        // É o que permite montar a view a partir do payload do evento, sem tocar no banco
         PostView view = new PostView(
                 event.postId().value(),
                 event.title(),
                 event.content(),
-                new AuthorView(event.authorId().value(), event.authorName()),
+                event.authorId().value(),
                 event.occurredAt(),
                 event.occurredAt(),
                 PostVersion.initial().value()
         );
 
-        log.debug("PostCreated {} de {} → emitindo para onPostCreated", view.id(), view.author().id());
+        log.debug("PostCreated {} de {} → emitindo para onPostCreated", view.id(), view.authorId());
 
         // cada assinante decide pelo próprio tópico: sem authorId recebe tudo, com authorId só o dele
-        emitter.emit(OnPostCreated.class, subscription -> subscription.matches(view.author().id()), view);
+        emitter.emit(OnPostCreated.class, subscription -> subscription.matches(view.authorId()), view);
     }
 }

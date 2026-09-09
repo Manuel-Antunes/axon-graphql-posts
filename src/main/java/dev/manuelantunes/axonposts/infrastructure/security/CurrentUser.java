@@ -1,5 +1,6 @@
 package dev.manuelantunes.axonposts.infrastructure.security;
 
+import dev.manuelantunes.axonposts.application.auth.AuthenticatedUser;
 import dev.manuelantunes.axonposts.application.auth.Identity;
 import dev.manuelantunes.axonposts.application.auth.UserProvisioning;
 import dev.manuelantunes.axonposts.domain.user.Author;
@@ -17,7 +18,10 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * Quem está logado, como entidade de domínio.
+ * O adapter de {@link AuthenticatedUser}: traduz o token do Keycloak no usuário de domínio.
+ * <p>
+ * É a metade "como" da porta — e é infraestrutura justamente porque conhece {@code Jwt},
+ * {@code ReactiveSecurityContextHolder} e o formato das claims. Nenhum controller importa esta classe.
  *
  * <h2>Do token do Keycloak para o usuário local</h2>
  * O {@code sub} do token identifica a pessoa <b>no Keycloak</b>. A ponte até o {@code User} daqui é a
@@ -34,7 +38,7 @@ import reactor.core.scheduler.Schedulers;
  * cuida de manter as duas em dia.
  */
 @Component
-public class CurrentUser {
+public class CurrentUser implements AuthenticatedUser {
 
     private final UserProvisioning provisioning;
 
@@ -54,7 +58,7 @@ public class CurrentUser {
                         "requisição sem token: mande Authorization: Bearer <token do Keycloak>")));
     }
 
-    /** O usuário local correspondente ao token, criado ou ligado na primeira vez. */
+    @Override
     public Mono<User> require() {
         return token().flatMap(jwt -> Mono
                 .fromCallable(() -> provisioning.provision(identityOf(jwt)))
@@ -65,6 +69,7 @@ public class CurrentUser {
      * O usuário autenticado <b>como autor</b>. O {@code @PreAuthorize("hasRole('AUTHOR')")} do controller
      * já barrou pela role do token; este {@code instanceof} confirma contra o banco.
      */
+    @Override
     public Mono<Author> requireAuthor() {
         return require().flatMap(user -> user instanceof Author author
                 ? Mono.just(author)

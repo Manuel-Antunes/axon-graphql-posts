@@ -22,14 +22,42 @@ interface SpringDataUserRepository extends JpaRepository<User, UserId> {
 
     /**
      * Com as contas: é o caminho do login e do account linking, onde saber por quais provedores o usuário
-     * entra é o ponto. As três consultas abaixo trazem {@code accounts} por {@code join fetch} porque a
-     * coleção é {@code LAZY} e quem chama costuma usá-la fora da transação.
+     * entra é o ponto. As consultas abaixo trazem {@code accounts} por {@code join fetch} porque a coleção
+     * é {@code LAZY} e quem chama costuma usá-la fora da transação.
+     *
+     * <h3>{@code superseded_by is null} não é detalhe</h3>
+     * Desde que a promoção passou a encerrar um agregado e abrir outro, <b>dois usuários podem ter o mesmo
+     * e-mail</b>: o leitor encerrado e o autor que o substituiu. Por isso a coluna {@code email} deixou de
+     * ser {@code unique}, e por isso esta consulta precisa excluir os encerrados — sem o filtro ela
+     * devolveria duas linhas e o {@code Optional} estouraria, ou pior, devolveria o leitor morto.
+     * <p>
+     * O predicado é sobre {@code supersededBy.value} e não sobre {@code supersededBy}: um
+     * {@code @Embedded} com todas as colunas nulas não é confiavelmente nulo em JPQL.
      */
-    @Query("select u from User u left join fetch u.accounts where u.email.value = :email")
+    @Query("select u from User u left join fetch u.accounts "
+            + "where u.email.value = :email and u.supersededBy.value is null")
     Optional<User> findByEmailValue(@Param("email") String email);
 
     @Query("select u from User u left join fetch u.accounts where u.id = :id")
     Optional<User> findByIdWithAccounts(@Param("id") UserId id);
+
+    /**
+     * Encerrado por promoção — <b>não</b> apagado. As duas coisas são independentes: o
+     * {@code @SQLRestriction} filtra {@code deleted_at}, e um usuário substituído continua visível.
+     */
+    @Query("select u from User u left join fetch u.accounts "
+            + "where u.email.value = :email and u.supersededBy.value is not null")
+    List<User> findSupersededByEmailValue(@Param("email") String email);
+
+    /**
+     * Nativa porque precisa <b>ver</b> o que o {@code @SQLRestriction} esconde: qualquer consulta pelo
+     * mapeamento da entidade traria o filtro junto e nunca acharia um usuário apagado.
+     */
+    @Query(value = "select a.user_id from accounts a join users u on u.id = a.user_id "
+            + "where a.provider = :provider and a.subject = :subject and u.deleted_at is not null",
+            nativeQuery = true)
+    Optional<String> findDeletedUserIdByAccount(@Param("provider") String provider,
+                                                @Param("subject") String subject);
 
     /**
      * Vários usuários <b>com as contas</b>, numa consulta só.

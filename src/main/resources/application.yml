@@ -11,9 +11,21 @@ spring:
     # sem database-platform: o Hibernate reconhece o Postgres pela conexão. O dialeto do SQLite era o
     # único motivo de a propriedade existir
     hibernate:
-      ddl-auto: update
+      # validate, e não update: quem cria o schema é o Flyway. O Hibernate passa a CONFERIR que as
+      # entidades e as migrations dizem a mesma coisa, e a aplicação não sobe se divergirem — um campo
+      # novo sem migration vira erro na partida em vez de um ALTER TABLE silencioso em produção.
+      ddl-auto: validate
     open-in-view: false
     show-sql: false
+
+  # ---- Migrations -----------------------------------------------------------------------
+  flyway:
+    # o default já é este; explícito porque é o diretório que passa a ser a verdade sobre o schema
+    locations: classpath:db/migration
+    # deliberadamente FALSE: um banco não-vazio sem histórico é um banco que alguém criou por fora, e
+    # assumir uma baseline silenciosa esconderia justamente o problema que o Flyway existe para evitar.
+    # Para o banco de desenvolvimento vindo do ddl-auto: docker compose down -v
+    baseline-on-migrate: false
 
   # ---- Autenticação: resource server do realm do Keycloak ------------------------------
   security:

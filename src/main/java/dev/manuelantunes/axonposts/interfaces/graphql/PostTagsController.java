@@ -1,29 +1,23 @@
 package dev.manuelantunes.axonposts.interfaces.graphql;
 
-import dev.manuelantunes.axonposts.domain.post.PostRepository;
-import dev.manuelantunes.axonposts.domain.post.vo.PostId;
-import dev.manuelantunes.axonposts.domain.tag.Tag;
+import dev.manuelantunes.axonposts.application.post.query.FindTagsByPostIdsQuery.FindTagsByPostIds;
+import dev.manuelantunes.axonposts.application.post.query.FindTagsByPostIdsQuery.TagsByPost;
 import dev.manuelantunes.axonposts.dto.controller.PostView;
 import dev.manuelantunes.axonposts.dto.controller.TagView;
-import dev.manuelantunes.axonposts.mapper.PostViewMapper;
 import graphql.schema.DataFetchingEnvironment;
+import org.axonframework.extension.reactor.messaging.queryhandling.gateway.ReactorQueryGateway;
+import org.dataloader.DataLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.dataloader.DataLoader;
 import org.springframework.data.domain.Window;
 import org.springframework.graphql.data.method.annotation.SchemaMapping;
 import org.springframework.graphql.data.query.ScrollSubrange;
 import org.springframework.graphql.execution.BatchLoaderRegistry;
 import org.springframework.stereotype.Controller;
-import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
-import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * O campo {@code Post.tags}: uma cursor connection servida por <b>DataLoader</b>.
@@ -67,42 +61,22 @@ public class PostTagsController {
     /** Página usada quando o cliente não manda {@code first}. */
     static final int DEFAULT_PAGE_SIZE = 20;
 
-    private final PostRepository posts;
-    private final PostViewMapper viewMapper;
-
-    public PostTagsController(PostRepository posts, PostViewMapper viewMapper, BatchLoaderRegistry registry) {
-        this.posts = posts;
-        this.viewMapper = viewMapper;
-
+    public PostTagsController(ReactorQueryGateway queryGateway, BatchLoaderRegistry registry) {
         registry.<String, List<TagView>>forName(LOADER).registerMappedBatchLoader(
-                (postIds, environment) ->
-                        Mono.fromCallable(() -> loadTagsOf(postIds))
-                                // a função de lote é chamada no event-loop, e lá dentro tem JPA bloqueante
-                                .subscribeOn(Schedulers.boundedElastic())
-        );
-    }
-
-    /**
-     * A função de lote: recebe os ids de <b>todos</b> os posts que pediram tags nesta resposta e devolve
-     * um mapa id → tags. Uma consulta, não uma por post.
-     */
-    private Map<String, List<TagView>> loadTagsOf(Collection<String> postIds) {
-        // é esta linha que prova o lote: uma chamada por resposta GraphQL, não uma por post
-        log.debug("lote de tags: {} post(s) numa consulta", postIds.size());
-
-        Map<PostId, List<Tag>> byPost =
-                posts.findTagsByPostIds(postIds.stream().map(PostId::of).toList());
-
-        return byPost.entrySet().stream().collect(Collectors.toMap(
-                entry -> entry.getKey().value(),
-                entry -> viewMapper.toTagViews(entry.getValue()),
-                (first, second) -> first
-        ));
+                (postIds, environment) -> {
+                    // é esta linha que prova o lote: uma chamada por resposta GraphQL, não uma por post
+                    log.debug("lote de tags: {} post(s) numa consulta", postIds.size());
+                    return queryGateway
+                            .query(new FindTagsByPostIds(List.copyOf(postIds)), TagsByPost.class)
+                            .map(TagsByPost::byPostId)
+                            // a query passa pelo bus, mas o handler por trás dela é JPA bloqueante
+                            .subscribeOn(Schedulers.boundedElastic());
+                });
     }
 
     /**
      * O {@code DataLoader} devolve {@code null} para um post sem nenhuma tag (a chave não veio no mapa) —
-     * daí o {@link Function} que o troca por lista vazia antes de recortar.
+     * daí o {@code null} virar lista vazia antes de recortar.
      */
     @SchemaMapping(typeName = "Post", field = "tags")
     public CompletableFuture<Window<TagView>> tags(PostView post,

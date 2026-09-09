@@ -5,6 +5,7 @@ import dev.manuelantunes.axonposts.domain.user.UserRepository;
 import dev.manuelantunes.axonposts.domain.user.vo.Email;
 import dev.manuelantunes.axonposts.support.AbstractGraphQlE2ETest;
 import dev.manuelantunes.axonposts.support.KeycloakContainerConfig;
+import org.springframework.graphql.test.tester.HttpGraphQlTester;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -101,6 +102,58 @@ class AuthorizationE2ETest extends AbstractGraphQlE2ETest {
         // e as duas contas ficaram ligadas ao provedor certo
         assertThat(users.findByEmail(Email.of(KeycloakContainerConfig.AUTHOR_USERNAME)))
                 .hasValueSatisfying(user -> assertThat(user.isLinkedTo(AuthProvider.KEYCLOAK)).isTrue());
+    }
+
+    /**
+     * A regra que faltava: ser autor autoriza a escrever, não a escrever no alheio.
+     * <p>
+     * A checagem está no <b>domínio</b> ({@code Post.assertWrittenBy}), e não no controller, porque
+     * depende do estado do agregado — invariante, não permissão. Por isso vale venha o command de onde
+     * vier, e por isso este teste percorre as três mutations.
+     */
+    @Test
+    void anAuthorCannotTouchAnotherAuthorsPost() {
+        String alheio = createPost(asAuthor(), "Do Manuel", "conteúdo");
+        HttpGraphQlTester outro = as(KeycloakContainerConfig.PROMOTED_USERNAME);
+
+        expectForbidden(outro.document("mutation E($id: ID!) { updatePost(input: {id: $id, title: \"x\"}) { id } }")
+                .variable("id", alheio).execute());
+        expectForbidden(outro.document("mutation D($id: ID!) { deletePost(id: $id) }")
+                .variable("id", alheio).execute());
+
+        // e o post continua intacto
+        anonymous.document("query P($id: ID!) { post(id: $id) { title } }")
+                .variable("id", alheio).execute()
+                .path("post.title").entity(String.class).isEqualTo("Do Manuel");
+    }
+
+    @Test
+    void theOwnerCanDoAllThreeOnTheirOwnPost() {
+        HttpGraphQlTester author = asAuthor();
+        String meu = createPost(author, "Meu", "conteúdo");
+
+        author.document("mutation E($id: ID!) { updatePost(input: {id: $id, title: \"Meu, editado\"}) { title } }")
+                .variable("id", meu).execute()
+                .path("updatePost.title").entity(String.class).isEqualTo("Meu, editado");
+        author.document("mutation D($id: ID!) { deletePost(id: $id) }").variable("id", meu).execute()
+                .path("deletePost").entity(Boolean.class).isEqualTo(true);
+        author.document("mutation R($id: ID!) { restorePost(id: $id) { title } }").variable("id", meu).execute()
+                .path("restorePost.title").entity(String.class).isEqualTo("Meu, editado");
+    }
+
+    /**
+     * O caso mais delicado: um post apagado é invisível para o JPA, e ainda assim a checagem de dono
+     * funciona — o agregado vem do stream, com o {@code author} reconstituído do {@code PostCreatedEvent}.
+     */
+    @Test
+    void ownershipHoldsEvenWhenThePostIsHiddenBySoftDelete() {
+        HttpGraphQlTester author = asAuthor();
+        String meu = createPost(author, "Some e volta", "conteúdo");
+        author.document("mutation D($id: ID!) { deletePost(id: $id) }").variable("id", meu).execute();
+
+        expectForbidden(as(KeycloakContainerConfig.PROMOTED_USERNAME)
+                .document("mutation R($id: ID!) { restorePost(id: $id) { id } }")
+                .variable("id", meu).execute());
     }
 
     private void expectForbidden(GraphQlTester.Response response) {

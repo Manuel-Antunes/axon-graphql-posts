@@ -28,6 +28,24 @@ public interface UserRepository {
     Optional<User> findByAccount(AuthProvider provider, String subject);
 
     /**
+     * O id do usuário <b>apagado</b> dono desta credencial.
+     * <p>
+     * Existe porque o {@code @SQLRestriction} esconde os apagados de {@link #findByAccount}, e sem esta
+     * consulta a próxima entrada da pessoa criaria um segundo usuário em vez de reativar o dela. Devolve
+     * só o id: o agregado quem reidrata é o Axon, a partir do stream — que nenhum filtro SQL alcança.
+     */
+    Optional<UserId> findDeletedUserIdByAccount(AuthProvider provider, String subject);
+
+    /**
+     * O usuário <b>encerrado por promoção</b> com este e-mail, se houver.
+     * <p>
+     * Serve para retomar uma promoção interrompida: o {@code supersededBy} dele guarda o id do sucessor
+     * que deveria ter sido criado, então dá para concluir a sequência em vez de deixar a pessoa sem conta.
+     * Ver {@code UserProvisioning}.
+     */
+    Optional<User> findSupersededByEmail(Email email);
+
+    /**
      * Usada no account linking: um e-mail que já existe localmente e chega por um provedor novo é a
      * mesma pessoa, não uma segunda.
      */
@@ -45,21 +63,6 @@ public interface UserRepository {
      * {@code merge} faz por dentro, então restaurar precisa de uma escrita que passe por fora do filtro.
      */
     void restore(UserId userId);
-
-    /**
-     * Transforma um {@code User} existente em {@code Author}, preservando id, e-mail e posts.
-     *
-     * <h3>Por que isto não é {@code save(new Author(...))}</h3>
-     * Numa herança {@code JOINED} o tipo de uma linha é <b>onde ela existe</b>: quem tem linha em
-     * {@code authors} é autor. O JPA não muda o tipo de uma entidade gerenciada — não há
-     * {@code user.becomeAuthor()}, e recriar significaria apagar e reinserir, levando junto a chave
-     * estrangeira dos posts.
-     * <p>
-     * A operação certa é inserir a linha filha que falta, e isso é um INSERT direto. É o preço de modelar
-     * papel como subclasse, e ele só aparece quando quem manda no papel passa a ser outro sistema — aqui,
-     * o Keycloak, onde a role pode ser concedida depois de o usuário já existir.
-     */
-    void promoteToAuthor(UserId userId, String bio);
 
     boolean isEmpty();
 }

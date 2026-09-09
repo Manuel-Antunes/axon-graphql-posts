@@ -3,6 +3,8 @@ package dev.manuelantunes.axonposts.application.post.command;
 import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
+import dev.manuelantunes.axonposts.domain.user.Author;
+import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import org.axonframework.messaging.commandhandling.annotation.Command;
 import org.axonframework.messaging.commandhandling.annotation.CommandHandler;
 import org.axonframework.messaging.eventhandling.gateway.EventAppender;
@@ -38,9 +40,15 @@ import static dev.manuelantunes.axonposts.application.shared.AppendingDomainEven
 @Component
 public class RestorePostCommand {
 
-    /** A mensagem: restaurar um post apagado. */
+    /**
+     * A mensagem: restaurar um post apagado.
+     * <p>
+     * A checagem de dono funciona aqui mesmo com o post invisível para o JPA, porque o agregado vem do
+     * stream: o {@code author} está reconstituído do {@code PostCreatedEvent}, e o domínio compara sem
+     * precisar do banco.
+     */
     @Command(namespace = "posts", name = "RestorePost", version = "1.0.0")
-    public record RestorePost(@TargetEntityId PostId postId) {
+    public record RestorePost(@TargetEntityId PostId postId, UserId actingAuthor) {
     }
 
     private final Clock clock;
@@ -55,7 +63,8 @@ public class RestorePostCommand {
     public void handle(RestorePost command,
                        @InjectEntity Post post,
                        EventAppender eventAppender) {
-        Post restored = post.restore(clock.instant(), appendingTo(eventAppender));
+        Post restored = post.restore(
+                Author.reference(command.actingAuthor()), clock.instant(), appendingTo(eventAppender));
 
         posts.restore(restored.id());
         posts.save(restored);

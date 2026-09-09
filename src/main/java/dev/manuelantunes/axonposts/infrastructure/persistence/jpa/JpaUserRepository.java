@@ -47,24 +47,17 @@ public class JpaUserRepository implements UserRepository {
         return accounts.findByProviderAndSubject(provider, subject).map(account -> account.user());
     }
 
-    /**
-     * INSERT direto na tabela filha — ver {@code UserRepository.promoteToAuthor} sobre por que não dá
-     * para fazer isto pelo JPA.
-     * <p>
-     * O {@code clear()} depois não é zelo: a instância de {@code User} que estiver no contexto de
-     * persistência continuaria sendo um {@code User} para o Hibernate, porque o tipo é resolvido no
-     * momento da carga. Sem limpar, a leitura seguinte na mesma transação devolveria o objeto antigo e o
-     * {@code instanceof Author} diria não logo depois de a linha ter sido criada.
-     */
     @Override
-    @Transactional
-    public void promoteToAuthor(UserId userId, String bio) {
-        entityManager.createNativeQuery("insert into authors (id, bio) values (:id, :bio)")
-                .setParameter("id", userId.value())
-                .setParameter("bio", bio)
-                .executeUpdate();
-        entityManager.flush();
-        entityManager.clear();
+    @Transactional(readOnly = true)
+    public Optional<UserId> findDeletedUserIdByAccount(AuthProvider provider, String subject) {
+        return repository.findDeletedUserIdByAccount(provider.name(), subject).map(UserId::of);
+    }
+
+    /** No máximo um: {@code supersede} recusa substituir duas vezes, e um autor não é substituído. */
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<User> findSupersededByEmail(Email email) {
+        return repository.findSupersededByEmailValue(email.value()).stream().findFirst();
     }
 
     /** O {@code Email} normaliza para minúsculas no construtor, então a busca é exata de propósito. */

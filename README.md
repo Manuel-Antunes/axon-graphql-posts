@@ -54,6 +54,7 @@ mutation createPost(input) ──► @Valid  (Bean Validation: campo vazio, tít
 | Axon Framework (`axon-spring-boot-starter`, sem Axon Server) | 5.3.x |
 | Axon Reactor extension (`axon-reactor`) | 5.3.x |
 | PostgreSQL (`postgresql`) | gerenciado pelo Boot |
+| Flyway (`flyway-core` + `flyway-database-postgresql`) | gerenciado pelo Boot |
 | Spring Security (WebFlux + OAuth2 resource server) | gerenciado pelo Boot |
 | Keycloak (broker de identidade, em container) | 26.0 |
 | Testcontainers (`postgresql`, `junit-jupiter`) | gerenciado pelo Boot |
@@ -167,6 +168,19 @@ Usuários semeados no realm (senha `segredo123`):
 | `manuel@example.com` | `author` | `Author` local, pode escrever |
 | `leitor@example.com` | — | `Reader` local, só lê |
 | `promovido@example.com` | `author` | demonstra a promoção `User` → `Author` |
+
+**O schema vem do Flyway, não do `ddl-auto`.** `src/main/resources/db/migration/V1__initial_schema.sql`
+cria tudo, e o Hibernate roda em `validate`: ele confere que as entidades e as migrations dizem a mesma
+coisa e **não sobe** se divergirem. Um campo novo sem migration vira erro na partida, em vez de um `ALTER
+TABLE` silencioso.
+
+`baseline-on-migrate` é `false` de propósito — um banco não-vazio sem histórico é um banco que alguém
+criou por fora, e uma baseline silenciosa esconderia justamente o que o Flyway existe para evitar. Se você
+tem um banco antigo vindo do `ddl-auto`:
+
+```bash
+docker compose down -v && docker compose up -d
+```
 
 **Dois bancos, dois usuários, um servidor.** O `docker/postgres/init/01-keycloak-role.sql` cria o papel e o
 banco do Keycloak separados dos da aplicação: pools de conexão independentes, o `ddl-auto` da aplicação
@@ -300,6 +314,77 @@ Estes testes substituem o `scripts/poc-smoke.sh`, que continua no repositório c
 antes se conferia numa sessão de terminal agora quebra o build.
 
 ## Decisões que valem comentar
+
+**`User` é entidade polimórfica do Axon.** `@EventSourced(concreteTypes = {Reader, Author})` na raiz
+abstrata e um `@EntityCreator` que lê o primeiro evento do stream: `event.author()` decide a classe. Não há
+coluna de discriminador nem consulta — o tipo é função pura do histórico, e o Hibernate concorda pelo lado
+dele (a herança `JOINED` resolve pelo child table que existe).
+
+A regra que vem junto está na documentação do Axon: *the concrete type is fixed at creation time*. Um
+`Reader` não vira `Author` no mesmo stream. Promover é **encerrar um agregado e abrir outro** —
+`UserSupersededEvent` fecha o do leitor e libera as credenciais, um `UserRegisteredEvent` com `supersedes`
+preenchido abre o do autor, e um `LinkAccount` por credencial religa. Não se perde nada porque um leitor
+nunca escreveu post: `createPost` exige `ROLE_AUTHOR`, então não há `posts.author_id` apontando para ele.
+
+O preço: a promoção são três unidades de trabalho, não uma. Se o `RegisterUser` falhar depois do
+`PromoteToAuthor`, resta um leitor encerrado sem sucessor — fechar essa janela é trabalho de saga, e está
+documentado no `UserProvisioning`.
+
+**A migration inicial foi gerada, não escrita.** O DDL saiu do `schema-generation` do próprio Hibernate
+(com o dialeto do Postgres, contra o mapeamento real) e depois foi curado: nomes de constraint legíveis no
+lugar dos hashes, índices para as consultas que existem, e um índice que nenhuma anotação JPA expressa:
+
+```sql
+create unique index uk_users_email_active on users (email)
+    where superseded_by is null and deleted_at is null;
+```
+
+O e-mail não pode ser único na tabela — um leitor encerrado e o autor que o substituiu convivem com o
+mesmo e-mail — mas precisa ser único **entre os ativos**, senão `findByEmail` viraria uma escolha entre
+duas linhas. Só o SQL diz isso, e é a razão prática de sair do `ddl-auto`. Os índices parciais de `posts`
+seguem a mesma lógica: as consultas sempre filtram `deleted_at is null`, então o índice não carrega as
+linhas que elas nunca vão ver.
+
+Os testes de integração rodam **as mesmas migrations**, não uma segunda definição de schema que poderia
+divergir delas.
+
+**Ser autor autoriza a escrever, não a escrever no alheio.** `updatePost`, `deletePost` e `restorePost`
+exigem `ROLE_AUTHOR` **e** ser o autor daquele post. A checagem está no domínio (`Post.assertWrittenBy`),
+não no controller, porque depende do estado do agregado — isso é invariante, não permissão, e vale venha o
+command de onde vier. Funciona até num post apagado: o agregado vem do stream, com o `author`
+reconstituído do `PostCreatedEvent`, então a regra não depende de a linha estar visível.
+
+**Apagar a conta é evento, e a reativação é o login.** `deleteMe` dispara `UserDeletedEvent`; entrar de
+novo com a mesma credencial do Keycloak dispara `UserRestoredEvent` em vez de criar um segundo usuário.
+Depois que `User` virou agregado event-sourced, marcar `deleted_at` sem evento produziria um usuário que
+some do banco e reaparece vivo em qualquer replay — a mesma razão que já valia para o `Post`.
+
+Um efeito colateral que ninguém programou e que por isso tem teste próprio: **apagar a conta esconde os
+posts do autor**. Nada os toca, mas `Post.author` é `@ManyToOne(optional = false)` e o `@SQLRestriction`
+do `User` torna o join INNER contra uma linha filtrada. Reativar traz tudo de volta.
+
+**A promoção interrompida se conserta sozinha, para a frente.** São três unidades de trabalho e a janela
+entre elas existe — um command não escreve em dois agregados. Mas o estado quebrado é *detectável*
+("existe um encerrado cujo sucessor não existe") e o destino é *determinístico* (o id do sucessor já está
+em `supersededBy`), então o `UserProvisioning` termina o que faltou no login seguinte. Sem saga, sem job,
+sem agendador: a operação já é naturalmente repetida, e quem tenta entrar é exatamente quem ficou sem
+conta. Compensar seria pior — exigiria um evento que "descancela" o encerramento.
+
+**A apresentação não alcança `domain` nem `infrastructure`.** Os controllers falavam com
+`infrastructure.security.CurrentUser` e com repositórios de domínio — a seta apontando para o lado errado,
+e um caminho de leitura que pulava a camada de aplicação enquanto todos os outros passavam pelo query bus.
+Agora existe a porta `application.auth.AuthenticatedUser` (implementada pelo `CurrentUser`, que continua
+sendo quem conhece JWT e claims), e os três batch loaders despacham queries: `FindTagsByPostIds`,
+`FindPostsByAuthorIds`, `FindUsersByIds`.
+
+**Uma consulta de usuário onde havia três.** `email`, `bio` e `accounts` eram três `@BatchMapping`
+separados, cada um voltando ao banco para preencher **um** campo — inclusive quando quem montou a view já
+tinha o usuário inteiro carregado. Agora o `UserViewMapper` monta a view completa de uma vez, a partir do
+que o ORM já hidratou: a herança `JOINED` traz a bio no mesmo join, o `join fetch` traz as contas. O
+`PostView` carrega só o `authorId`, e `Post.author` é resolvido pelo mesmo loader de usuários — o que
+mantém o caminho da subscription funcionando sem tocar no banco.
+
+
 
 **Uma classe por entidade, não duas.** `Post` é `@Entity` + `@EventSourced` + comportamento ao mesmo tempo, e `Tag` idem. O JPA é agnóstico de banco e o mapeamento é por anotação, então não há razão para manter uma entidade de domínio e uma cópia anêmica de infraestrutura em sincronia. Os value objects são `@Embeddable` de verdade — e o schema gerado mostra que o resultado não é o embeddable aninhado de sempre:
 

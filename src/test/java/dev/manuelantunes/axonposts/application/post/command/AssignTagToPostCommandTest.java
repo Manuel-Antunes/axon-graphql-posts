@@ -56,7 +56,7 @@ class AssignTagToPostCommandTest {
         PostId id = PostId.newId();
 
         fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, NOW))
+                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, NOW))
                 .when()
                 .command(new AssignTagToPost(id, TAG_ID))
                 .then()
@@ -75,7 +75,7 @@ class AssignTagToPostCommandTest {
         PostId id = PostId.newId();
 
         fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, NOW))
+                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, NOW))
                 .event(new PostUpdatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID,
                         List.of(new PostUpdatedEvent.Tag("tag-1", "Untagged")), 2, NOW))
                 .when()
@@ -90,7 +90,7 @@ class AssignTagToPostCommandTest {
         PostId id = PostId.newId();
 
         fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, NOW))
+                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, NOW))
                 .when()
                 .command(new AssignTagToPost(id, TagId.of("nao-existe")))
                 .then()

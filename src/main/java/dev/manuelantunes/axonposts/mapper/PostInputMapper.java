@@ -33,8 +33,12 @@ public interface PostInputMapper {
     @Mapping(target = "authorId", source = "authorId")
     CreatePost toCommand(PostId postId, CreatePostInput input, UserId authorId);
 
-    @Mapping(target = "postId", source = "id")
-    UpdatePost toCommand(UpdatePostInput input);
+    /** O {@code actingAuthor} entra por parâmetro pelo mesmo motivo do {@code authorId} do create. */
+    @Mapping(target = "postId", source = "input.id")
+    @Mapping(target = "title", source = "input.title")
+    @Mapping(target = "content", source = "input.content")
+    @Mapping(target = "actingAuthor", source = "actingAuthor")
+    UpdatePost toCommand(UpdatePostInput input, UserId actingAuthor);
 
     /** Conversão usada pelo MapStruct para o {@code id} do update: {@code String} → {@link PostId}. */
     default PostId toPostId(String value) {

@@ -1,7 +1,7 @@
 package dev.manuelantunes.axonposts.interfaces.graphql;
 
 import dev.manuelantunes.axonposts.dto.controller.UserView;
-import dev.manuelantunes.axonposts.infrastructure.security.CurrentUser;
+import dev.manuelantunes.axonposts.application.auth.AuthenticatedUser;
 import dev.manuelantunes.axonposts.mapper.UserViewMapper;
 import org.springframework.graphql.data.method.annotation.QueryMapping;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -28,10 +28,10 @@ import reactor.core.publisher.Mono;
 @Controller
 public class MeQueryController {
 
-    private final CurrentUser currentUser;
+    private final AuthenticatedUser currentUser;
     private final UserViewMapper userViewMapper;
 
-    public MeQueryController(CurrentUser currentUser, UserViewMapper userViewMapper) {
+    public MeQueryController(AuthenticatedUser currentUser, UserViewMapper userViewMapper) {
         this.currentUser = currentUser;
         this.userViewMapper = userViewMapper;
     }

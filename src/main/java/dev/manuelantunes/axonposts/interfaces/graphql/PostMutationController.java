@@ -9,7 +9,7 @@ import dev.manuelantunes.axonposts.application.post.query.FindPostQuery.FindPost
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.dto.controller.CreatePostInput;
 import dev.manuelantunes.axonposts.dto.controller.UpdatePostInput;
-import dev.manuelantunes.axonposts.infrastructure.security.CurrentUser;
+import dev.manuelantunes.axonposts.application.auth.AuthenticatedUser;
 import dev.manuelantunes.axonposts.mapper.PostInputMapper;
 import jakarta.validation.Valid;
 import org.axonframework.extension.reactor.messaging.commandhandling.gateway.ReactorCommandGateway;
@@ -57,12 +57,12 @@ public class PostMutationController {
     private final ReactorCommandGateway commandGateway;
     private final ReactorQueryGateway queryGateway;
     private final PostInputMapper inputMapper;
-    private final CurrentUser currentUser;
+    private final AuthenticatedUser currentUser;
 
     public PostMutationController(ReactorCommandGateway commandGateway,
                                   ReactorQueryGateway queryGateway,
                                   PostInputMapper inputMapper,
-                                  CurrentUser currentUser) {
+                                  AuthenticatedUser currentUser) {
         this.commandGateway = commandGateway;
         this.queryGateway = queryGateway;
         this.inputMapper = inputMapper;
@@ -86,9 +86,9 @@ public class PostMutationController {
     @MutationMapping
     @PreAuthorize("hasRole('AUTHOR')")
     public Mono<PostView> updatePost(@Argument @Valid UpdatePostInput input) {
-        UpdatePost command = inputMapper.toCommand(input);
-        return commandGateway.send(command)
-                .then(savedPost(command.postId()))
+        return currentUser.requireAuthor()
+                .map(author -> inputMapper.toCommand(input, author.id()))
+                .flatMap(command -> commandGateway.send(command).then(savedPost(command.postId())))
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -99,7 +99,8 @@ public class PostMutationController {
     @MutationMapping
     @PreAuthorize("hasRole('AUTHOR')")
     public Mono<Boolean> deletePost(@Argument String id) {
-        return commandGateway.send(new DeletePost(PostId.of(id)))
+        return currentUser.requireAuthor()
+                .flatMap(author -> commandGateway.send(new DeletePost(PostId.of(id), author.id())))
                 .thenReturn(true)
                 .subscribeOn(Schedulers.boundedElastic());
     }
@@ -109,7 +110,8 @@ public class PostMutationController {
     @PreAuthorize("hasRole('AUTHOR')")
     public Mono<PostView> restorePost(@Argument String id) {
         PostId postId = PostId.of(id);
-        return commandGateway.send(new RestorePost(postId))
+        return currentUser.requireAuthor()
+                .flatMap(author -> commandGateway.send(new RestorePost(postId, author.id())))
                 .then(savedPost(postId))
                 .subscribeOn(Schedulers.boundedElastic());
     }

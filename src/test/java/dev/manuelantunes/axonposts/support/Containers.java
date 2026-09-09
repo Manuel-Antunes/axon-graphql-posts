@@ -63,8 +63,10 @@ public final class Containers {
         registry.add("spring.datasource.password", POSTGRES::getPassword);
         registry.add("spring.security.oauth2.resourceserver.jwt.issuer-uri",
                 () -> KeycloakContainerConfig.issuerUri(KEYCLOAK));
-        // as tabelas nascem com a suíte; cada teste limpa as linhas, não o schema
-        registry.add("spring.jpa.hibernate.ddl-auto", () -> "update");
+        // o schema vem do Flyway, como em produção — os testes de integração exercitam as migrations de
+        // verdade, e não uma segunda definição de schema que poderia divergir delas.
+        // Cada teste limpa as LINHAS (truncate), nunca o schema.
+        registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
         // ligado aqui, e não num @TestPropertySource de uma subclasse, porque qualquer propriedade a mais
         // numa subclasse lhe daria um contexto próprio — e a suíte pagaria outra subida da aplicação.
         // É o que permite ao BatchLoadingE2ETest contar statements sem custar um contexto extra.

@@ -3,23 +3,22 @@
 # ---------------------------------------------------------------------------------------------------
 
 """
-Quem tem conta. Interface, e não tipo, porque a hierarquia do domínio é polimórfica: todo usuário tem
-id/nome/e-mail, e só um Author tem posts.
+Quem tem conta. Interface, e não tipo, porque a hierarquia do domínio é polimórfica — os mesmos dois
+tipos concretos que o @EventSourced(concreteTypes = {Reader, Author}) declara no agregado.
 
-O campo `email` é resolvido UMA vez para os dois tipos concretos, por um @BatchMapping declarado sobre
-esta interface — é o "interface schema mapping" do Spring GraphQL: um resolver mapeado no tipo-interface
-vale para toda implementação que não declare o seu próprio.
+Todos os campos escalares vêm prontos no DTO: o Hibernate hidrata o tipo concreto num join só (herança
+JOINED) e as contas vêm por join fetch. Só `Author.posts` é resolvido à parte, porque é coleção aberta
+e paginada.
 """
 interface User {
     id: ID!
     name: String!
-    "Resolvido em lote (@BatchMapping sobre a interface): N usuários numa resposta = 1 consulta"
     email: String!
     """
     As credenciais ligadas a este usuário — uma por provedor.
 
     É o account linking visível: a mesma pessoa pode ter entrado pelo Keycloak e ter uma conta
-    CREDENTIAL com senha própria. Também resolvido em lote, sobre a interface.
+    CREDENTIAL com senha própria.
     """
     accounts: [Account!]!
 }
@@ -94,7 +93,12 @@ type Post {
     id: ID!
     title: String!
     content: String!
-    "Quem escreveu. Entidade de verdade: dá para navegar de volta para os outros posts dele"
+    """
+    Quem escreveu. Resolvido por DataLoader a partir do authorId que o PostView carrega: N posts de
+    M autores custam UMA consulta de usuários, e a view que sai dela já vem completa.
+
+    Dá para navegar de volta para os outros posts dele.
+    """
     author: Author!
     "ISO-8601 (UTC)"
     createdAt: String!
@@ -186,19 +190,30 @@ type Mutation {
     em nome de qualquer outro.
     """
     createPost(input: CreatePostInput!): Post!
-    "Despacha o command UpdatePost e devolve o Post já projetado. Exige ROLE_AUTHOR"
+    """
+    Despacha o command UpdatePost e devolve o Post já projetado.
+
+    Exige ROLE_AUTHOR **e** ser o autor deste post: o domínio recusa mexer no post alheio.
+    """
     updatePost(input: UpdatePostInput!): Post!
+    """
+    Apaga a própria conta (exclusão lógica). Exige apenas estar autenticado.
+
+    Não recebe id: o alvo é sempre quem está pedindo. Os posts continuam publicados, e entrar de novo
+    com a mesma credencial do Keycloak reativa a conta.
+    """
+    deleteMe: Boolean!
     """
     Exclusão lógica: o post some de todas as consultas, mas a linha e o stream continuam lá.
 
-    Devolve true. Exige ROLE_AUTHOR.
+    Devolve true. Exige ROLE_AUTHOR e ser o autor deste post.
     """
     deletePost(id: ID!): Boolean!
     """
     Desfaz a exclusão lógica.
 
     Funciona porque o agregado é reidratado dos eventos, não do banco — o post apagado é invisível
-    para o JPA, mas nunca sumiu do stream. Exige ROLE_AUTHOR.
+    para o JPA, mas nunca sumiu do stream. Exige ROLE_AUTHOR e ser o autor deste post.
     """
     restorePost(id: ID!): Post!
 }

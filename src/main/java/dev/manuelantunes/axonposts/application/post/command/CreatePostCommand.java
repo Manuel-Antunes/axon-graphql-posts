@@ -5,10 +5,6 @@ import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.exception.PostAlreadyExistsException;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.user.Author;
-import dev.manuelantunes.axonposts.domain.user.User;
-import dev.manuelantunes.axonposts.domain.user.UserRepository;
-import dev.manuelantunes.axonposts.domain.user.exception.NotAnAuthorException;
-import dev.manuelantunes.axonposts.domain.user.exception.UserNotFoundException;
 import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import org.axonframework.messaging.commandhandling.annotation.Command;
 import org.axonframework.messaging.commandhandling.annotation.CommandHandler;
@@ -36,6 +32,37 @@ import static dev.manuelantunes.axonposts.application.shared.AppendingDomainEven
  * <p>
  * O event handler correspondente não projeta nada — quando ele roda, a view já está salva; ele só emite
  * para as subscriptions.
+ *
+ * <h2>O autor não é carregado aqui — e o motivo NÃO é economizar consulta</h2>
+ * Este handler lia o agregado {@code User} para confirmar que o {@code authorId} existia e era de um
+ * autor. A leitura saiu, e vale registrar o que a medição mostrou para ninguém reintroduzi-la esperando o
+ * ganho errado: <b>o custo é idêntico</b>. Com e sem o {@code findById}, um {@code createPost} gasta 11
+ * statements — o autor já está no contexto de persistência quando o handler roda, então a consulta batia
+ * no cache de primeiro nível e nunca chegava ao banco.
+ * <p>
+ * O que a remoção compra é <b>dependência</b>, não desempenho:
+ * <ul>
+ *   <li><b>um agregado deixa de consultar outro</b>: a fronteira entre {@code Post} e {@code User} existe
+ *       para que a decisão de um não dependa do estado carregado do outro. O {@code Post} sempre
+ *       referenciou o autor por identidade; agora o command também;</li>
+ *   <li><b>o trabalho para de ser repetido</b>: o controller já fez {@code requireAuthor()} — carregando o
+ *       usuário e conferindo o tipo — para poder montar esta mensagem.</li>
+ * </ul>
+ *
+ * <h3>Quem recusa agora</h3>
+ * O próprio Hibernate, ao resolver a associação no {@code merge}: um {@code authorId} que não tem linha em
+ * {@code authors} vira {@code EntityNotFoundException} antes de o INSERT sair. A chave estrangeira
+ * {@code fk_posts_author} continua atrás disso como garantia final — ela aponta para {@code authors} e não
+ * para {@code users}, então "não existe" e "é leitor" são a mesma recusa.
+ * <p>
+ * O {@code DataIntegrityTranslator} transforma as duas em {@code NotAnAuthorException}. Perde-se a
+ * distinção entre os dois casos, o que é um <b>ganho</b>: a versão anterior devolvia
+ * {@code UserNotFoundException} e com isso confirmava quais ids existem.
+ * <p>
+ * O preço, honesto: a recusa deixa de acontecer no "decidir" e passa a acontecer no flush — o evento chega
+ * a ser apendado à unidade de trabalho antes de tudo ser desfeito. Nada é persistido (evento e linha
+ * commitam juntos, ou nenhum dos dois), mas a falha fica mais longe da decisão do que o resto do projeto
+ * costuma pôr.
  *
  * <h2>Por que {@code Optional<Post>} num command criacional</h2>
  * O Post ainda não existe, então pedir {@code Post} obrigatório falharia sempre. Pedindo
@@ -71,12 +98,10 @@ public class CreatePostCommand {
 
     private final Clock clock;
     private final PostRepository posts;
-    private final UserRepository users;
 
-    public CreatePostCommand(Clock clock, PostRepository posts, UserRepository users) {
+    public CreatePostCommand(Clock clock, PostRepository posts) {
         this.clock = clock;
         this.posts = posts;
-        this.users = users;
     }
 
     /**
@@ -94,7 +119,7 @@ public class CreatePostCommand {
                 command.postId(),
                 command.title(),
                 command.content(),
-                author(command.authorId()),
+                Author.reference(command.authorId()),
                 clock.instant(),
                 appendingTo(eventAppender)
         );
@@ -103,23 +128,4 @@ public class CreatePostCommand {
         return post.id();
     }
 
-    /**
-     * O <b>downcast</b>, e o único lugar onde ele acontece.
-     * <p>
-     * O repositório devolve {@code User} porque a herança é {@code JOINED} e o tipo concreto é decidido
-     * pelo banco — existe linha em {@code authors} ou não existe. O {@code instanceof} aqui não é um
-     * <i>cast</i> otimista: é a checagem que confirma, contra o banco, o que a role do token já tinha
-     * afirmado. As duas podem divergir (papel revogado, token ainda válido), e quando divergem é o tipo
-     * que ganha.
-     * <p>
-     * Carregar dentro do handler ainda dá o de sempre: a {@code Author} entra no agregado
-     * <b>gerenciada</b>, na mesma transação do {@code posts.save(...)}.
-     */
-    private Author author(UserId authorId) {
-        User user = users.findById(authorId).orElseThrow(() -> new UserNotFoundException(authorId));
-        if (user instanceof Author author) {
-            return author;
-        }
-        throw new NotAnAuthorException(authorId);
-    }
 }

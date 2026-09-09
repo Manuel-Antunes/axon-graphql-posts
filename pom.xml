@@ -81,6 +81,18 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Flyway: o schema passa a ser versionado em SQL, e o ddl-auto vira `validate`.
+             O flyway-database-postgresql é obrigatório desde o Flyway 10: o suporte a cada banco saiu
+             do core para módulos próprios. -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
         <!-- Segurança: WebFlux reativo + resource server JWT.
              O resource-server traz o nimbus-jose-jwt, que é o que assina e valida o token HS256;
              o starter-security traz o BCryptPasswordEncoder e o @EnableReactiveMethodSecurity. -->

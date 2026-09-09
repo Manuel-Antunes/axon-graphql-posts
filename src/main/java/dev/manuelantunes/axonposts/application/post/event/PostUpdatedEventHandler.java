@@ -45,10 +45,10 @@ public class PostUpdatedEventHandler {
                                 + " — o command deveria tê-lo salvo antes do commit"));
 
         log.debug("PostUpdated {} (v{}) de {} → emitindo para onPostUpdated",
-                view.id(), view.version(), view.author().id());
+                view.id(), view.version(), view.authorId());
 
         // dois tópicos, ambos opcionais: postId e authorId. Sem filtro nenhum, o assinante recebe tudo
         emitter.emit(OnPostUpdated.class,
-                subscription -> subscription.matches(view.id(), view.author().id()), view);
+                subscription -> subscription.matches(view.id(), view.authorId()), view);
     }
 }

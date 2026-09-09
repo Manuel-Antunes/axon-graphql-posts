@@ -3,6 +3,8 @@ package dev.manuelantunes.axonposts.application.post.command;
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
+import dev.manuelantunes.axonposts.domain.user.Author;
+import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import org.axonframework.messaging.commandhandling.annotation.Command;
 import org.axonframework.messaging.commandhandling.annotation.CommandHandler;
 import org.axonframework.messaging.eventhandling.gateway.EventAppender;
@@ -34,10 +36,25 @@ public class UpdatePostCommand {
      * valor atual" — quem sabe qual é o valor atual é a entidade, então a mensagem só carrega a intenção.
      */
     @Command(namespace = "posts", name = "UpdatePost", version = "1.0.0")
+    /**
+     * O {@code actingAuthor} é quem está pedindo, e vem do token — nunca do input. O domínio recusa se o
+     * post for de outro: ser autor autoriza a escrever, não a escrever no alheio.
+     * <p>
+     * <h3>A tradução id → entidade acontece aqui, na fronteira</h3>
+     * A <b>mensagem</b> carrega {@code UserId}, porque mensagem carrega dado: ela é serializada, atravessa
+     * processo e não pode depender de uma classe de domínio. O <b>domínio</b> recebe {@code Author},
+     * porque um método de domínio fala do que existe no domínio — e porque o tipo já exclui um leitor
+     * antes de o corpo do método rodar.
+     * <p>
+     * {@code Author.reference(id)} é a costura entre os dois: uma entidade com identidade e nada mais, que
+     * é exatamente o que o {@code Post} precisa saber sobre o autor. Não custa consulta, e é a mesma
+     * instância que o replay monta a partir do evento.
+     */
     public record UpdatePost(
             @TargetEntityId PostId postId,
             String title,
-            String content
+            String content,
+            UserId actingAuthor
     ) {
     }
 
@@ -56,6 +73,7 @@ public class UpdatePostCommand {
         Post updated = post.update(
                 command.title(),
                 command.content(),
+                Author.reference(command.actingAuthor()),
                 clock.instant(),
                 appendingTo(eventAppender)
         );

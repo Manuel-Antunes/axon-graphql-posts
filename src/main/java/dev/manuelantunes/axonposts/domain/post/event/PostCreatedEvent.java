@@ -21,10 +21,15 @@ import java.time.Instant;
  * porque o event store indexa tags no append; a diferença é só declarar a intenção agora, enquanto os
  * eventos ainda não foram escritos.
  *
- * <h2>Por que o nome do autor viaja junto do id</h2>
- * Mesma razão do {@code PostUpdatedEvent.Tag}: o replay reconstrói o {@code Post} sem sessão JPA e
- * precisa montar um {@code Author.reference(id, nome)}. Sem o nome, ou o replay iria ao banco — e
- * deixaria de ser função pura do stream — ou o post reconstituído não saberia dizer quem o escreveu.
+ * <h2>Só o id do autor, e não o nome</h2>
+ * O nome viajava aqui até o {@code PostView} parar de carregar o objeto do autor. Depois disso ele era
+ * lido por <b>uma</b> linha do sistema — para montar uma referência cujo nome ninguém consultava. Um
+ * campo desnormalizado num contrato imutável só se justifica enquanto alguém o lê; quando para, ele vira
+ * uma promessa que o event store carrega para sempre sem ninguém cobrar.
+ * <p>
+ * Quem mostra o autor no GraphQL é o DataLoader, que carrega a entidade de verdade e sempre com o nome
+ * atual — que é o comportamento certo para um perfil, ao contrário de uma tag, onde a cópia histórica faz
+ * sentido.
  * <p>
  * O payload é de tipos primitivos e value objects de identidade, não de entidades: um evento é
  * <b>contrato</b> — atravessa processo, é serializado e fica gravado para sempre.
@@ -35,7 +40,6 @@ public record PostCreatedEvent(
         String title,
         String content,
         @EventTag UserId authorId,
-        String authorName,
         Instant occurredAt
 ) implements DomainEvent {
 }

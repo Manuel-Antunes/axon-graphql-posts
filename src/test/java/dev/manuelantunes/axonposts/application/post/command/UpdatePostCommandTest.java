@@ -49,9 +49,9 @@ class UpdatePostCommandTest {
         PostId id = PostId.newId();
 
         fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, NOW))
+                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, NOW))
                 .when()
-                .command(new UpdatePost(id, "novo título", null))
+                .command(new UpdatePost(id, "novo título", null, UserFixtures.AUTHOR_ID))
                 .then()
                 .success()
                 .events(new PostUpdatedEvent(id, "novo título", "conteúdo", UserFixtures.AUTHOR_ID, List.of(), 2, NOW));
@@ -62,10 +62,10 @@ class UpdatePostCommandTest {
         PostId id = PostId.newId();
 
         fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, NOW))
+                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, NOW))
                 .event(new PostUpdatedEvent(id, "título v2", "conteúdo", UserFixtures.AUTHOR_ID, List.of(), 2, NOW))
                 .when()
-                .command(new UpdatePost(id, null, "conteúdo v3"))
+                .command(new UpdatePost(id, null, "conteúdo v3", UserFixtures.AUTHOR_ID))
                 .then()
                 .success();
 
@@ -84,10 +84,10 @@ class UpdatePostCommandTest {
         PostId id = PostId.newId();
 
         fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, NOW))
+                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, NOW))
                 .event(new PostUpdatedEvent(id, "título v2", "conteúdo", UserFixtures.AUTHOR_ID, List.of(), 2, NOW))
                 .when()
-                .command(new UpdatePost(id, null, "conteúdo v3"))
+                .command(new UpdatePost(id, null, "conteúdo v3", UserFixtures.AUTHOR_ID))
                 .then()
                 .success()
                 .events(new PostUpdatedEvent(id, "título v2", "conteúdo v3", UserFixtures.AUTHOR_ID, List.of(), 3, NOW));
@@ -98,9 +98,9 @@ class UpdatePostCommandTest {
         PostId id = PostId.newId();
 
         fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, NOW))
+                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, NOW))
                 .when()
-                .command(new UpdatePost(id, "título", null))
+                .command(new UpdatePost(id, "título", null, UserFixtures.AUTHOR_ID))
                 .then()
                 .noEvents()
                 .exceptionSatisfies(thrown -> assertThat(hasCause(thrown, InvalidPostException.class)).isTrue());
@@ -113,7 +113,7 @@ class UpdatePostCommandTest {
         fixture.given()
                 .noPriorActivity()
                 .when()
-                .command(new UpdatePost(PostId.newId(), "x", null))
+                .command(new UpdatePost(PostId.newId(), "x", null, UserFixtures.AUTHOR_ID))
                 .then()
                 .noEvents()
                 .exceptionSatisfies(thrown -> assertThat(hasCause(thrown, EntityNotFoundException.class)).isTrue());

@@ -8,4 +8,9 @@ public class TagAlreadyExistsException extends RuntimeException {
     public TagAlreadyExistsException(TagId tagId) {
         super("Tag já existe: " + tagId);
     }
+
+    /** Sem id: levantada pelo {@code DataIntegrityTranslator} a partir de {@code uk_tags_name}. */
+    public TagAlreadyExistsException() {
+        super("já existe uma tag com este nome");
+    }
 }

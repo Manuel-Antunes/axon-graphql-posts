@@ -1,12 +1,13 @@
 package dev.manuelantunes.axonposts.dto.controller;
 
+import java.util.List;
+
 /**
  * DTO de saída de um usuário que não escreve: o {@code type Reader} do schema.
  * <p>
- * O nome no schema é {@code Reader} e não {@code User} porque {@code User} já é a interface — GraphQL
- * não deixa um tipo e uma interface dividirem o nome. Do lado Java a hierarquia continua sendo
- * {@code User}/{@code Author}; a tradução dos dois nomes é feita uma vez, na configuração do
- * {@code ClassNameTypeResolver}.
+ * O nome bate com a classe de domínio {@code Reader} — os dois nasceram junto, quando o {@code User}
+ * virou raiz abstrata e "ser leitor" deixou de ser a ausência de linha em {@code authors}.
  */
-public record ReaderView(String id, String name) implements UserView {
+public record ReaderView(String id, String name, String email, List<AccountView> accounts)
+        implements UserView {
 }

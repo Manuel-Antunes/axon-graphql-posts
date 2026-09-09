@@ -35,7 +35,7 @@ class FindAllPostsQueryTest {
         for (int i = 0; i < 5; i++) {
             posts.save(new Post(new PostCreatedEvent(
                     PostId.of("id-" + i), "título " + i, "conteúdo",
-                    UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, T0)));
+                    UserFixtures.AUTHOR_ID, T0)));
         }
     }
 

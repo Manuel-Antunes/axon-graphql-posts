@@ -5,6 +5,7 @@ import dev.manuelantunes.axonposts.domain.post.event.PostDeletedEvent;
 import dev.manuelantunes.axonposts.domain.post.event.PostRestoredEvent;
 import dev.manuelantunes.axonposts.domain.post.event.PostUpdatedEvent;
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
+import dev.manuelantunes.axonposts.domain.post.exception.NotThePostAuthorException;
 import dev.manuelantunes.axonposts.domain.post.vo.PostContent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.post.vo.PostTitle;
@@ -16,7 +17,6 @@ import dev.manuelantunes.axonposts.domain.tag.Tag;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagName;
 import dev.manuelantunes.axonposts.domain.user.Author;
-import dev.manuelantunes.axonposts.domain.user.vo.DisplayName;
 import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import jakarta.persistence.AttributeOverride;
 import jakarta.persistence.Column;
@@ -182,6 +182,16 @@ public class Post implements SoftDeletable {
      * Construtor nomeado do Post: valida os dados, <b>dispara</b> {@link PostCreatedEvent} e devolve o
      * Post já criado, pronto para ser salvo por quem chamou. Nasce sem tags.
      *
+     * <h3>Recebe um id, não um {@code Author} carregado</h3>
+     * O agregado {@code Post} referencia o {@code Author} por <b>identidade</b>, e nunca precisou de mais
+     * do que isso: ele compara ids e grava {@code posts.author_id}. Exigir a entidade carregada obrigava o
+     * command handler a ler o agregado {@code User} antes de decidir — um agregado consultando outro, que
+     * é justamente o que a fronteira existe para evitar.
+     * <p>
+     * Quem garante que o id existe e é de um autor é a chave estrangeira {@code fk_posts_author}, que
+     * aponta para {@code authors} e não para {@code users}. E ela garante <b>melhor</b> do que a consulta
+     * garantia: um SELECT antes do INSERT tem uma janela em que o autor pode ser apagado: a FK não tem.
+     *
      * @throws InvalidPostException se title, content ou author violarem suas invariantes
      */
     public static Post create(PostId id,
@@ -200,7 +210,6 @@ public class Post implements SoftDeletable {
                 PostTitle.of(title).value(),
                 PostContent.of(content).value(),
                 author.id(),
-                author.name().value(),
                 now
         );
 
@@ -215,9 +224,11 @@ public class Post implements SoftDeletable {
      *
      * @throws InvalidPostException se um valor informado for inválido, ou se nada mudar
      */
-    public Post update(String newTitle, String newContent, Instant now, DomainEventPublisher events) {
+    public Post update(String newTitle, String newContent, Author actingAuthor,
+                       Instant now, DomainEventPublisher events) {
         Objects.requireNonNull(now, "now");
         Objects.requireNonNull(events, "events");
+        assertWrittenBy(actingAuthor);
 
         PostTitle resultingTitle = newTitle == null ? this.title : PostTitle.of(newTitle);
         PostContent resultingContent = newContent == null ? this.content : PostContent.of(newContent);
@@ -261,9 +272,10 @@ public class Post implements SoftDeletable {
      *
      * @throws dev.manuelantunes.axonposts.domain.shared.AlreadyDeletedException se já estiver apagado
      */
-    public Post delete(Instant now, DomainEventPublisher events) {
+    public Post delete(Author actingAuthor, Instant now, DomainEventPublisher events) {
         Objects.requireNonNull(now, "now");
         Objects.requireNonNull(events, "events");
+        assertWrittenBy(actingAuthor);
 
         // a guarda do mixin roda aqui, antes de existir evento: decidir vem antes de registrar
         delete(now);
@@ -282,9 +294,10 @@ public class Post implements SoftDeletable {
      *
      * @throws dev.manuelantunes.axonposts.domain.shared.NotDeletedException se não estiver apagado
      */
-    public Post restore(Instant now, DomainEventPublisher events) {
+    public Post restore(Author actingAuthor, Instant now, DomainEventPublisher events) {
         Objects.requireNonNull(now, "now");
         Objects.requireNonNull(events, "events");
+        assertWrittenBy(actingAuthor);
 
         restore();
 
@@ -330,6 +343,33 @@ public class Post implements SoftDeletable {
         return author.id().equals(authorId);
     }
 
+    /**
+     * A guarda de propriedade, no <b>domínio</b> e não no controller.
+     *
+     * <h3>Por que aqui</h3>
+     * O {@code @PreAuthorize("hasRole('AUTHOR')")} responde "esta pessoa pode escrever posts?". Esta
+     * pergunta é outra: "pode escrever <b>neste</b> post?" — e a resposta depende do estado do agregado,
+     * não de uma claim. Regra que depende do estado é invariante, e invariante mora no domínio: assim ela
+     * vale venha o command de um controller GraphQL, de um consumidor de mensagem ou de um script.
+     *
+     * <h3>Por que recebe {@link Author} e não {@code UserId}</h3>
+     * Porque o tipo já diz metade da regra. Um {@code UserId} é o id de <b>qualquer</b> usuário — um
+     * leitor cabe na assinatura, e só o corpo do método descobriria. Um {@code Author} não: quem não é
+     * autor não chega até aqui, e isso é conferido pelo compilador.
+     * <p>
+     * A comparação continua sendo por identidade ({@code isWrittenBy}), então funciona igual com o autor
+     * carregado do banco e com a referência que o replay monta — as duas são o mesmo {@code Author} para
+     * {@code equals}.
+     *
+     * @throws NotThePostAuthorException se o post for de outro autor
+     */
+    private void assertWrittenBy(Author actingAuthor) {
+        Objects.requireNonNull(actingAuthor, "actingAuthor");
+        if (!isWrittenBy(actingAuthor.id())) {
+            throw new NotThePostAuthorException(id, actingAuthor.id());
+        }
+    }
+
     // ---- evoluir: reconstituição a partir do stream ---------------------------------------------
 
     /**
@@ -345,7 +385,7 @@ public class Post implements SoftDeletable {
         this.id = event.postId();
         this.title = PostTitle.of(event.title());
         this.content = PostContent.of(event.content());
-        this.author = Author.reference(event.authorId(), DisplayName.of(event.authorName()));
+        this.author = Author.reference(event.authorId());
         this.createdAt = event.occurredAt();
         this.updatedAt = event.occurredAt();
         this.version = PostVersion.initial();

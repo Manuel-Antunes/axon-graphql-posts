@@ -1,5 +1,8 @@
 package dev.manuelantunes.axonposts.e2e;
 
+import dev.manuelantunes.axonposts.application.user.command.LinkAccountCommand.LinkAccount;
+import dev.manuelantunes.axonposts.application.user.command.PromoteToAuthorCommand.PromoteToAuthor;
+import dev.manuelantunes.axonposts.application.user.command.RegisterUserCommand.RegisterUser;
 import dev.manuelantunes.axonposts.domain.user.AuthProvider;
 import dev.manuelantunes.axonposts.domain.user.User;
 import dev.manuelantunes.axonposts.domain.user.UserRepository;
@@ -8,6 +11,7 @@ import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import dev.manuelantunes.axonposts.support.AbstractGraphQlE2ETest;
 import dev.manuelantunes.axonposts.support.KeycloakContainerConfig;
 import org.junit.jupiter.api.Test;
+import org.axonframework.messaging.commandhandling.gateway.CommandGateway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.graphql.test.tester.HttpGraphQlTester;
 
@@ -37,6 +41,22 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
 
     @Autowired
     private Clock clock;
+
+    @Autowired
+    private CommandGateway commandGateway;
+
+    /**
+     * Cria um usuário local pelo <b>command</b>, e não por {@code users.save(...)}.
+     * <p>
+     * Desde que {@code User} virou agregado event-sourced, salvar direto no repositório escreveria a linha
+     * sem escrever o stream — e o próximo command sobre esse usuário não acharia agregado nenhum para
+     * reidratar. O read model deixou de ser um lugar onde se inventa estado.
+     */
+    private UserId registerLocally(String email, String name, boolean author) {
+        UserId id = UserId.newId();
+        commandGateway.sendAndWait(new RegisterUser(id, email, name, author, null, null));
+        return id;
+    }
 
     @Test
     void theFirstRequestWithATokenCreatesTheLocalUser() {
@@ -83,9 +103,7 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
     @Test
     void anExistingLocalUserIsLinkedInsteadOfDuplicated() {
         // já existe alguém local com este e-mail, sem conta nenhuma ligada
-        UserId existingId = UserId.newId();
-        users.save(User.register(existingId, KeycloakContainerConfig.READER_USERNAME,
-                "Cadastro Antigo", clock.instant()));
+        UserId existingId = registerLocally(KeycloakContainerConfig.READER_USERNAME, "Cadastro Antigo", false);
 
         asReader().document("{ me { id } }").execute()
                 .path("me.id").entity(String.class).isEqualTo(existingId.value());
@@ -97,49 +115,78 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
     }
 
     @Test
-    void aLinkedUserKeepsThePostsItAlreadyHad() {
-        // o autor entra uma vez, escreve, e some do banco local só a conta — simulando um relink
+    void linkingASecondProviderKeepsTheSameUserAndItsPosts() {
         HttpGraphQlTester author = asAuthor();
         String userId = author.document("{ me { id } }").execute().path("me.id").entity(String.class).get();
-        createPost(author, "Escrito antes do relink", "conteúdo");
+        createPost(author, "Escrito antes do segundo provedor", "conteúdo");
 
-        jdbc.update("delete from accounts where user_id = ?", userId);
+        // a mesma pessoa passa a entrar também pelo Google: uma credencial a mais no MESMO agregado
+        commandGateway.sendAndWait(new LinkAccount(UserId.of(userId), AuthProvider.GOOGLE, "google-sub-1"));
 
-        // ao voltar, é ligado ao mesmo usuário pelo e-mail — e os posts continuam sendo dele
-        author.document("{ me { id ... on Author { posts(first: 5) { edges { node { title } } } } } }")
+        author.document("""
+                        { me { id accounts { provider }
+                               ... on Author { posts(first: 5) { edges { node { title } } } } } }""")
                 .execute()
                 .path("me.id").entity(String.class).isEqualTo(userId)
+                .path("me.accounts").entityList(Object.class).hasSize(2)
                 .path("me.posts.edges").entityList(Object.class).hasSize(1)
-                .path("me.posts.edges[0].node.title").entity(String.class).isEqualTo("Escrito antes do relink");
+                .path("me.posts.edges[0].node.title").entity(String.class)
+                .isEqualTo("Escrito antes do segundo provedor");
+
+        // um usuário só: ligar provedor é inserir linha em accounts, não criar gente nova
+        assertThat(jdbc.queryForObject("select count(*) from users", Integer.class)).isEqualTo(1);
     }
 
+    /**
+     * A promoção depois que {@code User} virou entidade polimórfica do Axon.
+     *
+     * <h3>O que mudou, e por quê</h3>
+     * Antes a promoção era um INSERT na tabela filha e o usuário mantinha o id. Agora o tipo concreto sai
+     * do primeiro evento do stream e <b>não muda em runtime</b> — a documentação do Axon é explícita. Um
+     * leitor promovido ganha um agregado novo, e o antigo é encerrado.
+     * <p>
+     * O que este teste garante é que a troca de identidade não perde nada: e-mail, nome e credenciais
+     * atravessam, os dois streams ficam ligados nos dois sentidos, e o leitor encerrado some das consultas
+     * sem sumir do banco.
+     */
     @Test
-    void aLocalReaderIsPromotedWhenTheTokenBringsTheAuthorRole() {
-        // o caso que a herança JOINED torna trabalhoso: a linha já existe como Reader...
-        UserId existingId = UserId.newId();
-        users.save(User.register(existingId, KeycloakContainerConfig.PROMOTED_USERNAME,
-                "Autor Recente", Instant.now()));
-        assertThat(users.findById(existingId).orElseThrow().isAuthor()).isFalse();
+    void aLocalReaderIsPromotedIntoANewAggregate() {
+        UserId readerId = registerLocally(KeycloakContainerConfig.PROMOTED_USERNAME, "Autor Recente", false);
+        assertThat(users.findById(readerId).orElseThrow().isAuthor()).isFalse();
 
-        // ...e o token traz a role author. Promover é inserir a linha filha, não recriar o usuário
-        as(KeycloakContainerConfig.PROMOTED_USERNAME)
+        String authorId = as(KeycloakContainerConfig.PROMOTED_USERNAME)
                 .document("{ me { __typename id } }")
                 .execute()
                 .path("me.__typename").entity(String.class).isEqualTo("Author")
-                .path("me.id").entity(String.class).isEqualTo(existingId.value());
+                .path("me.id").entity(String.class).get();
 
-        assertThat(users.findById(existingId)).hasValueSatisfying(user -> {
-            assertThat(user.isAuthor()).isTrue();
-            assertThat(user.isLinkedTo(AuthProvider.KEYCLOAK)).isTrue();
+        // id NOVO: o agregado do leitor não virou autor, foi substituído por um
+        assertThat(authorId).isNotEqualTo(readerId.value());
+
+        assertThat(users.findById(UserId.of(authorId))).hasValueSatisfying(author -> {
+            assertThat(author.isAuthor()).isTrue();
+            assertThat(author.isLinkedTo(AuthProvider.KEYCLOAK)).isTrue();
+            // o caminho de volta: dá para saber quem ele era
+            assertThat(author.supersedes()).isEqualTo(readerId);
         });
-        // um usuário só: promover não duplicou nada
-        assertThat(jdbc.queryForObject("select count(*) from users", Integer.class)).isEqualTo(1);
+
+        assertThat(users.findById(readerId)).hasValueSatisfying(reader -> {
+            assertThat(reader.isSuperseded()).isTrue();
+            assertThat(reader.supersededBy()).isEqualTo(UserId.of(authorId));
+            // e ele soltou as credenciais: um usuário encerrado não tem por onde entrar
+            assertThat(reader.accounts()).isEmpty();
+        });
+
+        // as duas linhas continuam no banco — o histórico não é apagado, só encerrado
+        assertThat(jdbc.queryForObject("select count(*) from users", Integer.class)).isEqualTo(2);
+        // mas só o autor responde às consultas por e-mail
+        assertThat(users.findByEmail(Email.of(KeycloakContainerConfig.PROMOTED_USERNAME)))
+                .hasValueSatisfying(user -> assertThat(user.id().value()).isEqualTo(authorId));
     }
 
     @Test
     void aPromotedUserCanWriteImmediately() {
-        users.save(User.register(UserId.newId(), KeycloakContainerConfig.PROMOTED_USERNAME,
-                "Autor Recente", Instant.now()));
+        registerLocally(KeycloakContainerConfig.PROMOTED_USERNAME, "Autor Recente", false);
 
         // a promoção precisa valer já nesta requisição: o CurrentUser relê para pegar o tipo novo
         createPost(as(KeycloakContainerConfig.PROMOTED_USERNAME), "Primeiro depois da promoção", "c");
@@ -157,6 +204,114 @@ class IdentityProvisioningE2ETest extends AbstractGraphQlE2ETest {
      * conhecer: um token <b>ausente</b> segue anônimo e esbarra no {@code @PreAuthorize} (erro GraphQL),
      * um token <b>inválido</b> morre antes (erro HTTP).
      */
+    /**
+     * Auto-exclusão e reativação: a conta some das consultas e volta no login seguinte.
+     * <p>
+     * Sem a reativação, {@code findByAccount} não acharia nada (o {@code @SQLRestriction} esconde os
+     * apagados) e a entrada seguinte criaria um <b>segundo</b> usuário, deixando os posts do primeiro
+     * órfãos e invisíveis.
+     */
+    @Test
+    void deletingTheAccountHidesItAndLoggingInAgainBringsItBack() {
+        HttpGraphQlTester author = asAuthor();
+        String userId = author.document("{ me { id } }").execute().path("me.id").entity(String.class).get();
+        createPost(author, "Escrito antes de apagar a conta", "conteúdo");
+
+        author.document("mutation { deleteMe }").execute()
+                .path("deleteMe").entity(Boolean.class).isEqualTo(true);
+
+        // some das consultas, mas a linha continua marcada
+        assertThat(users.findById(UserId.of(userId))).isEmpty();
+        assertThat(jdbc.queryForObject(
+                "select count(*) from users where id = ? and deleted_at is not null", Integer.class, userId))
+                .isEqualTo(1);
+
+        // enquanto apagado, os posts dele também somem — ver deletingTheAccountAlsoHidesTheAuthorsPosts
+        anonymous.document("{ posts(first: 5) { edges { node { title } } } }").execute()
+                .path("posts.edges").entityList(Object.class).hasSize(0);
+
+        // entrar de novo reativa: mesmo id, mesmos posts, e nenhum usuário a mais
+        asAuthor().document("{ me { id ... on Author { posts(first: 5) { edges { node { title } } } } } }")
+                .execute()
+                .path("me.id").entity(String.class).isEqualTo(userId)
+                .path("me.posts.edges").entityList(Object.class).hasSize(1);
+
+        assertThat(jdbc.queryForObject("select count(*) from users", Integer.class)).isEqualTo(1);
+    }
+
+    /**
+     * O efeito colateral que ninguém programou explicitamente, e que por isso precisa de teste.
+     * <p>
+     * Apagar a conta esconde os posts do autor. Nada os toca — eles não têm {@code deleted_at} próprio —,
+     * mas {@code Post.author} é {@code @ManyToOne(optional = false)} e o {@code @SQLRestriction} do
+     * {@code User} torna o join <b>INNER</b> contra uma linha filtrada. O post simplesmente não passa.
+     * <p>
+     * É o tipo de comportamento que emerge do mapeamento e que só um teste de integração enxerga: contra
+     * um duplo em memória, os posts continuariam aparecendo. Fixá-lo aqui é o que impede a semântica de
+     * mudar sem ninguém perceber no dia que a associação virar opcional.
+     */
+    @Test
+    void deletingTheAccountAlsoHidesTheAuthorsPosts() {
+        HttpGraphQlTester author = asAuthor();
+        createPost(author, "Some com o autor", "conteúdo");
+        anonymous.document("{ posts(first: 5) { edges { node { title } } } }").execute()
+                .path("posts.edges").entityList(Object.class).hasSize(1);
+
+        author.document("mutation { deleteMe }").execute();
+
+        assertThat(jdbc.queryForObject("select count(*) from posts", Integer.class))
+                .as("a linha do post continua no banco: quem sumiu foi o autor").isEqualTo(1);
+        anonymous.document("{ posts(first: 5) { edges { node { title } } } }").execute()
+                .path("posts.edges").entityList(Object.class).hasSize(0);
+
+        // e reativar traz tudo de volta, sem nada ter sido reescrito
+        asAuthor().document("{ me { id } }").execute();
+        anonymous.document("{ posts(first: 5) { edges { node { title } } } }").execute()
+                .path("posts.edges").entityList(Object.class).hasSize(1);
+    }
+
+    /**
+     * A promoção interrompida, e a recuperação para a frente.
+     *
+     * <h3>Como a falha é provocada</h3>
+     * Despachando <b>só</b> o primeiro passo da sequência ({@code PromoteToAuthor}) e nenhum dos
+     * seguintes. É exatamente o estado que sobraria se o {@code RegisterUser} tivesse falhado: um leitor
+     * encerrado, sem credenciais, e um sucessor que nunca existiu.
+     *
+     * <h3>O que o teste garante</h3>
+     * Que a pessoa não fica sem conta. No login seguinte o {@code UserProvisioning} detecta o encerrado
+     * órfão, conclui a sequência no <b>mesmo</b> id de sucessor que já estava gravado, e devolve um autor
+     * funcional — sem job, sem agendador, sem saga.
+     */
+    @Test
+    void anInterruptedPromotionIsFinishedOnTheNextLogin() {
+        UserId readerId = registerLocally(KeycloakContainerConfig.PROMOTED_USERNAME, "Autor Recente", false);
+        UserId successorId = UserId.newId();
+
+        // só o primeiro passo: o agregado do leitor é encerrado e nada mais acontece
+        commandGateway.sendAndWait(new PromoteToAuthor(readerId, successorId));
+
+        assertThat(users.findById(readerId).orElseThrow().isSuperseded()).isTrue();
+        assertThat(users.findById(successorId)).as("o sucessor não deveria existir ainda").isEmpty();
+
+        // o login seguinte conclui o que faltou
+        as(KeycloakContainerConfig.PROMOTED_USERNAME)
+                .document("{ me { __typename id } }")
+                .execute()
+                .path("me.__typename").entity(String.class).isEqualTo("Author")
+                // no MESMO id que já estava gravado em supersededBy: o destino era determinístico
+                .path("me.id").entity(String.class).isEqualTo(successorId.value());
+
+        assertThat(users.findById(successorId)).hasValueSatisfying(author -> {
+            assertThat(author.isAuthor()).isTrue();
+            assertThat(author.supersedes()).isEqualTo(readerId);
+            assertThat(author.isLinkedTo(AuthProvider.KEYCLOAK)).isTrue();
+        });
+
+        // e não sobrou um terceiro usuário no caminho
+        assertThat(jdbc.queryForObject("select count(*) from users", Integer.class)).isEqualTo(2);
+    }
+
     @Test
     void anInvalidTokenIsRefusedAtTheHttpLayer() {
         webTestClient.post()

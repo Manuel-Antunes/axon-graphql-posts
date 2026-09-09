@@ -40,7 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({JpaUserRepository.class, JpaPostRepository.class})
-@TestPropertySource(properties = "spring.jpa.hibernate.ddl-auto=update")
+@TestPropertySource(properties = "spring.jpa.hibernate.ddl-auto=validate")
 class UserSoftDeleteJpaTest {
 
     /**
@@ -69,8 +69,9 @@ class UserSoftDeleteJpaTest {
     @BeforeEach
     void setUp() {
         authorId = UserId.newId();
-        Author author = Author.register(authorId, "autor@example.com", "Autor", "bio do autor", NOW);
-        author.link(AuthProvider.KEYCLOAK, "kc-" + authorId.value(), NOW);
+        User author = User.register(authorId, "autor@example.com", "Autor", true, "bio do autor",
+                null, NOW, event -> { });
+        author.link(AuthProvider.KEYCLOAK, "kc-" + authorId.value(), NOW, event -> { });
         users.save(author);
         flushAndClear();
     }

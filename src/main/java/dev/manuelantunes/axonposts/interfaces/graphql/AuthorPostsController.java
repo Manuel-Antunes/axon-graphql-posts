@@ -1,12 +1,11 @@
 package dev.manuelantunes.axonposts.interfaces.graphql;
 
-import dev.manuelantunes.axonposts.domain.post.Post;
-import dev.manuelantunes.axonposts.domain.post.PostRepository;
-import dev.manuelantunes.axonposts.domain.user.vo.UserId;
+import dev.manuelantunes.axonposts.application.post.query.FindPostsByAuthorIdsQuery.FindPostsByAuthorIds;
+import dev.manuelantunes.axonposts.application.post.query.FindPostsByAuthorIdsQuery.PostsByAuthor;
 import dev.manuelantunes.axonposts.dto.controller.AuthorView;
 import dev.manuelantunes.axonposts.dto.controller.PostView;
-import dev.manuelantunes.axonposts.mapper.PostViewMapper;
 import graphql.schema.DataFetchingEnvironment;
+import org.axonframework.extension.reactor.messaging.queryhandling.gateway.ReactorQueryGateway;
 import org.dataloader.DataLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,14 +14,10 @@ import org.springframework.graphql.data.method.annotation.SchemaMapping;
 import org.springframework.graphql.data.query.ScrollSubrange;
 import org.springframework.graphql.execution.BatchLoaderRegistry;
 import org.springframework.stereotype.Controller;
-import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
-import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
 
 /**
  * O campo {@code Author.posts}: cursor connection servida por <b>DataLoader</b>, gêmea do
@@ -57,28 +52,15 @@ public class AuthorPostsController {
 
     static final int DEFAULT_PAGE_SIZE = 20;
 
-    private final PostRepository posts;
-    private final PostViewMapper viewMapper;
-
-    public AuthorPostsController(PostRepository posts, PostViewMapper viewMapper, BatchLoaderRegistry registry) {
-        this.posts = posts;
-        this.viewMapper = viewMapper;
-
+    public AuthorPostsController(ReactorQueryGateway queryGateway, BatchLoaderRegistry registry) {
         registry.<String, List<PostView>>forName(LOADER).registerMappedBatchLoader(
-                (authorIds, environment) -> Mono.fromCallable(() -> loadPostsOf(authorIds))
-                        .subscribeOn(Schedulers.boundedElastic()));
-    }
-
-    private Map<String, List<PostView>> loadPostsOf(Collection<String> authorIds) {
-        log.debug("lote de posts por autor: {} autor(es) numa consulta", authorIds.size());
-
-        Map<UserId, List<Post>> byAuthor =
-                posts.findByAuthorIds(authorIds.stream().map(UserId::of).toList());
-
-        return byAuthor.entrySet().stream().collect(Collectors.toMap(
-                entry -> entry.getKey().value(),
-                entry -> entry.getValue().stream().map(viewMapper::toView).toList(),
-                (first, second) -> first));
+                (authorIds, environment) -> {
+                    log.debug("lote de posts por autor: {} autor(es) numa consulta", authorIds.size());
+                    return queryGateway
+                            .query(new FindPostsByAuthorIds(List.copyOf(authorIds)), PostsByAuthor.class)
+                            .map(PostsByAuthor::byAuthorId)
+                            .subscribeOn(Schedulers.boundedElastic());
+                });
     }
 
     /** Autor sem post nenhum não vem no mapa do loader — daí o {@code null} virar lista vazia. */

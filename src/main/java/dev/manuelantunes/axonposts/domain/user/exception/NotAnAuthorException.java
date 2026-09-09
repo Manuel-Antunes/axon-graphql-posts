@@ -14,4 +14,16 @@ public class NotAnAuthorException extends RuntimeException {
     public NotAnAuthorException(UserId userId) {
         super("Usuário não é um autor: " + userId);
     }
+
+    /**
+     * Sem id: a versão que o {@code DataIntegrityTranslator} levanta a partir da violação de
+     * {@code fk_posts_author}.
+     * <p>
+     * A mensagem é vaga <b>de propósito</b>. A chave estrangeira dispara tanto para um id inexistente
+     * quanto para um id de leitor, e distinguir os dois transformaria a recusa num oráculo de quais
+     * usuários existem — defeito que a checagem anterior no {@code CreatePostCommand} tinha.
+     */
+    public NotAnAuthorException() {
+        super("o autor informado não existe ou não pode escrever");
+    }
 }

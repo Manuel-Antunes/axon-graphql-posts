@@ -1,6 +1,7 @@
 package dev.manuelantunes.axonposts.exceptions;
 
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
+import dev.manuelantunes.axonposts.domain.post.exception.NotThePostAuthorException;
 import dev.manuelantunes.axonposts.domain.post.exception.PostAlreadyExistsException;
 import dev.manuelantunes.axonposts.domain.shared.AlreadyDeletedException;
 import dev.manuelantunes.axonposts.domain.shared.NotDeletedException;
@@ -8,6 +9,8 @@ import dev.manuelantunes.axonposts.domain.tag.exception.InvalidTagException;
 import dev.manuelantunes.axonposts.domain.tag.exception.TagAlreadyExistsException;
 import dev.manuelantunes.axonposts.domain.tag.exception.TagNotFoundException;
 import dev.manuelantunes.axonposts.domain.user.exception.InvalidUserException;
+import dev.manuelantunes.axonposts.domain.user.exception.AccountAlreadyLinkedException;
+import dev.manuelantunes.axonposts.domain.user.exception.EmailAlreadyInUseException;
 import dev.manuelantunes.axonposts.domain.user.exception.NotAnAuthorException;
 import dev.manuelantunes.axonposts.domain.user.exception.UserNotFoundException;
 import graphql.GraphQLError;
@@ -45,13 +48,19 @@ public class AppGraphQlExceptionHandler {
 
     @GraphQlExceptionHandler
     public GraphQLError handle(Throwable ex, DataFetchingEnvironment env) {
-        for (Throwable t = ex; t != null; t = t.getCause()) {
+        // Uma violação de restrição do banco é decisão de domínio, não falha de infraestrutura: traduzida
+        // primeiro, ela entra na mesma classificação que uma checagem na aplicação produziria.
+        // Vem antes do laço porque a violação chega embrulhada no commit do Axon, longe de onde nasceu.
+        Throwable classified = DataIntegrityTranslator.translate(ex).map(Throwable.class::cast).orElse(ex);
+
+        for (Throwable t = classified; t != null; t = t.getCause()) {
             if (t instanceof ConstraintViolationException violations) {
                 return error(ErrorType.BAD_REQUEST, describe(violations), env);
             }
             if (t instanceof InvalidPostException || t instanceof PostAlreadyExistsException
                     || t instanceof InvalidTagException || t instanceof TagAlreadyExistsException
                     || t instanceof InvalidUserException
+                    || t instanceof AccountAlreadyLinkedException || t instanceof EmailAlreadyInUseException
                     // as duas guardas do mixin SoftDeletable: apagar o apagado, restaurar o vivo
                     || t instanceof AlreadyDeletedException || t instanceof NotDeletedException) {
                 return error(ErrorType.BAD_REQUEST, t.getMessage(), env);
@@ -61,7 +70,8 @@ public class AppGraphQlExceptionHandler {
                 return error(ErrorType.UNAUTHORIZED, "credenciais inválidas ou ausentes", env);
             }
             // autenticado, mas sem permissão. A mensagem não diz o que faltou, só que faltou
-            if (t instanceof AccessDeniedException || t instanceof NotAnAuthorException) {
+            if (t instanceof AccessDeniedException || t instanceof NotAnAuthorException
+                    || t instanceof NotThePostAuthorException) {
                 return error(ErrorType.FORBIDDEN, "sem permissão para esta operação", env);
             }
             if (t instanceof UserNotFoundException) {
