@@ -2,6 +2,7 @@ package dev.manuelantunes.axonposts.domain.post.event;
 
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.shared.DomainEvent;
+import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import org.axonframework.eventsourcing.annotation.EventTag;
 import org.axonframework.messaging.eventhandling.annotation.Event;
 
@@ -21,7 +22,10 @@ import java.util.List;
  * o Axon aplica o mesmo evento ao apendá-lo. Se a versão fosse {@code version + 1} calculado no
  * {@code on}, ela contaria dois. Vindo pronta no evento, os dois caminhos convergem para o mesmo estado.
  * <p>
- * O autor não aparece porque não muda.
+ * O autor não muda com um update, mas o {@code authorId} vem no payload assim mesmo, como
+ * {@code @EventTag}: é o que faz "todos os eventos do autor X" ser um critério de event store e o que a
+ * subscription {@code onPostUpdated(authorId:)} usa como tópico. Um evento que não carrega a tag
+ * simplesmente não aparece nessa leitura, e a newsletter perderia justamente as atualizações.
  *
  * @param version versão resultante do post depois deste evento
  */
@@ -30,6 +34,7 @@ public record PostUpdatedEvent(
         @EventTag PostId postId,
         String title,
         String content,
+        @EventTag UserId authorId,
         List<Tag> tags,
         long version,
         Instant occurredAt

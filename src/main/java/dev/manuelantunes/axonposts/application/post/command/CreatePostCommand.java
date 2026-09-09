@@ -4,6 +4,12 @@ import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.exception.PostAlreadyExistsException;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
+import dev.manuelantunes.axonposts.domain.user.Author;
+import dev.manuelantunes.axonposts.domain.user.User;
+import dev.manuelantunes.axonposts.domain.user.UserRepository;
+import dev.manuelantunes.axonposts.domain.user.exception.NotAnAuthorException;
+import dev.manuelantunes.axonposts.domain.user.exception.UserNotFoundException;
+import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import org.axonframework.messaging.commandhandling.annotation.Command;
 import org.axonframework.messaging.commandhandling.annotation.CommandHandler;
 import org.axonframework.messaging.eventhandling.gateway.EventAppender;
@@ -49,22 +55,28 @@ public class CreatePostCommand {
      * <p>
      * O nome da mensagem é explícito ({@code posts.CreatePost#1.0.0}), então aninhar o record não muda
      * nada no wire: o que trafega no command bus continua sendo esse nome, não o da classe.
+     * <p>
+     * O {@code authorId} <b>não</b> vem do input do GraphQL — vem de quem está autenticado. É a
+     * diferença entre "quem eu digo que sou" e "quem o token diz que eu sou", e só a segunda serve:
+     * aceitar o autor como campo do input deixaria qualquer um publicar em nome de qualquer outro.
      */
     @Command(namespace = "posts", name = "CreatePost", version = "1.0.0")
     public record CreatePost(
             @TargetEntityId PostId postId,
             String title,
             String content,
-            String author
+            UserId authorId
     ) {
     }
 
     private final Clock clock;
     private final PostRepository posts;
+    private final UserRepository users;
 
-    public CreatePostCommand(Clock clock, PostRepository posts) {
+    public CreatePostCommand(Clock clock, PostRepository posts, UserRepository users) {
         this.clock = clock;
         this.posts = posts;
+        this.users = users;
     }
 
     /**
@@ -82,12 +94,32 @@ public class CreatePostCommand {
                 command.postId(),
                 command.title(),
                 command.content(),
-                command.author(),
+                author(command.authorId()),
                 clock.instant(),
                 appendingTo(eventAppender)
         );
 
         posts.save(post);
         return post.id();
+    }
+
+    /**
+     * O <b>downcast</b>, e o único lugar onde ele acontece.
+     * <p>
+     * O repositório devolve {@code User} porque a herança é {@code JOINED} e o tipo concreto é decidido
+     * pelo banco — existe linha em {@code authors} ou não existe. O {@code instanceof} aqui não é um
+     * <i>cast</i> otimista: é a checagem que confirma, contra o banco, o que a role do token já tinha
+     * afirmado. As duas podem divergir (papel revogado, token ainda válido), e quando divergem é o tipo
+     * que ganha.
+     * <p>
+     * Carregar dentro do handler ainda dá o de sempre: a {@code Author} entra no agregado
+     * <b>gerenciada</b>, na mesma transação do {@code posts.save(...)}.
+     */
+    private Author author(UserId authorId) {
+        User user = users.findById(authorId).orElseThrow(() -> new UserNotFoundException(authorId));
+        if (user instanceof Author author) {
+            return author;
+        }
+        throw new NotAnAuthorException(authorId);
     }
 }

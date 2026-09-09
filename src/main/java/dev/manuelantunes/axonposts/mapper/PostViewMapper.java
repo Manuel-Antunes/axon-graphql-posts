@@ -2,6 +2,8 @@ package dev.manuelantunes.axonposts.mapper;
 
 import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.tag.Tag;
+import dev.manuelantunes.axonposts.domain.user.Author;
+import dev.manuelantunes.axonposts.dto.controller.AuthorView;
 import dev.manuelantunes.axonposts.dto.controller.PostView;
 import dev.manuelantunes.axonposts.dto.controller.TagView;
 import org.mapstruct.Mapper;
@@ -32,7 +34,7 @@ public interface PostViewMapper {
     @Mapping(target = "id", expression = "java(post.id().value())")
     @Mapping(target = "title", expression = "java(post.title().value())")
     @Mapping(target = "content", expression = "java(post.content().value())")
-    @Mapping(target = "author", expression = "java(post.author().value())")
+    @Mapping(target = "author", expression = "java(toAuthorView(post.author()))")
     @Mapping(target = "createdAt", expression = "java(post.createdAt())")
     @Mapping(target = "updatedAt", expression = "java(post.updatedAt())")
     @Mapping(target = "version", expression = "java(post.version().value())")
@@ -44,4 +46,13 @@ public interface PostViewMapper {
     TagView toTagView(Tag tag);
 
     List<TagView> toTagViews(List<Tag> tags);
+
+    /**
+     * {@code Author} → {@link AuthorView}. Fica aqui, e não no {@code UserViewMapper}, porque é o
+     * caminho estático: o tipo do campo {@code Post.author} já é {@code Author} em tempo de compilação,
+     * então não há despacho polimórfico a fazer.
+     */
+    default AuthorView toAuthorView(Author author) {
+        return new AuthorView(author.id().value(), author.name().value());
+    }
 }

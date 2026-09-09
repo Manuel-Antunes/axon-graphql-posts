@@ -14,13 +14,18 @@ import java.time.Instant;
  * {@code PostTagsController} através de um DataLoader — carregar tudo junto seria exatamente o N+1 que
  * o DataLoader existe para evitar. Quem não pede {@code tags} na query não paga por elas.
  *
+ * <b>O autor é um {@link AuthorView}, não um texto.</b> Antes era o nome copiado; agora é a identidade
+ * de quem escreveu, e é por isso que {@code post { author { posts { ... } } }} funciona sem nenhum
+ * resolver a mais nesta classe — o {@code AuthorView} devolvido aqui é o mesmo que o {@code me}
+ * devolve, e recebe os mesmos campos resolvidos em lote.
+ *
  * @param version quantidade de eventos aplicados a esse Post (1 = só criado)
  */
 public record PostView(
         String id,
         String title,
         String content,
-        String author,
+        AuthorView author,
         Instant createdAt,
         Instant updatedAt,
         long version

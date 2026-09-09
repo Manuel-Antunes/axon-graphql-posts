@@ -1,17 +1,23 @@
 package dev.manuelantunes.axonposts.domain.post;
 
 import dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent;
+import dev.manuelantunes.axonposts.domain.post.event.PostDeletedEvent;
+import dev.manuelantunes.axonposts.domain.post.event.PostRestoredEvent;
 import dev.manuelantunes.axonposts.domain.post.event.PostUpdatedEvent;
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
-import dev.manuelantunes.axonposts.domain.post.vo.Author;
 import dev.manuelantunes.axonposts.domain.post.vo.PostContent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.post.vo.PostTitle;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
 import dev.manuelantunes.axonposts.domain.shared.DomainEventPublisher;
+import dev.manuelantunes.axonposts.domain.shared.SoftDeletable;
+import dev.manuelantunes.axonposts.domain.shared.SoftDeletion;
 import dev.manuelantunes.axonposts.domain.tag.Tag;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagName;
+import dev.manuelantunes.axonposts.domain.user.Author;
+import dev.manuelantunes.axonposts.domain.user.vo.DisplayName;
+import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import jakarta.persistence.AttributeOverride;
 import jakarta.persistence.Column;
 import jakarta.persistence.Embedded;
@@ -21,10 +27,13 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.JoinTable;
 import jakarta.persistence.ManyToMany;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import org.axonframework.eventsourcing.annotation.EventSourcingHandler;
 import org.axonframework.eventsourcing.annotation.reflection.EntityCreator;
 import org.axonframework.extension.spring.stereotype.EventSourced;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -67,7 +76,20 @@ import java.util.Set;
 @Entity
 @Table(name = "posts")
 @EventSourced(tagKey = Post.TAG_KEY, idType = PostId.class)
-public class Post {
+/*
+ * Exclusão lógica: @SQLRestriction esconde os apagados de toda consulta, @SQLDelete troca o DELETE do
+ * JpaRepository por um UPDATE. Ver SoftDeletable.
+ *
+ * Detalhe que só aparece aqui: como o Post é reidratado pelo Axon a partir dos eventos, e não do banco,
+ * um post apagado continua sendo carregável por um command — que é exatamente o que torna o
+ * RestorePost possível.
+ */
+@SQLRestriction(Post.ALIVE)
+@SQLDelete(sql = "update posts set deleted_at = current_timestamp where id = ?")
+public class Post implements SoftDeletable {
+
+    /** Predicado de "não apagado", em SQL. */
+    public static final String ALIVE = SoftDeletion.COLUMN + " is null";
 
     /** Chave da tag no event store; tem de bater com o nome do campo {@code @EventTag} dos eventos. */
     public static final String TAG_KEY = "postId";
@@ -85,8 +107,21 @@ public class Post {
     @AttributeOverride(name = "value", column = @Column(name = "content", columnDefinition = "TEXT", nullable = false))
     private PostContent content;
 
-    @Embedded
-    @AttributeOverride(name = "value", column = @Column(name = "author", nullable = false))
+    /**
+     * Quem escreveu: a entidade {@link Author}, não uma cópia do nome.
+     * <p>
+     * <b>{@code EAGER}, ao contrário das tags.</b> Toda {@code PostView} mostra o autor, e o mapeamento
+     * para a view acontece <i>fora</i> da transação que leu o post — com {@code LAZY} o proxy estouraria
+     * em {@code LazyInitializationException} na borda. Sendo obrigatório e único, o custo é um join, não
+     * uma coleção; as consultas de lista ainda pedem o join explicitamente
+     * ({@code @EntityGraph}/{@code join fetch}) para não virarem um SELECT por autor.
+     * <p>
+     * Sem cascade, pela mesma razão das tags: o Post escreve {@code posts.author_id} e nada mais. A
+     * referência que o replay monta ({@link Author#reference}) jamais chega às tabelas {@code users} ou
+     * {@code authors}.
+     */
+    @ManyToOne(fetch = FetchType.EAGER, optional = false)
+    @JoinColumn(name = "author_id", nullable = false)
     private Author author;
 
     @Column(name = "created_at", nullable = false)
@@ -94,6 +129,10 @@ public class Post {
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    /** O estado que o mixin {@link SoftDeletable} pede. Nasce vazio: todo post nasce vivo. */
+    @Embedded
+    private SoftDeletion softDeletion = new SoftDeletion();
 
     @Embedded
     @AttributeOverride(name = "value", column = @Column(name = "version", nullable = false))
@@ -147,10 +186,11 @@ public class Post {
     public static Post create(PostId id,
                               String title,
                               String content,
-                              String author,
+                              Author author,
                               Instant now,
                               DomainEventPublisher events) {
         Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(author, "author");
         Objects.requireNonNull(now, "now");
         Objects.requireNonNull(events, "events");
 
@@ -158,7 +198,8 @@ public class Post {
                 id,
                 PostTitle.of(title).value(),
                 PostContent.of(content).value(),
-                Author.of(author).value(),
+                author.id(),
+                author.name().value(),
                 now
         );
 
@@ -210,6 +251,48 @@ public class Post {
         return raiseUpdate(this.title, this.content, resulting, now, events);
     }
 
+    /**
+     * Apaga o post e dispara {@link PostDeletedEvent}.
+     * <p>
+     * Sobrecarga do {@code delete(Instant)} que o mixin dá: aquele muda o estado, este <b>registra o
+     * fato</b>. Num agregado event-sourced só o segundo é utilizável de fora — mudar o estado sem evento
+     * daria um post que some do banco e reaparece no replay.
+     *
+     * @throws dev.manuelantunes.axonposts.domain.shared.AlreadyDeletedException se já estiver apagado
+     */
+    public Post delete(Instant now, DomainEventPublisher events) {
+        Objects.requireNonNull(now, "now");
+        Objects.requireNonNull(events, "events");
+
+        // a guarda do mixin roda aqui, antes de existir evento: decidir vem antes de registrar
+        delete(now);
+
+        PostDeletedEvent event = new PostDeletedEvent(id, author.id(), version.next().value(), now);
+        events.raise(event);
+        on(event);
+        return this;
+    }
+
+    /**
+     * Restaura o post e dispara {@link PostRestoredEvent}.
+     * <p>
+     * O estado volta aqui, mas a <b>linha</b> continua escondida pelo {@code @SQLRestriction} — quem a
+     * traz de volta é {@code PostRepository.restore(...)}. Ver {@code RestorePostCommand}.
+     *
+     * @throws dev.manuelantunes.axonposts.domain.shared.NotDeletedException se não estiver apagado
+     */
+    public Post restore(Instant now, DomainEventPublisher events) {
+        Objects.requireNonNull(now, "now");
+        Objects.requireNonNull(events, "events");
+
+        restore();
+
+        PostRestoredEvent event = new PostRestoredEvent(id, author.id(), version.next().value(), now);
+        events.raise(event);
+        on(event);
+        return this;
+    }
+
     private Post raiseUpdate(PostTitle resultingTitle,
                              PostContent resultingContent,
                              Set<Tag> resultingTags,
@@ -219,6 +302,7 @@ public class Post {
                 id,
                 resultingTitle.value(),
                 resultingContent.value(),
+                this.author.id(),
                 resultingTags.stream().map(t -> new PostUpdatedEvent.Tag(t.id().value(), t.name().value())).toList(),
                 this.version.next().value(),
                 now
@@ -237,6 +321,14 @@ public class Post {
         return tags.isEmpty();
     }
 
+    /**
+     * Este post é deste autor? Compara por identidade, então funciona igual com o {@link Author}
+     * carregado do banco e com a referência que o replay monta.
+     */
+    public boolean isWrittenBy(UserId authorId) {
+        return author.id().equals(authorId);
+    }
+
     // ---- evoluir: reconstituição a partir do stream ---------------------------------------------
 
     /**
@@ -252,7 +344,7 @@ public class Post {
         this.id = event.postId();
         this.title = PostTitle.of(event.title());
         this.content = PostContent.of(event.content());
-        this.author = Author.of(event.author());
+        this.author = Author.reference(event.authorId(), DisplayName.of(event.authorName()));
         this.createdAt = event.occurredAt();
         this.updatedAt = event.occurredAt();
         this.version = PostVersion.initial();
@@ -292,6 +384,26 @@ public class Post {
         this.tags.addAll(next);
     }
 
+    /**
+     * Aplica a exclusão. Usa {@code applyDeletion} e não {@code delete}: este método roda duas vezes para
+     * o mesmo evento (o domínio ao decidir, o Axon ao apendar), e a versão guardada é a do evento — a
+     * mesma idempotência do {@link #on(PostUpdatedEvent)}.
+     */
+    @EventSourcingHandler
+    public void on(PostDeletedEvent event) {
+        applyDeletion(event.occurredAt());
+        this.updatedAt = event.occurredAt();
+        this.version = new PostVersion(event.version());
+    }
+
+    /** A contraparte, pelo mesmo motivo. */
+    @EventSourcingHandler
+    public void on(PostRestoredEvent event) {
+        applyRestoration();
+        this.updatedAt = event.occurredAt();
+        this.version = new PostVersion(event.version());
+    }
+
     // ---- estado ---------------------------------------------------------------------------------
 
     public PostId id() {
@@ -324,5 +436,29 @@ public class Post {
 
     public List<Tag> tags() {
         return List.copyOf(tags);
+    }
+
+    // ---- o que o mixin pede ---------------------------------------------------------------------
+
+    /**
+     * A guarda contra o {@code null} do Hibernate: quando <b>todas</b> as colunas de um {@code @Embedded}
+     * vêm nulas — que é o caso de toda entidade viva, já que {@code deleted_at} é a única — ele deixa o
+     * componente inteiro nulo em vez de instanciar um vazio. Sem isto, {@code isDeleted()} estouraria em
+     * qualquer entidade lida do banco.
+     * <p>
+     * O inicializador do campo cobre as instâncias construídas em Java; esta linha cobre as hidratadas
+     * pelo ORM. As duas são necessárias, e foi um teste contra o banco de verdade que mostrou a segunda.
+     */
+    @Override
+    public SoftDeletion softDeletion() {
+        if (softDeletion == null) {
+            softDeletion = new SoftDeletion();
+        }
+        return softDeletion;
+    }
+
+    @Override
+    public Object identity() {
+        return id;
     }
 }

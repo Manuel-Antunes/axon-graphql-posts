@@ -11,6 +11,7 @@ import dev.manuelantunes.axonposts.domain.tag.exception.TagNotFoundException;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagName;
 import dev.manuelantunes.axonposts.support.InMemoryPostRepository;
+import dev.manuelantunes.axonposts.support.UserFixtures;
 import dev.manuelantunes.axonposts.support.InMemoryTagRepository;
 import dev.manuelantunes.axonposts.support.PostCommandFixtures;
 import org.axonframework.modelling.repository.EntityNotFoundException;
@@ -55,12 +56,12 @@ class AssignTagToPostCommandTest {
         PostId id = PostId.newId();
 
         fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
+                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, NOW))
                 .when()
                 .command(new AssignTagToPost(id, TAG_ID))
                 .then()
                 .success()
-                .events(new PostUpdatedEvent(id, "título", "conteúdo",
+                .events(new PostUpdatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID,
                         List.of(new PostUpdatedEvent.Tag("tag-1", "Untagged")), 2, NOW));
 
         assertThat(posts.findById(id)).hasValueSatisfying(post -> {
@@ -74,8 +75,8 @@ class AssignTagToPostCommandTest {
         PostId id = PostId.newId();
 
         fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
-                .event(new PostUpdatedEvent(id, "título", "conteúdo",
+                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, NOW))
+                .event(new PostUpdatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID,
                         List.of(new PostUpdatedEvent.Tag("tag-1", "Untagged")), 2, NOW))
                 .when()
                 .command(new AssignTagToPost(id, TAG_ID))
@@ -89,7 +90,7 @@ class AssignTagToPostCommandTest {
         PostId id = PostId.newId();
 
         fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
+                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, NOW))
                 .when()
                 .command(new AssignTagToPost(id, TagId.of("nao-existe")))
                 .then()

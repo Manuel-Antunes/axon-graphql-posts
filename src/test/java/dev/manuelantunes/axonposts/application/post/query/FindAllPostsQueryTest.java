@@ -8,6 +8,7 @@ import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.dto.controller.PostView;
 import dev.manuelantunes.axonposts.mapper.PostViewMapperImpl;
 import dev.manuelantunes.axonposts.support.InMemoryPostRepository;
+import dev.manuelantunes.axonposts.support.UserFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -33,7 +34,8 @@ class FindAllPostsQueryTest {
         query = new FindAllPostsQuery(posts, new PostViewMapperImpl());
         for (int i = 0; i < 5; i++) {
             posts.save(new Post(new PostCreatedEvent(
-                    PostId.of("id-" + i), "título " + i, "conteúdo", "manuel", T0)));
+                    PostId.of("id-" + i), "título " + i, "conteúdo",
+                    UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, T0)));
         }
     }
 

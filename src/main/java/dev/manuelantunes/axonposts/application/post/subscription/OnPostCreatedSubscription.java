@@ -32,14 +32,22 @@ import java.util.Optional;
 public class OnPostCreatedSubscription {
 
     /**
-     * A mensagem: "me avise de todo Post criado". Sem filtro — é um tópico global.
+     * A mensagem: "me avise de todo Post criado", com tópico opcional por autor.
      * <p>
      * É o payload do {@code QueryMessage} que o {@code QueryBus} mantém registrado enquanto o
      * {@code Flux} estiver assinado; o event handler de {@code PostCreatedEvent} emite para ele por tipo
-     * ({@code emitter.emit(OnPostCreated.class, ...)}).
+     * ({@code emitter.emit(OnPostCreated.class, ...)}) aplicando este predicado a cada assinante.
+     *
+     * @param authorId tópico opcional — {@code null} recebe todo post criado; preenchido, só os daquele
+     *                 autor. É a <b>newsletter</b>: acompanhar um autor específico.
      */
     @Query(namespace = "posts", name = "OnPostCreated", version = "1.0.0")
-    public record OnPostCreated() {
+    public record OnPostCreated(String authorId) {
+
+        /** O predicado do tópico mora junto da mensagem: quem emite não precisa saber a regra. */
+        public boolean matches(String createdByAuthorId) {
+            return authorId == null || authorId.isBlank() || authorId.equals(createdByAuthorId);
+        }
     }
 
     private final ReactorQueryGateway queryGateway;
@@ -54,8 +62,12 @@ public class OnPostCreatedSubscription {
         return Optional.empty();
     }
 
-    /** Flux de todo Post criado a partir de agora. */
-    public Flux<PostView> subscribe() {
-        return queryGateway.subscriptionQuery(new OnPostCreated(), PostView.class);
+    /**
+      * Flux de Posts criados a partir de agora.
+      *
+      * @param authorId tópico opcional: {@code null} = todos os autores; preenchido = só aquele autor
+      */
+    public Flux<PostView> subscribe(String authorId) {
+        return queryGateway.subscriptionQuery(new OnPostCreated(authorId), PostView.class);
     }
 }

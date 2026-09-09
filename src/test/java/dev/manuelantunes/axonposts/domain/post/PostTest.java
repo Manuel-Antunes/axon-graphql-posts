@@ -1,17 +1,22 @@
 package dev.manuelantunes.axonposts.domain.post;
 
 import dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent;
+import dev.manuelantunes.axonposts.domain.post.event.PostDeletedEvent;
+import dev.manuelantunes.axonposts.domain.post.event.PostRestoredEvent;
 import dev.manuelantunes.axonposts.domain.post.event.PostUpdatedEvent;
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
-import dev.manuelantunes.axonposts.domain.post.vo.Author;
+import dev.manuelantunes.axonposts.domain.shared.AlreadyDeletedException;
+import dev.manuelantunes.axonposts.domain.shared.NotDeletedException;
 import dev.manuelantunes.axonposts.domain.post.vo.PostContent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.post.vo.PostTitle;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
 import dev.manuelantunes.axonposts.domain.tag.Tag;
+import dev.manuelantunes.axonposts.domain.user.Author;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagName;
 import dev.manuelantunes.axonposts.support.RecordingDomainEvents;
+import dev.manuelantunes.axonposts.support.UserFixtures;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -36,19 +41,22 @@ class PostTest {
      */
     private static final Tag UNTAGGED = Tag.reference(TagId.of("tag-1"), TagName.of("Untagged"));
 
+    /** O autor completo, como o command handler o carregaria do banco antes de decidir. */
+    private static final Author AUTHOR = UserFixtures.author();
+
     private final RecordingDomainEvents events = new RecordingDomainEvents();
 
     @Test
     void createNormalizesRaisesTheEventAndReturnsThePostReadyToSave() {
         PostId id = PostId.newId();
 
-        Post post = Post.create(id, "  Título  ", " conteúdo ", " manuel ", T0, events);
+        Post post = Post.create(id, "  Título  ", " conteúdo ", AUTHOR, T0, events);
 
-        assertThat(events.single()).isEqualTo(new PostCreatedEvent(id, "Título", "conteúdo", "manuel", T0));
+        assertThat(events.single()).isEqualTo(new PostCreatedEvent(id, "Título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, T0));
         assertThat(post.id()).isEqualTo(id);
         assertThat(post.title()).isEqualTo(PostTitle.of("Título"));
         assertThat(post.content()).isEqualTo(PostContent.of("conteúdo"));
-        assertThat(post.author()).isEqualTo(Author.of("manuel"));
+        assertThat(post.author()).isEqualTo(AUTHOR);
         assertThat(post.createdAt()).isEqualTo(T0);
         assertThat(post.version()).isEqualTo(PostVersion.initial());
         assertThat(post.tags()).isEmpty();
@@ -57,7 +65,7 @@ class PostTest {
 
     @Test
     void createWithInvalidValueRaisesNothing() {
-        assertThatThrownBy(() -> Post.create(PostId.newId(), "   ", "conteúdo", "manuel", T0, events))
+        assertThatThrownBy(() -> Post.create(PostId.newId(), "   ", "conteúdo", AUTHOR, T0, events))
                 .isInstanceOf(InvalidPostException.class);
 
         assertThat(events.raised()).isEmpty();
@@ -67,7 +75,7 @@ class PostTest {
     void createRejectsATitleLongerThanTheMaximum() {
         String tooLong = "x".repeat(PostTitle.MAX_LENGTH + 1);
 
-        assertThatThrownBy(() -> Post.create(PostId.newId(), tooLong, "conteúdo", "manuel", T0, events))
+        assertThatThrownBy(() -> Post.create(PostId.newId(), tooLong, "conteúdo", AUTHOR, T0, events))
                 .isInstanceOf(InvalidPostException.class);
     }
 
@@ -80,7 +88,7 @@ class PostTest {
         post.update("Novo título", null, T1, events);
 
         assertThat(events.single()).isEqualTo(new PostUpdatedEvent(
-                post.id(), "Novo título", "conteúdo",
+                post.id(), "Novo título", "conteúdo", UserFixtures.AUTHOR_ID,
                 List.of(new PostUpdatedEvent.Tag("tag-1", "Untagged")), 3, T1));
         assertThat(post.title()).isEqualTo(PostTitle.of("Novo título"));
         assertThat(post.tags()).containsExactly(UNTAGGED);
@@ -94,7 +102,7 @@ class PostTest {
         Post tagged = post.assignTag(UNTAGGED, T1, events);
 
         assertThat(events.single()).isEqualTo(new PostUpdatedEvent(
-                post.id(), "Título", "conteúdo",
+                post.id(), "Título", "conteúdo", UserFixtures.AUTHOR_ID,
                 List.of(new PostUpdatedEvent.Tag("tag-1", "Untagged")), 2, T1));
         assertThat(tagged.tags()).containsExactly(UNTAGGED);
         assertThat(tagged.version()).isEqualTo(new PostVersion(2));
@@ -154,7 +162,71 @@ class PostTest {
         assertThat(post.updatedAt()).isEqualTo(T1);
     }
 
+    @Test
+    void deleteRaisesPostDeletedAndMarksTheState() {
+        Post post = createdPost();
+
+        Post deleted = post.delete(T1, events);
+
+        assertThat(events.single()).isEqualTo(
+                new PostDeletedEvent(post.id(), UserFixtures.AUTHOR_ID, 2, T1));
+        assertThat(deleted.isDeleted()).isTrue();
+        assertThat(deleted.deletedAt()).isEqualTo(T1);
+        assertThat(deleted.version()).isEqualTo(new PostVersion(2));
+    }
+
+    @Test
+    void deletingTwiceRaisesNothing() {
+        Post post = createdPost();
+        post.delete(T0, events);
+        events.clear();
+
+        assertThatThrownBy(() -> post.delete(T1, events))
+                .isInstanceOf(AlreadyDeletedException.class);
+
+        // a guarda do mixin roda ANTES de existir evento: nada foi disparado
+        assertThat(events.raised()).isEmpty();
+    }
+
+    @Test
+    void restoreRaisesPostRestoredAndClearsTheState() {
+        Post post = createdPost();
+        post.delete(T0, events);
+        events.clear();
+
+        Post restored = post.restore(T1, events);
+
+        assertThat(events.single()).isEqualTo(
+                new PostRestoredEvent(post.id(), UserFixtures.AUTHOR_ID, 3, T1));
+        assertThat(restored.isDeleted()).isFalse();
+        assertThat(restored.deletedAt()).isNull();
+    }
+
+    @Test
+    void restoringSomethingAliveRaisesNothing() {
+        Post post = createdPost();
+
+        assertThatThrownBy(() -> post.restore(T1, events))
+                .isInstanceOf(NotDeletedException.class);
+
+        assertThat(events.raised()).isEmpty();
+    }
+
+    @Test
+    void applyingPostDeletedTwiceLeavesTheSameState() {
+        Post post = createdPost();
+        post.delete(T1, events);
+        PostDeletedEvent event = (PostDeletedEvent) events.single();
+
+        // o domínio já aplicou ao decidir; o Axon aplica de novo ao apendar
+        post.on(event);
+        post.on(event);
+
+        assertThat(post.isDeleted()).isTrue();
+        assertThat(post.version()).isEqualTo(new PostVersion(2));
+    }
+
     private Post createdPost() {
-        return new Post(new PostCreatedEvent(PostId.of("post-1"), "Título", "conteúdo", "manuel", T0));
+        return new Post(new PostCreatedEvent(PostId.of("post-1"), "Título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, T0));
     }
 }

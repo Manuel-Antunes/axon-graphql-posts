@@ -44,9 +44,11 @@ public class PostUpdatedEventHandler {
                         "PostUpdated de um Post que não está no banco: " + event.postId()
                                 + " — o command deveria tê-lo salvo antes do commit"));
 
-        log.debug("PostUpdated {} (v{}) → emitindo para onPostUpdated", view.id(), view.version());
+        log.debug("PostUpdated {} (v{}) de {} → emitindo para onPostUpdated",
+                view.id(), view.version(), view.author().id());
 
-        // tópico por id: só assinantes sem filtro ou com o mesmo postId recebem
-        emitter.emit(OnPostUpdated.class, subscription -> subscription.matches(view.id()), view);
+        // dois tópicos, ambos opcionais: postId e authorId. Sem filtro nenhum, o assinante recebe tudo
+        emitter.emit(OnPostUpdated.class,
+                subscription -> subscription.matches(view.id(), view.author().id()), view);
     }
 }

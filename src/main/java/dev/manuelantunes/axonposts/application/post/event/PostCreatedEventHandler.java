@@ -3,6 +3,7 @@ package dev.manuelantunes.axonposts.application.post.event;
 import dev.manuelantunes.axonposts.application.post.subscription.OnPostCreatedSubscription.OnPostCreated;
 import dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
+import dev.manuelantunes.axonposts.dto.controller.AuthorView;
 import dev.manuelantunes.axonposts.dto.controller.PostView;
 import org.axonframework.messaging.eventhandling.annotation.EventHandler;
 import org.axonframework.messaging.queryhandling.QueryUpdateEmitter;
@@ -31,19 +32,21 @@ public class PostCreatedEventHandler {
 
     @EventHandler
     public void on(PostCreatedEvent event, QueryUpdateEmitter emitter) {
+        // o AuthorView sai do próprio payload: o evento carrega id e nome, que é exatamente o que este
+        // DTO tem. Os campos email/bio são resolvidos em lote depois, se a query os pedir.
         PostView view = new PostView(
                 event.postId().value(),
                 event.title(),
                 event.content(),
-                event.author(),
+                new AuthorView(event.authorId().value(), event.authorName()),
                 event.occurredAt(),
                 event.occurredAt(),
                 PostVersion.initial().value()
         );
 
-        log.debug("PostCreated {} → emitindo para onPostCreated", view.id());
+        log.debug("PostCreated {} de {} → emitindo para onPostCreated", view.id(), view.author().id());
 
-        // tópico global: todo assinante de OnPostCreated recebe
-        emitter.emit(OnPostCreated.class, subscription -> true, view);
+        // cada assinante decide pelo próprio tópico: sem authorId recebe tudo, com authorId só o dele
+        emitter.emit(OnPostCreated.class, subscription -> subscription.matches(view.author().id()), view);
     }
 }

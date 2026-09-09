@@ -19,15 +19,27 @@ public class OnPostUpdatedSubscription {
     /**
      * A mensagem: "me avise quando um Post for atualizado".
      *
-     * @param postId tópico opcional — {@code null} recebe update de qualquer Post; preenchido, só os
-     *               daquele id. O filtro é avaliado no emit, pelo {@code PostUpdatedEventHandler}.
+     * Os dois filtros são independentes e combinam por <b>E</b>: com os dois preenchidos, o assinante
+     * recebe um post específico e só enquanto ele for daquele autor. O filtro é avaliado no emit, pelo
+     * {@code PostUpdatedEventHandler}.
+     *
+     * @param postId   tópico opcional — {@code null} recebe update de qualquer Post; preenchido, só os
+     *                 daquele id
+     * @param authorId tópico opcional — {@code null} recebe de qualquer autor; preenchido, só os daquele
+     *                 autor. É a outra metade da newsletter: {@code onPostCreated} traz o que ele
+     *                 publica, {@code onPostUpdated} traz o que ele edita — inclusive a atribuição da
+     *                 tag padrão, que também é um PostUpdated
      */
     @Query(namespace = "posts", name = "OnPostUpdated", version = "1.0.0")
-    public record OnPostUpdated(String postId) {
+    public record OnPostUpdated(String postId, String authorId) {
 
         /** O predicado do tópico mora junto da mensagem: quem emite não precisa saber a regra. */
-        public boolean matches(String updatedPostId) {
-            return postId == null || postId.isBlank() || postId.equals(updatedPostId);
+        public boolean matches(String updatedPostId, String updatedAuthorId) {
+            return matchesTopic(postId, updatedPostId) && matchesTopic(authorId, updatedAuthorId);
+        }
+
+        private static boolean matchesTopic(String filter, String actual) {
+            return filter == null || filter.isBlank() || filter.equals(actual);
         }
     }
 
@@ -51,9 +63,10 @@ public class OnPostUpdatedSubscription {
     /**
      * Flux de Posts atualizados a partir de agora.
      *
-     * @param postId tópico opcional: {@code null} = todos os Posts; preenchido = só aquele Post
+     * @param postId   tópico opcional: {@code null} = todos os Posts; preenchido = só aquele Post
+     * @param authorId tópico opcional: {@code null} = todos os autores; preenchido = só aquele autor
      */
-    public Flux<PostView> subscribe(String postId) {
-        return queryGateway.subscriptionQuery(new OnPostUpdated(postId), PostView.class);
+    public Flux<PostView> subscribe(String postId, String authorId) {
+        return queryGateway.subscriptionQuery(new OnPostUpdated(postId, authorId), PostView.class);
     }
 }

@@ -4,6 +4,7 @@ import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.tag.Tag;
+import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -32,6 +33,16 @@ public final class InMemoryPostRepository implements PostRepository {
         return Optional.ofNullable(byId.get(postId));
     }
 
+    /**
+     * No adapter real isto é um UPDATE nativo que escapa do {@code @SQLRestriction}; aqui não há filtro
+     * nenhum, então não há o que desfazer. O no-op é a resposta certa — e o teste do command continua
+     * provando a <b>ordem</b> das chamadas, que é o que pode dar errado.
+     */
+    @Override
+    public void restore(PostId postId) {
+        // sem filtro em memória: nada a fazer
+    }
+
     @Override
     public List<Post> findAll(long offset, int limit) {
         return byId.values().stream().skip(offset).limit(limit).toList();
@@ -44,6 +55,13 @@ public final class InMemoryPostRepository implements PostRepository {
                 .filter(java.util.Objects::nonNull)
                 .filter(post -> !post.tags().isEmpty())
                 .collect(Collectors.toMap(Post::id, Post::tags));
+    }
+
+    @Override
+    public Map<UserId, List<Post>> findByAuthorIds(Collection<UserId> authorIds) {
+        return byId.values().stream()
+                .filter(post -> authorIds.contains(post.author().id()))
+                .collect(Collectors.groupingBy(post -> post.author().id(), LinkedHashMap::new, Collectors.toList()));
     }
 
     /** Atalho de teste: tudo o que foi salvo, na ordem de inserção. */

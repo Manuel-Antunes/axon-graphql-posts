@@ -7,11 +7,14 @@ import jakarta.validation.constraints.Size;
 /**
  * Input GraphQL de {@code createPost}.
  * <p>
- * O schema já garante que os três campos vêm não-nulos ({@code String!}); as constraints abaixo cobrem
+ * O schema já garante que os dois campos vêm não-nulos ({@code String!}); as constraints abaixo cobrem
  * o que o GraphQL não sabe expressar — texto só de espaços e título longo demais.
+ * <p>
+ * <b>Não há campo {@code author}.</b> Ele saiu quando o autor passou a vir do token: um input que
+ * carrega o autor é um input que deixa publicar em nome dos outros.
  *
  * <h2>Isto não substitui a validação do domínio</h2>
- * {@code PostTitle}, {@code PostContent} e {@code Author} continuam validando por conta própria, e é
+ * {@code PostTitle} e {@code PostContent} continuam validando por conta própria, e é
  * essa a validação que vale: ela protege a invariante venha o command de onde vier. As constraints aqui
  * são <b>fail-fast de borda</b> — rejeitam a requisição malformada antes de gastar um command, e
  * devolvem ao cliente um erro de campo em vez de uma exceção de domínio traduzida. O limite duplicado é
@@ -24,9 +27,6 @@ public record CreatePostInput(
         String title,
 
         @NotBlank(message = "content não pode ser vazio")
-        String content,
-
-        @NotBlank(message = "author não pode ser vazio")
-        String author
+        String content
 ) {
 }

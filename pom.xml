@@ -79,6 +79,18 @@
             <artifactId>hibernate-community-dialects</artifactId>
         </dependency>
 
+        <!-- Segurança: WebFlux reativo + resource server JWT.
+             O resource-server traz o nimbus-jose-jwt, que é o que assina e valida o token HS256;
+             o starter-security traz o BCryptPasswordEncoder e o @EnableReactiveMethodSecurity. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+        </dependency>
+
         <!-- Axon Framework 5: starter Spring Boot (messaging + modelling + eventsourcing + autoconfigure) -->
         <dependency>
             <groupId>org.axonframework.extensions.spring</groupId>

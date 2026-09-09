@@ -3,6 +3,7 @@ package dev.manuelantunes.axonposts.mapper;
 import dev.manuelantunes.axonposts.application.post.command.CreatePostCommand.CreatePost;
 import dev.manuelantunes.axonposts.application.post.command.UpdatePostCommand.UpdatePost;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
+import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import dev.manuelantunes.axonposts.dto.controller.CreatePostInput;
 import dev.manuelantunes.axonposts.dto.controller.UpdatePostInput;
 import org.mapstruct.Mapper;
@@ -22,12 +23,15 @@ public interface PostInputMapper {
      * O {@link PostId} entra como parâmetro em vez de ser gerado aqui: mapper é tradução, não fábrica de
      * identidade. Quem decide o id é o controller, e é por isso que ele consegue devolver o Post criado
      * na mesma resposta.
+     * <p>
+     * O {@code authorId} também é parâmetro, e por um motivo mais forte: ele não <b>existe</b> no input.
+     * Vem do token, e o controller o busca antes de chamar aqui.
      */
     @Mapping(target = "postId", source = "postId")
     @Mapping(target = "title", source = "input.title")
     @Mapping(target = "content", source = "input.content")
-    @Mapping(target = "author", source = "input.author")
-    CreatePost toCommand(PostId postId, CreatePostInput input);
+    @Mapping(target = "authorId", source = "authorId")
+    CreatePost toCommand(PostId postId, CreatePostInput input, UserId authorId);
 
     @Mapping(target = "postId", source = "id")
     UpdatePost toCommand(UpdatePostInput input);

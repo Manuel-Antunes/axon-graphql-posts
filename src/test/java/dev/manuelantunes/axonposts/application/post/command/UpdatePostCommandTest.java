@@ -4,12 +4,12 @@ import dev.manuelantunes.axonposts.application.post.command.UpdatePostCommand.Up
 import dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent;
 import dev.manuelantunes.axonposts.domain.post.event.PostUpdatedEvent;
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
-import dev.manuelantunes.axonposts.domain.post.vo.Author;
 import dev.manuelantunes.axonposts.domain.post.vo.PostContent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.post.vo.PostTitle;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
 import dev.manuelantunes.axonposts.support.InMemoryPostRepository;
+import dev.manuelantunes.axonposts.support.UserFixtures;
 import dev.manuelantunes.axonposts.support.PostCommandFixtures;
 import org.axonframework.modelling.repository.EntityNotFoundException;
 import org.axonframework.test.fixture.AxonTestFixture;
@@ -49,12 +49,12 @@ class UpdatePostCommandTest {
         PostId id = PostId.newId();
 
         fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
+                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, NOW))
                 .when()
                 .command(new UpdatePost(id, "novo título", null))
                 .then()
                 .success()
-                .events(new PostUpdatedEvent(id, "novo título", "conteúdo", List.of(), 2, NOW));
+                .events(new PostUpdatedEvent(id, "novo título", "conteúdo", UserFixtures.AUTHOR_ID, List.of(), 2, NOW));
     }
 
     @Test
@@ -62,8 +62,8 @@ class UpdatePostCommandTest {
         PostId id = PostId.newId();
 
         fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
-                .event(new PostUpdatedEvent(id, "título v2", "conteúdo", List.of(), 2, NOW))
+                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, NOW))
+                .event(new PostUpdatedEvent(id, "título v2", "conteúdo", UserFixtures.AUTHOR_ID, List.of(), 2, NOW))
                 .when()
                 .command(new UpdatePost(id, null, "conteúdo v3"))
                 .then()
@@ -73,7 +73,7 @@ class UpdatePostCommandTest {
         assertThat(posts.findById(id)).hasValueSatisfying(post -> {
             assertThat(post.title()).isEqualTo(PostTitle.of("título v2"));
             assertThat(post.content()).isEqualTo(PostContent.of("conteúdo v3"));
-            assertThat(post.author()).isEqualTo(Author.of("manuel"));
+            assertThat(post.author()).isEqualTo(UserFixtures.author());
             assertThat(post.createdAt()).isEqualTo(NOW);
             assertThat(post.version()).isEqualTo(new PostVersion(3));
         });
@@ -84,13 +84,13 @@ class UpdatePostCommandTest {
         PostId id = PostId.newId();
 
         fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
-                .event(new PostUpdatedEvent(id, "título v2", "conteúdo", List.of(), 2, NOW))
+                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, NOW))
+                .event(new PostUpdatedEvent(id, "título v2", "conteúdo", UserFixtures.AUTHOR_ID, List.of(), 2, NOW))
                 .when()
                 .command(new UpdatePost(id, null, "conteúdo v3"))
                 .then()
                 .success()
-                .events(new PostUpdatedEvent(id, "título v2", "conteúdo v3", List.of(), 3, NOW));
+                .events(new PostUpdatedEvent(id, "título v2", "conteúdo v3", UserFixtures.AUTHOR_ID, List.of(), 3, NOW));
     }
 
     @Test
@@ -98,7 +98,7 @@ class UpdatePostCommandTest {
         PostId id = PostId.newId();
 
         fixture.given()
-                .event(new PostCreatedEvent(id, "título", "conteúdo", "manuel", NOW))
+                .event(new PostCreatedEvent(id, "título", "conteúdo", UserFixtures.AUTHOR_ID, UserFixtures.AUTHOR_NAME, NOW))
                 .when()
                 .command(new UpdatePost(id, "título", null))
                 .then()

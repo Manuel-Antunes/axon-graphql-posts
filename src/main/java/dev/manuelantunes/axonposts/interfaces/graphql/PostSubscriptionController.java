@@ -19,6 +19,16 @@ import reactor.core.publisher.Flux;
  *   <li>upgrade WebSocket em {@code /graphql} → graphql-ws (habilitado só para o GraphiQL).</li>
  * </ul>
  * Quando o cliente desconecta, o Flux é cancelado e o Axon fecha a subscription query.
+ *
+ * <h2>Os tópicos, e onde eles são avaliados</h2>
+ * Os argumentos {@code postId}/{@code authorId} viram campos da mensagem de subscription, e o predicado
+ * roda no <b>emit</b> — cada event handler pergunta a cada assinante registrado se aquele evento lhe
+ * interessa. Ou seja, o filtro é do lado do servidor: um assinante de {@code authorId: X} nunca recebe,
+ * nem descarta no cliente, o post de outro autor.
+ * <p>
+ * O mesmo {@code authorId} está gravado como {@code @EventTag} nos eventos. São coisas separadas com o
+ * mesmo valor: a tag serve para <i>consultar o passado</i> no event store, o tópico para
+ * <i>filtrar o presente</i> no query bus.
  */
 @Controller
 public class PostSubscriptionController {
@@ -33,12 +43,12 @@ public class PostSubscriptionController {
     }
 
     @SubscriptionMapping
-    public Flux<PostView> onPostCreated() {
-        return onPostCreated.subscribe();
+    public Flux<PostView> onPostCreated(@Argument String authorId) {
+        return onPostCreated.subscribe(authorId);
     }
 
     @SubscriptionMapping
-    public Flux<PostView> onPostUpdated(@Argument String postId) {
-        return onPostUpdated.subscribe(postId);
+    public Flux<PostView> onPostUpdated(@Argument String postId, @Argument String authorId) {
+        return onPostUpdated.subscribe(postId, authorId);
     }
 }

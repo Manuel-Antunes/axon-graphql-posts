@@ -2,15 +2,23 @@ package dev.manuelantunes.axonposts.exceptions;
 
 import dev.manuelantunes.axonposts.domain.post.exception.InvalidPostException;
 import dev.manuelantunes.axonposts.domain.post.exception.PostAlreadyExistsException;
+import dev.manuelantunes.axonposts.domain.shared.AlreadyDeletedException;
+import dev.manuelantunes.axonposts.domain.shared.NotDeletedException;
 import dev.manuelantunes.axonposts.domain.tag.exception.InvalidTagException;
 import dev.manuelantunes.axonposts.domain.tag.exception.TagAlreadyExistsException;
 import dev.manuelantunes.axonposts.domain.tag.exception.TagNotFoundException;
+import dev.manuelantunes.axonposts.domain.user.exception.InvalidUserException;
+import dev.manuelantunes.axonposts.domain.user.exception.NotAnAuthorException;
+import dev.manuelantunes.axonposts.domain.user.exception.UserNotFoundException;
+import dev.manuelantunes.axonposts.domain.user.vo.InvalidCredentialsException;
 import graphql.GraphQLError;
 import graphql.GraphqlErrorBuilder;
 import graphql.schema.DataFetchingEnvironment;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import org.axonframework.modelling.repository.EntityNotFoundException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.graphql.data.method.annotation.GraphQlExceptionHandler;
 import org.springframework.graphql.execution.ErrorType;
 import org.springframework.web.bind.annotation.ControllerAdvice;
@@ -43,8 +51,22 @@ public class AppGraphQlExceptionHandler {
                 return error(ErrorType.BAD_REQUEST, describe(violations), env);
             }
             if (t instanceof InvalidPostException || t instanceof PostAlreadyExistsException
-                    || t instanceof InvalidTagException || t instanceof TagAlreadyExistsException) {
+                    || t instanceof InvalidTagException || t instanceof TagAlreadyExistsException
+                    || t instanceof InvalidUserException
+                    // as duas guardas do mixin SoftDeletable: apagar o apagado, restaurar o vivo
+                    || t instanceof AlreadyDeletedException || t instanceof NotDeletedException) {
                 return error(ErrorType.BAD_REQUEST, t.getMessage(), env);
+            }
+            // credencial ruim e requisição sem token são a mesma resposta: "identifique-se"
+            if (t instanceof InvalidCredentialsException || t instanceof AuthenticationException) {
+                return error(ErrorType.UNAUTHORIZED, "credenciais inválidas ou ausentes", env);
+            }
+            // autenticado, mas sem permissão. A mensagem não diz o que faltou, só que faltou
+            if (t instanceof AccessDeniedException || t instanceof NotAnAuthorException) {
+                return error(ErrorType.FORBIDDEN, "sem permissão para esta operação", env);
+            }
+            if (t instanceof UserNotFoundException) {
+                return error(ErrorType.NOT_FOUND, t.getMessage(), env);
             }
             if (t instanceof TagNotFoundException) {
                 return error(ErrorType.NOT_FOUND, t.getMessage(), env);

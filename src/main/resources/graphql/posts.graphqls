@@ -1,3 +1,59 @@
+# ---------------------------------------------------------------------------------------------------
+# Usuários
+# ---------------------------------------------------------------------------------------------------
+
+"""
+Quem tem conta. Interface, e não tipo, porque a hierarquia do domínio é polimórfica: todo usuário tem
+id/nome/e-mail, e só um Author tem posts.
+
+O campo `email` é resolvido UMA vez para os dois tipos concretos, por um @BatchMapping declarado sobre
+esta interface — é o "interface schema mapping" do Spring GraphQL: um resolver mapeado no tipo-interface
+vale para toda implementação que não declare o seu próprio.
+"""
+interface User {
+    id: ID!
+    name: String!
+    "Resolvido em lote (@BatchMapping sobre a interface): N usuários numa resposta = 1 consulta"
+    email: String!
+}
+
+"Usuário que só lê. É o `User` do Java sem linha na tabela `authors`."
+type Reader implements User {
+    id: ID!
+    name: String!
+    email: String!
+}
+
+"""
+Usuário que escreve. Subclasse table-per-type de User: linha em `users` + linha em `authors`.
+
+Como o tipo concreto vem do banco (existe linha em `authors` ou não), um `... on Author` numa query
+`me` só casa se o usuário realmente for autor — não há flag a forjar.
+"""
+type Author implements User {
+    id: ID!
+    name: String!
+    email: String!
+    "Bio: campo que só a subclasse tem, e por isso pode ser NOT NULL na tabela `authors`"
+    bio: String!
+    """
+    Posts deste autor, mais recentes primeiro, como Relay cursor connection.
+
+    Mesma técnica do Post.tags: @SchemaMapping + DataLoader, porque o campo tem argumentos e um
+    @BatchMapping não os enxerga. N autores numa resposta = UMA consulta.
+    """
+    posts(
+        "Quantos posts trazer; ausente = 20"
+        first: Int,
+        "Cursor do último post já visto; ausente = do começo"
+        after: String
+    ): PostConnection!
+}
+
+# ---------------------------------------------------------------------------------------------------
+# Posts
+# ---------------------------------------------------------------------------------------------------
+
 """
 Read model de um Post. Mesmo shape em queries, mutations e subscriptions.
 """
@@ -5,7 +61,8 @@ type Post {
     id: ID!
     title: String!
     content: String!
-    author: String!
+    "Quem escreveu. Entidade de verdade: dá para navegar de volta para os outros posts dele"
+    author: Author!
     "ISO-8601 (UTC)"
     createdAt: String!
     "ISO-8601 (UTC)"
@@ -36,6 +93,10 @@ type Tag {
     name: String!
 }
 
+# ---------------------------------------------------------------------------------------------------
+# Queries
+# ---------------------------------------------------------------------------------------------------
+
 type Query {
     "Um Post pelo id; null se não existir"
     post(id: ID!): Post
@@ -55,12 +116,35 @@ type Query {
         "Cursor do último post já visto; ausente = do começo"
         after: String
     ): PostConnection!
+    """
+    Quem está logado. Exige Authorization: Bearer <token>.
+
+    Devolve a interface: use um fragmento para pegar o que só existe em Author.
+        me { id name email ... on Author { bio posts(first: 5) { edges { node { title } } } } }
+    """
+    me: User!
+}
+
+# ---------------------------------------------------------------------------------------------------
+# Mutations
+# ---------------------------------------------------------------------------------------------------
+
+input LoginInput {
+    email: String!
+    password: String!
+}
+
+"Token e quem ele representa"
+type AuthPayload {
+    token: String!
+    "ISO-8601 (UTC)"
+    expiresAt: String!
+    user: User!
 }
 
 input CreatePostInput {
     title: String!
     content: String!
-    author: String!
 }
 
 input UpdatePostInput {
@@ -72,15 +156,48 @@ input UpdatePostInput {
 }
 
 type Mutation {
-    "Despacha o command CreatePost e devolve o Post já projetado"
+    "Troca e-mail e senha por um JWT. Único ponto de entrada sem autenticação"
+    login(input: LoginInput!): AuthPayload!
+    """
+    Despacha o command CreatePost e devolve o Post já projetado.
+
+    Exige ROLE_AUTHOR. O autor NÃO vem no input — vem do token, senão qualquer um publicaria
+    em nome de qualquer outro.
+    """
     createPost(input: CreatePostInput!): Post!
-    "Despacha o command UpdatePost e devolve o Post já projetado"
+    "Despacha o command UpdatePost e devolve o Post já projetado. Exige ROLE_AUTHOR"
     updatePost(input: UpdatePostInput!): Post!
+    """
+    Exclusão lógica: o post some de todas as consultas, mas a linha e o stream continuam lá.
+
+    Devolve true. Exige ROLE_AUTHOR.
+    """
+    deletePost(id: ID!): Boolean!
+    """
+    Desfaz a exclusão lógica.
+
+    Funciona porque o agregado é reidratado dos eventos, não do banco — o post apagado é invisível
+    para o JPA, mas nunca sumiu do stream. Exige ROLE_AUTHOR.
+    """
+    restorePost(id: ID!): Post!
 }
 
+# ---------------------------------------------------------------------------------------------------
+# Subscriptions
+# ---------------------------------------------------------------------------------------------------
+
 type Subscription {
-    "Emite a cada PostCreated (tópico global)"
-    onPostCreated: Post!
-    "Emite a cada PostUpdated; postId filtra por tópico (null = todos)"
-    onPostUpdated(postId: ID): Post!
+    """
+    Emite a cada PostCreated. authorId filtra por tópico (null = todos).
+
+    Com authorId preenchido, isto é a "newsletter": só o que aquele autor publicar daqui pra frente.
+    """
+    onPostCreated(authorId: ID): Post!
+    """
+    Emite a cada PostUpdated. Os dois filtros combinam (AND); null em ambos = tudo.
+
+    onPostUpdated(authorId: "...") acompanha todas as edições de um autor — inclusive a atribuição
+    da tag padrão, que também é um PostUpdated.
+    """
+    onPostUpdated(postId: ID, authorId: ID): Post!
 }

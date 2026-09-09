@@ -44,6 +44,15 @@ axon:
   #     post-projection:
   #       mode: subscribing
 
+# ---- Autenticação -----------------------------------------------------------------------
+app:
+  jwt:
+    # POC: segredo em claro no arquivo. Em produção viria do ambiente (${JWT_SECRET}) ou de um cofre —
+    # quem tem este valor consegue forjar qualquer token, inclusive um com ROLE_AUTHOR.
+    secret: ${JWT_SECRET:troque-este-segredo-de-desenvolvimento-com-32-bytes-ou-mais}
+    issuer: axon-graphql-posts
+    expiration: 12h
+
 logging:
   level:
     dev.manuelantunes.axonposts: DEBUG

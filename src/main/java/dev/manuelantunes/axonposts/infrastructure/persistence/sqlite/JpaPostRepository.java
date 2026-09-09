@@ -4,6 +4,7 @@ import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.tag.Tag;
+import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.ScrollPosition;
 import org.springframework.stereotype.Repository;
@@ -11,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -39,6 +41,13 @@ public class JpaPostRepository implements PostRepository {
         repository.save(post);
     }
 
+    /** Ver {@link PostRepository#restore}: escrita nativa, para escapar do filtro de exclusão lógica. */
+    @Override
+    @Transactional
+    public void restore(PostId postId) {
+        repository.restoreById(postId.value());
+    }
+
     @Override
     @Transactional(readOnly = true)
     public Optional<Post> findById(PostId postId) {
@@ -59,6 +68,24 @@ public class JpaPostRepository implements PostRepository {
 
         return repository.findAllByOrderByCreatedAtAscIdAsc(position, Limit.of(limit))
                 .getContent();
+    }
+
+    /**
+     * O agrupamento acontece aqui, e não numa query com {@code group by}: a consulta devolve os posts de
+     * todos os autores do lote numa lista só, já ordenada, e o {@code groupingBy} a reparte por autor
+     * preservando essa ordem ({@link java.util.LinkedHashMap}).
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Map<UserId, List<Post>> findByAuthorIds(Collection<UserId> authorIds) {
+        if (authorIds.isEmpty()) {
+            return Map.of();
+        }
+        return repository.findAllByAuthorIdIn(authorIds).stream()
+                .collect(Collectors.groupingBy(
+                        post -> post.author().id(),
+                        LinkedHashMap::new,
+                        Collectors.toList()));
     }
 
     @Override
