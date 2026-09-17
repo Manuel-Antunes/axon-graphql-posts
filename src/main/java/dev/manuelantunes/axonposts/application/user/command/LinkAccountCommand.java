@@ -9,7 +9,7 @@ import org.axonframework.messaging.commandhandling.annotation.CommandHandler;
 import org.axonframework.messaging.eventhandling.gateway.EventAppender;
 import org.axonframework.modelling.annotation.InjectEntity;
 import org.axonframework.modelling.annotation.TargetEntityId;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.time.Clock;
 
@@ -21,7 +21,7 @@ import static dev.manuelantunes.axonposts.application.shared.AppendingDomainEven
  * É o que acontece quando alguém que já tem conta aqui aparece por um provedor novo: em vez de nascer um
  * segundo usuário, a credencial entra no agregado do primeiro, que mantém id, posts e histórico.
  */
-@Component
+@ApplicationScoped
 public class LinkAccountCommand {
 
     @Command(namespace = "users", name = "LinkAccount", version = "1.0.0")

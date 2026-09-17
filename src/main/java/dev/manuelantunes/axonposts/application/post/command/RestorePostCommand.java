@@ -10,7 +10,7 @@ import org.axonframework.messaging.commandhandling.annotation.CommandHandler;
 import org.axonframework.messaging.eventhandling.gateway.EventAppender;
 import org.axonframework.modelling.annotation.InjectEntity;
 import org.axonframework.modelling.annotation.TargetEntityId;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.time.Clock;
 
@@ -37,7 +37,7 @@ import static dev.manuelantunes.axonposts.application.shared.AppendingDomainEven
  * nova e tentaria um INSERT com uma chave primária que já existe. As duas rodam na transação do
  * {@code ProcessingContext}, então ou as duas valem, ou nenhuma.
  */
-@Component
+@ApplicationScoped
 public class RestorePostCommand {
 
     /**

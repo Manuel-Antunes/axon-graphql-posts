@@ -11,7 +11,7 @@ import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
 import org.axonframework.eventsourcing.annotation.reflection.EntityCreator;
-import org.axonframework.extension.spring.stereotype.EventSourced;
+import org.axonframework.eventsourcing.annotation.EventSourcedEntity;
 
 import java.time.Instant;
 import java.util.Objects;
@@ -30,7 +30,7 @@ import java.util.Objects;
  */
 @Entity
 @Table(name = "tags")
-@EventSourced(tagKey = Tag.TAG_KEY, idType = TagId.class)
+@EventSourcedEntity(tagKey = Tag.TAG_KEY)
 public class Tag {
 
     /** Chave da tag no event store; tem de bater com o {@code @EventTag} do {@link TagCreatedEvent}. */

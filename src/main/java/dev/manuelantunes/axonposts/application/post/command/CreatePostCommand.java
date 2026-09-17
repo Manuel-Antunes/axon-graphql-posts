@@ -11,7 +11,7 @@ import org.axonframework.messaging.commandhandling.annotation.CommandHandler;
 import org.axonframework.messaging.eventhandling.gateway.EventAppender;
 import org.axonframework.modelling.annotation.InjectEntity;
 import org.axonframework.modelling.annotation.TargetEntityId;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.time.Clock;
 import java.util.Optional;
@@ -70,7 +70,7 @@ import static dev.manuelantunes.axonposts.application.shared.AppendingDomainEven
  * coloca o stream {@code postId=<id>} na <b>consistency boundary</b> do append — duas criações
  * concorrentes com o mesmo id conflitam no event store em vez de gerarem dois streams.
  */
-@Component
+@ApplicationScoped
 public class CreatePostCommand {
 
     /**

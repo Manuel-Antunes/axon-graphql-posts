@@ -28,7 +28,7 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import org.axonframework.eventsourcing.annotation.EventSourcingHandler;
 import org.axonframework.eventsourcing.annotation.reflection.EntityCreator;
-import org.axonframework.extension.spring.stereotype.EventSourced;
+import org.axonframework.eventsourcing.annotation.EventSourcedEntity;
 import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 
@@ -81,7 +81,7 @@ import java.util.Set;
 @Entity
 @Table(name = "users")
 @Inheritance(strategy = InheritanceType.JOINED)
-@EventSourced(tagKey = User.TAG_KEY, idType = UserId.class, concreteTypes = {Reader.class, Author.class})
+@EventSourcedEntity(tagKey = User.TAG_KEY, concreteTypes = {Reader.class, Author.class})
 @SQLRestriction(User.ALIVE)
 @SQLDelete(sql = "update users set deleted_at = current_timestamp where id = ?")
 public abstract class User implements
@@ -139,7 +139,7 @@ public abstract class User implements
      * <b>{@code LAZY}, e isso foi medido.</b> Com {@code EAGER}, todo {@code join fetch p.author} de uma
      * consulta de posts carregava o autor e o Hibernate honrava a coleção com um SELECT <b>por autor</b>
      * depois — um N+1 numa resposta com N autores. Quem precisa das contas pede com {@code join fetch}
-     * (ver {@code SpringDataUserRepository}); quem só precisa do autor de um post não paga por elas.
+     * (ver {@code PanacheUserRepository}); quem só precisa do autor de um post não paga por elas.
      */
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private Set<Account> accounts = new LinkedHashSet<>();

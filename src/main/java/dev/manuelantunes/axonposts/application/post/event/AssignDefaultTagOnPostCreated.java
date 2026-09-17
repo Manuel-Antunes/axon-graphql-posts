@@ -13,7 +13,7 @@ import org.axonframework.messaging.core.unitofwork.ProcessingContext;
 import org.axonframework.messaging.eventhandling.annotation.EventHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.util.concurrent.CompletableFuture;
 
@@ -60,7 +60,7 @@ import java.util.concurrent.CompletableFuture;
  * streaming a mutation poderia responder antes, e o cliente veria a tag chegar pelo {@code onPostUpdated}.
  * É a diferença entre consistência imediata e eventual — aqui, uma linha de configuração.
  */
-@Component
+@ApplicationScoped
 public class AssignDefaultTagOnPostCreated {
 
     private static final Logger log = LoggerFactory.getLogger(AssignDefaultTagOnPostCreated.class);
@@ -68,8 +68,6 @@ public class AssignDefaultTagOnPostCreated {
     private final TagRepository tags;
     private final CommandGateway commandGateway;
 
-    // o gateway vem do registry de componentes do Axon, não de um @Bean: a inspeção do IDE não o vê
-    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
     public AssignDefaultTagOnPostCreated(TagRepository tags, CommandGateway commandGateway) {
         this.tags = tags;
         this.commandGateway = commandGateway;

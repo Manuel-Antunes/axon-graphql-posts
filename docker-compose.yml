@@ -1,7 +1,16 @@
 # Ambiente de desenvolvimento: Postgres (dois bancos) + Keycloak com o realm já importado.
 #
+# ATENÇÃO: em dev e em teste você NÃO precisa disto. O Dev Services do Quarkus sobe um Postgres e um
+# Keycloak (com este mesmo realm) sozinho — `./mvnw quarkus:dev` e `./mvnw test` funcionam com o Docker
+# ligado e nada mais. Este compose existe para dois casos: rodar o JAR empacotado (perfil `prod`), e ter
+# um Keycloak com console de administração para mexer no realm à mão.
+#
+# Os nomes de container levam o prefixo `quarkus-` para não colidirem com os do projeto Spring original,
+# que usa as mesmas portas e os mesmos nomes.
+#
 #   docker compose up -d
-#   ./mvnw spring-boot:run
+#   ./mvnw quarkus:dev -Dquarkus.datasource.jdbc.url=jdbc:postgresql://localhost:5432/axonposts \
+#                      -Dquarkus.oidc.auth-server-url=http://localhost:8081/realms/axon-posts
 #
 # Keycloak:  http://localhost:8081  (admin / admin)
 # Realm:     axon-posts
@@ -11,13 +20,15 @@
 services:
   postgres:
     image: postgres:17-alpine
-    container_name: axonposts-postgres
+    container_name: quarkus-axonposts-postgres
     environment:
       POSTGRES_DB: axonposts
       POSTGRES_USER: axonposts
       POSTGRES_PASSWORD: axonposts
     ports:
-      - "5432:5432"
+      # a porta do host é variável para conviver com outro Postgres já rodando:
+      #   POSTGRES_PORT=5433 docker compose up -d
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       # O init roda só quando o volume está vazio. Para reexecutar: docker compose down -v
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
@@ -31,7 +42,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
-    container_name: axonposts-keycloak
+    container_name: quarkus-axonposts-keycloak
     # start-dev: HTTP puro e sem hostname fixo. Em produção seria `start` com TLS e KC_HOSTNAME.
     command: ["start-dev", "--import-realm"]
     environment:
@@ -44,8 +55,8 @@ services:
       KC_DB_PASSWORD: keycloak
       KC_HEALTH_ENABLED: "true"
     ports:
-      # 8081 fora, 8080 dentro: 8080 é da aplicação
-      - "8081:8080"
+      # 8081 fora, 8080 dentro: 8080 é da aplicação. Variável pelo mesmo motivo do Postgres
+      - "${KEYCLOAK_PORT:-8081}:8080"
     volumes:
       - ./docker/keycloak/realm-axon-posts.json:/opt/keycloak/data/import/realm-axon-posts.json:ro
     depends_on:

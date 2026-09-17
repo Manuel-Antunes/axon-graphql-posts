@@ -10,7 +10,7 @@ import org.axonframework.messaging.commandhandling.annotation.CommandHandler;
 import org.axonframework.messaging.eventhandling.gateway.EventAppender;
 import org.axonframework.modelling.annotation.InjectEntity;
 import org.axonframework.modelling.annotation.TargetEntityId;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.time.Clock;
 
@@ -26,7 +26,7 @@ import static dev.manuelantunes.axonposts.application.shared.AppendingDomainEven
  * (o {@code deleted_at} só existe no objeto em memória), então o UPDATE a encontra e a esconde. É o
  * caminho de volta que precisa de tratamento especial — ver {@link RestorePostCommand}.
  */
-@Component
+@ApplicationScoped
 public class DeletePostCommand {
 
     /**

@@ -3,11 +3,11 @@ package dev.manuelantunes.axonposts.application.post.query;
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.tag.Tag;
-import dev.manuelantunes.axonposts.dto.controller.TagView;
-import dev.manuelantunes.axonposts.mapper.PostViewMapper;
+import dev.manuelantunes.axonposts.application.tag.view.TagView;
+import dev.manuelantunes.axonposts.application.post.view.PostViewMapper;
 import org.axonframework.messaging.queryhandling.annotation.Query;
 import org.axonframework.messaging.queryhandling.annotation.QueryHandler;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.util.List;
 import java.util.Map;
@@ -29,7 +29,7 @@ import java.util.stream.Collectors;
  * Recebe <b>todos</b> os ids de uma resposta GraphQL e responde com um mapa. É o par do DataLoader: sem
  * ela, uma resposta com N posts faria N consultas.
  */
-@Component
+@ApplicationScoped
 public class FindTagsByPostIdsQuery {
 
     /** A mensagem: as tags destes posts. Ids como texto — uma query não rejeita id malformado. */

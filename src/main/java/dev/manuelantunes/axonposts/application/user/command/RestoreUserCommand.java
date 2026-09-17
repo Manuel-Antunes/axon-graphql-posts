@@ -8,7 +8,7 @@ import org.axonframework.messaging.commandhandling.annotation.CommandHandler;
 import org.axonframework.messaging.eventhandling.gateway.EventAppender;
 import org.axonframework.modelling.annotation.InjectEntity;
 import org.axonframework.modelling.annotation.TargetEntityId;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.time.Clock;
 
@@ -34,7 +34,7 @@ import static dev.manuelantunes.axonposts.application.shared.AppendingDomainEven
  * Invertida, o merge não encontraria a linha escondida, concluiria que a entidade é nova e tentaria um
  * INSERT com chave primária repetida.
  */
-@Component
+@ApplicationScoped
 public class RestoreUserCommand {
 
     @Command(namespace = "users", name = "RestoreUser", version = "1.0.0")

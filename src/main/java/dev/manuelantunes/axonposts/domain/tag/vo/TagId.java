@@ -6,7 +6,10 @@ import jakarta.persistence.Embeddable;
 import java.io.Serializable;
 import java.util.UUID;
 
-/** Identidade da Tag. Mesmo desenho do {@code PostId}: {@code @EmbeddedId}, {@code idType} do Axon e {@code @TargetEntityId}. */
+/**
+ * Identidade da Tag. Mesmo desenho do {@code PostId}: {@code @EmbeddedId} da entidade JPA, tipo de id do
+ * {@code EventSourcedEntityModule} e {@code @TargetEntityId} dos commands.
+ */
 @Embeddable
 public record TagId(String value) implements Serializable {
 

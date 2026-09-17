@@ -1,0 +1,161 @@
+"Quem tem conta. Interface porque a hierarquia do domínio é polimórfica"
+interface User {
+  "As credenciais deste usuário, uma por provedor"
+  accounts: [Account]!
+  email: String!
+  id: ID!
+  name: String!
+}
+
+"Uma credencial. Identidade em `users`, credencial em `accounts`, uma linha por provedor"
+type Account {
+  "Se dá para entrar com senha por esta conta. Falso para toda conta federada"
+  hasPassword: Boolean!
+  "ISO-8601"
+  linkedAt: DateTime!
+  provider: AuthProvider!
+  "O identificador da conta NO provedor (o `sub` do token). Não é o e-mail"
+  subject: String!
+}
+
+"Usuário que escreve. Subclasse table-per-type de User: linha em `users` + linha em `authors`"
+type Author implements User {
+  accounts: [Account]!
+  "Campo que só a subclasse tem, e por isso pode ser NOT NULL em `authors`"
+  bio: String!
+  email: String!
+  id: ID!
+  name: String!
+  "Posts deste autor, mais recentes primeiro, como Relay cursor connection"
+  posts(
+    "Cursor do último post já visto; ausente = do começo"
+    after: String,
+    "Quantos posts trazer; ausente = 20"
+    first: Int
+  ): PostConnection!
+}
+
+"Mutation root"
+type Mutation {
+  "Despacha o command CreatePost e devolve o Post já projetado"
+  createPost(input: CreatePostInput!): Post!
+  "Apaga a própria conta (exclusão lógica). Exige apenas estar autenticado"
+  deleteMe: Boolean!
+  "Exclusão lógica: o post some das consultas, mas a linha e o stream continuam lá"
+  deletePost(id: ID!): Boolean!
+  "Desfaz a exclusão lógica. Funciona porque o agregado é reidratado dos eventos"
+  restorePost(id: ID!): Post!
+  "Despacha o command UpdatePost e devolve o Post já projetado"
+  updatePost(input: UpdatePostInput!): Post!
+}
+
+type PageInfo {
+  endCursor: String
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+}
+
+"Um post publicado, com o estado resultante de todos os eventos aplicados a ele"
+type Post {
+  "Quem escreveu. Resolvido em lote: N posts de M autores custam UMA consulta"
+  author: Author!
+  content: String!
+  "ISO-8601"
+  createdAt: DateTime!
+  id: ID!
+  "Tags do post, como Relay cursor connection. Resolvidas em lote"
+  tags(
+    "Cursor da última tag já vista; ausente = do começo"
+    after: String,
+    "Quantas tags trazer; ausente = 20"
+    first: Int
+  ): TagConnection!
+  title: String!
+  "ISO-8601"
+  updatedAt: DateTime!
+  version: Int!
+}
+
+type PostConnection {
+  "Os itens desta página, cada um com a sua posição"
+  edges: [PostEdge]!
+  "Se existe página seguinte/anterior, e os cursores das pontas desta"
+  pageInfo: PageInfo!
+}
+
+type PostEdge {
+  "Posição opaca deste item; devolva-a em `after` para continuar daqui"
+  cursor: String!
+  "O item desta posição da conexão"
+  node: Post!
+}
+
+"Query root"
+type Query {
+  "Quem está logado. Exige Authorization: Bearer <token emitido pelo Keycloak>"
+  me: User!
+  "Um Post pelo id; null se não existir"
+  post(id: ID!): Post
+  "Posts em ordem de criação, como Relay cursor connection"
+  posts(
+    "Cursor do último post já visto; ausente = do começo"
+    after: String,
+    "Quantos posts trazer; ausente = 20"
+    first: Int
+  ): PostConnection!
+}
+
+"Usuário que só lê. É o `User` do Java sem linha na tabela `authors`"
+type Reader implements User {
+  accounts: [Account]!
+  email: String!
+  id: ID!
+  name: String!
+}
+
+"Subscription root"
+type Subscription {
+  "Emite a cada PostCreated. authorId filtra por tópico (null = todos)"
+  onPostCreated(authorId: ID): Post!
+  "Emite a cada PostUpdated. Os dois filtros combinam (AND); null em ambos = tudo"
+  onPostUpdated(authorId: ID, postId: ID): Post!
+}
+
+"Uma tag. Agregado próprio: tem id e stream de eventos independentes do post"
+type Tag {
+  id: ID!
+  name: String!
+}
+
+type TagConnection {
+  "Os itens desta página, cada um com a sua posição"
+  edges: [TagEdge]!
+  "Se existe página seguinte/anterior, e os cursores das pontas desta"
+  pageInfo: PageInfo!
+}
+
+type TagEdge {
+  "Posição opaca deste item; devolva-a em `after` para continuar daqui"
+  cursor: String!
+  "O item desta posição da conexão"
+  node: Tag!
+}
+
+enum AuthProvider {
+  CREDENTIAL
+  GITHUB
+  GOOGLE
+  KEYCLOAK
+}
+
+input CreatePostInput {
+  content: String!
+  title: String!
+}
+
+input UpdatePostInput {
+  content: String
+  id: ID!
+  title: String
+}

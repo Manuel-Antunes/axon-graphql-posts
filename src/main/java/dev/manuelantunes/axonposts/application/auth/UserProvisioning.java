@@ -12,7 +12,7 @@ import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import org.axonframework.messaging.commandhandling.gateway.CommandGateway;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.util.List;
 import java.util.Optional;
@@ -50,7 +50,7 @@ import java.util.Optional;
  * Ligar contas por e-mail só vale porque <b>o Keycloak é o único emissor</b> e verifica o e-mail antes.
  * Com vários provedores diretos, um deles poderia afirmar um e-mail alheio e sequestrar a conta local.
  */
-@Service
+@ApplicationScoped
 public class UserProvisioning {
 
     private static final Logger log = LoggerFactory.getLogger(UserProvisioning.class);
@@ -58,8 +58,6 @@ public class UserProvisioning {
     private final UserRepository users;
     private final CommandGateway commandGateway;
 
-    // o gateway vem do registry de componentes do Axon, não de um @Bean: a inspeção do IDE não o vê
-    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
     public UserProvisioning(UserRepository users, CommandGateway commandGateway) {
         this.users = users;
         this.commandGateway = commandGateway;

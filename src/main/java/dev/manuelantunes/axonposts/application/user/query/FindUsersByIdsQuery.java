@@ -2,11 +2,11 @@ package dev.manuelantunes.axonposts.application.user.query;
 
 import dev.manuelantunes.axonposts.domain.user.UserRepository;
 import dev.manuelantunes.axonposts.domain.user.vo.UserId;
-import dev.manuelantunes.axonposts.dto.controller.UserView;
-import dev.manuelantunes.axonposts.mapper.UserViewMapper;
+import dev.manuelantunes.axonposts.application.user.view.UserView;
+import dev.manuelantunes.axonposts.application.user.view.UserViewMapper;
 import org.axonframework.messaging.queryhandling.annotation.Query;
 import org.axonframework.messaging.queryhandling.annotation.QueryHandler;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.util.List;
 import java.util.Map;
@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
  * {@code Author} com a bio pelo join da herança {@code JOINED} — a hidratação que o ORM já fazia e que o
  * desenho anterior jogava fora.
  */
-@Component
+@ApplicationScoped
 public class FindUsersByIdsQuery {
 
     @Query(namespace = "users", name = "FindUsersByIds", version = "1.0.0")

@@ -5,10 +5,11 @@ import dev.manuelantunes.axonposts.domain.user.AuthProvider;
 /**
  * O que o token do Keycloak afirma, traduzido para o vocabulário do domínio.
  *
- * <h2>Por que existe este record em vez de passar o {@code Jwt} adiante</h2>
- * Porque {@code org.springframework.security.oauth2.jwt.Jwt} é tipo de framework, e deixá-lo entrar no
- * provisionamento significaria que trocar de broker (ou de biblioteca) mexeria em regra de negócio. Este
- * record é a fronteira: o que vem depois dele não sabe o que é uma claim.
+ * <h2>Por que existe este record em vez de passar o {@code JsonWebToken} adiante</h2>
+ * Porque {@code org.eclipse.microprofile.jwt.JsonWebToken} (e o {@code SecurityIdentity} do Quarkus) são
+ * tipos de framework, e deixá-los entrar no provisionamento significaria que trocar de broker (ou de
+ * biblioteca) mexeria em regra de negócio. Este record é a fronteira: o que vem depois dele não sabe o
+ * que é uma claim.
  *
  * @param provider  quem de fato garantiu a identidade — o Keycloak, ou o provedor social que ele
  *                  intermediou (claim {@code identity_provider})

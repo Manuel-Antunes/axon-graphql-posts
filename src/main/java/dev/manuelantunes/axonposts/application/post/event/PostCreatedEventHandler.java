@@ -3,12 +3,12 @@ package dev.manuelantunes.axonposts.application.post.event;
 import dev.manuelantunes.axonposts.application.post.subscription.OnPostCreatedSubscription.OnPostCreated;
 import dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
-import dev.manuelantunes.axonposts.dto.controller.PostView;
+import dev.manuelantunes.axonposts.application.post.view.PostView;
 import org.axonframework.messaging.eventhandling.annotation.EventHandler;
 import org.axonframework.messaging.queryhandling.QueryUpdateEmitter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 /**
  * Handler de <b>um</b> evento de domínio: {@link PostCreatedEvent}. Faz uma coisa só — notificar quem
@@ -24,7 +24,7 @@ import org.springframework.stereotype.Component;
  * O {@link QueryUpdateEmitter} é injetado por parâmetro (Axon 5) e já vem ligado ao
  * {@code ProcessingContext} do evento: o emit sai só depois do commit.
  */
-@Component
+@ApplicationScoped
 public class PostCreatedEventHandler {
 
     private static final Logger log = LoggerFactory.getLogger(PostCreatedEventHandler.class);
@@ -40,7 +40,7 @@ public class PostCreatedEventHandler {
                 event.authorId().value(),
                 event.occurredAt(),
                 event.occurredAt(),
-                PostVersion.initial().value()
+                (int) PostVersion.initial().value()
         );
 
         log.debug("PostCreated {} de {} → emitindo para onPostCreated", view.id(), view.authorId());

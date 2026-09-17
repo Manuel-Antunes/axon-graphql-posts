@@ -1,111 +1,104 @@
 package dev.manuelantunes.axonposts.support;
 
-import org.junit.jupiter.api.BeforeEach;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.graphql.test.tester.HttpGraphQlTester;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.web.reactive.server.WebTestClient;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 
-import java.time.Duration;
+import javax.sql.DataSource;
+
+import org.junit.jupiter.api.BeforeEach;
+
+import jakarta.inject.Inject;
 
 /**
  * Base dos testes ponta a ponta: aplicação de verdade, Postgres de verdade, Keycloak de verdade, token
  * de verdade.
  *
  * <h2>O que "ponta a ponta" significa aqui</h2>
- * A requisição entra por HTTP com um {@code Authorization: Bearer} emitido pelo realm, atravessa o filtro
- * de segurança, o {@code @PreAuthorize}, o provisionamento, o command bus do Axon, o domínio, o JPA e a
- * projeção, e volta como JSON do GraphQL. Nada é dublado. É a diferença para os testes de command, que
- * montam só o handler e um repositório em memória.
- * <p>
- * Estes testes substituem o que antes era conferido à mão com {@code curl}: o que se verificava numa
- * sessão de terminal agora falha o build quando quebra.
+ * A requisição entra por HTTP com um {@code Authorization: Bearer} emitido pelo realm, atravessa o
+ * {@code quarkus-oidc}, o {@code @RolesAllowed}, o provisionamento, o command bus do Axon, o domínio, o
+ * JPA e a projeção, e volta como JSON do GraphQL. Nada é dublado. É a diferença para os testes de
+ * command, que montam só o handler e um repositório em memória.
  *
- * <h2>Um contexto para todas as subclasses</h2>
- * Todas herdam a mesma anotação e as mesmas propriedades, então o Spring <b>reaproveita o contexto</b>
- * entre elas — a aplicação sobe uma vez para a suíte inteira, como os containers. Uma subclasse que
- * acrescente {@code @TestPropertySource} ganharia um contexto próprio e pagaria a subida de novo.
+ * <h2>Uma aplicação para todas as subclasses</h2>
+ * {@code @QuarkusTest} sobe a aplicação <b>uma vez</b> por perfil de teste e a compartilha com todas as
+ * classes anotadas. É a mesma economia que o Spring faz reaproveitando o contexto — com a diferença de
+ * que aqui os containers (Postgres e Keycloak) também vêm do Dev Services, sem uma linha de
+ * Testcontainers escrita à mão. As três classes de infraestrutura do projeto Spring
+ * ({@code Containers}, {@code KeycloakContainerConfig}, {@code KeycloakTokens}) viraram
+ * {@link Realm} e {@link GraphQl}.
+ * <p>
+ * Uma subclasse que acrescente {@code @TestProfile} ganha uma aplicação própria e a suíte paga outra
+ * subida — é o equivalente exato do {@code @TestPropertySource} no Spring.
+ *
+ * <h2>Por que o {@code @QuarkusTest} fica nas subclasses, e não aqui</h2>
+ * Porque é a anotação que faz o Quarkus registrar a classe de teste como <b>bean</b>, em tempo de build,
+ * para que os {@code @Inject} dela sejam satisfeitos. O registro olha para a classe anotada, não para a
+ * hierarquia: com a anotação só nesta base, a extensão do JUnit ativa (ela é herdada) mas cada subclasse
+ * falha com "No bean found for required type". Anotar cada concreta é uma linha, e é onde o Quarkus
+ * espera encontrá-la.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public abstract class AbstractGraphQlE2ETest {
 
-    @DynamicPropertySource
-    static void containers(DynamicPropertyRegistry registry) {
-        Containers.registerProperties(registry);
-    }
+    @Inject
+    protected DataSource dataSource;
 
-    @Autowired
-    protected WebTestClient webTestClient;
-
-    @Autowired
-    protected JdbcTemplate jdbc;
-
-    /**
-     * O {@code WebTestClient} injetado aponta para a raiz do servidor, e o {@code HttpGraphQlTester} não
-     * acrescenta caminho nenhum — ele posta na baseUrl que recebe. Sem apontar para {@code /graphql},
-     * toda requisição volta 404.
-     */
-    @LocalServerPort
-    protected int port;
-
-    protected HttpGraphQlTester anonymous;
+    protected GraphQl anonymous;
 
     /**
      * Cada teste começa com o banco vazio.
      * <p>
-     * As classes compartilham contexto e banco — subir um por método custaria dezenas de segundos —, e o
+     * As classes compartilham aplicação e banco — subir um por método custaria dezenas de segundos —, e o
      * preço disso é que a ordem de execução vazaria de um teste para o outro. Um que afirme "este usuário
      * ainda não existe" passa sozinho e falha depois de outro tê-lo provisionado.
      * <p>
      * O {@code CASCADE} resolve as chaves estrangeiras entre posts, contas e usuários sem precisar acertar
      * a ordem do truncate à mão.
      * <p>
-     * O <b>event store fica</b>: ele é em memória e vive com o contexto. Não incomoda porque todo id é um
+     * O <b>event store fica</b>: ele é em memória e vive com a aplicação. Não incomoda porque todo id é um
      * UUID novo — nenhum teste reidrata o stream de outro.
      */
     @BeforeEach
-    void resetDatabaseAndTester() {
-        jdbc.execute("truncate table post_tags, posts, tags, accounts, authors, users cascade");
-        anonymous = HttpGraphQlTester.create(webTestClient.mutate()
-                .baseUrl("http://localhost:" + port + "/graphql")
-                .responseTimeout(Duration.ofSeconds(30))
-                .build());
+    void resetDatabase() {
+        execute("truncate table post_tags, posts, tags, accounts, authors, users cascade");
+        anonymous = GraphQl.anonymous();
     }
 
-    /** Um cliente GraphQL autenticado como o usuário do realm, com token recém-emitido. */
-    protected HttpGraphQlTester as(String username) {
-        String token = KeycloakTokens.accessToken(
-                Containers.KEYCLOAK, username, KeycloakContainerConfig.PASSWORD);
-        return anonymous.mutate()
-                .headers(headers -> headers.setBearerAuth(token))
-                .build();
+    protected GraphQl asAuthor() {
+        return GraphQl.asAuthor();
     }
 
-    /** Atalho para o autor semeado no realm — quem pode escrever. */
-    protected HttpGraphQlTester asAuthor() {
-        return as(KeycloakContainerConfig.AUTHOR_USERNAME);
+    protected GraphQl asReader() {
+        return GraphQl.asReader();
     }
 
-    /** Atalho para o leitor semeado no realm — quem não pode. */
-    protected HttpGraphQlTester asReader() {
-        return as(KeycloakContainerConfig.READER_USERNAME);
+    protected GraphQl as(String username) {
+        return GraphQl.as(username);
     }
 
-    /** Cria um post pelo caminho normal (mutation autenticada) e devolve o id. */
-    protected String createPost(HttpGraphQlTester tester, String title, String content) {
-        return tester.document(
-                //language=GraphQL
-                """
-                        mutation Criar($t: String!, $c: String!) {
-                          createPost(input: {title: $t, content: $c}) { id }
-                        }""")
-                .variable("t", title)
-                .variable("c", content)
-                .execute()
-                .path("createPost.id").entity(String.class).get();
+    /** O {@code jdbc.queryForObject(..., Integer.class)} do projeto Spring, em JDBC puro. */
+    protected int count(String sql, Object... parameters) {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (int i = 0; i < parameters.length; i++) {
+                statement.setObject(i + 1, parameters[i]);
+            }
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? rows.getInt(1) : 0;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("falha ao consultar: " + sql, e);
+        }
+    }
+
+    protected void execute(String sql) {
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            statement.execute(sql);
+        } catch (SQLException e) {
+            throw new IllegalStateException("falha ao executar: " + sql, e);
+        }
     }
 }

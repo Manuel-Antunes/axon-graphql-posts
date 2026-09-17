@@ -9,7 +9,7 @@ import org.axonframework.messaging.commandhandling.annotation.CommandHandler;
 import org.axonframework.messaging.eventhandling.gateway.EventAppender;
 import org.axonframework.modelling.annotation.InjectEntity;
 import org.axonframework.modelling.annotation.TargetEntityId;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.time.Clock;
 import java.util.Optional;
@@ -21,7 +21,7 @@ import static dev.manuelantunes.axonposts.application.shared.AppendingDomainEven
  * forma do {@code CreatePostCommand} — {@code Optional<Tag>} para rejeitar id repetido e colocar o
  * stream na consistency boundary, decisão delegada ao domínio, e o resultado salvo dentro da transação.
  */
-@Component
+@ApplicationScoped
 public class CreateTagCommand {
 
     /**

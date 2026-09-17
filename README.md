@@ -1,490 +1,528 @@
-# axon-graphql-posts
+# quarkus-axon-graphql-posts
 
-POC: **Axon Framework 5** (entidades anotadas + dynamic consistency boundary) + **extensão Reactor** (`ReactorCommandGateway` / `ReactorQueryGateway`) + **Spring for GraphQL** com subscriptions servidas por **Server-Sent Events**, numa API DDD de posts e tags. Estado em **PostgreSQL** via Spring Data JPA; autenticação delegada ao **Keycloak** (OAuth2 resource server); event store em memória. Infra local por `docker compose`.
+Conversão para **Quarkus** da POC [axon-graphql-posts](https://github.com/Manuel-Antunes/axon-graphql-posts),
+escrita em Spring Boot.
 
-A ideia central: o input é validado na borda e mapeado para a mensagem de um command → o command pede ao domínio que **decida** (e o domínio **dispara** o evento) e **salva** a entidade → a aplicação **ouve** o evento, reage a ele (inclusive despachando outros commands) e faz `emit` numa *subscription query* do Axon → o `Flux` devolvido por `ReactorQueryGateway.subscriptionQuery(...)` é o que o `@SubscriptionMapping` entrega ao cliente como stream SSE.
+O objetivo não foi "fazer compilar no Quarkus": foi manter **as mesmas decisões de arquitetura** —
+Axon Framework 5 com entidades anotadas e DCB, DDD com value objects `@Embeddable`, Keycloak como único
+provedor de identidade, MapStruct em todas as fronteiras, cursor connections do Relay — e trocar cada
+peça de infraestrutura do Spring pela peça equivalente do Quarkus, usando o que cada uma tem de melhor em
+vez de imitar a outra.
 
-`Post` e `Tag` são, cada uma, **uma classe só**: entidade de domínio com comportamento, mapeamento JPA e entidade event-sourced do Axon. Não existe entidade de infraestrutura espelho — os value objects são `@Embeddable` de verdade e o `PostView` é apenas o DTO de saída do GraphQL.
-
-`posts` e `Post.tags` são cursor connections; as tags são resolvidas por **DataLoader**, então N posts numa resposta viram uma consulta, não N.
-
-```
-mutation createPost(input) ──► @Valid  (Bean Validation: campo vazio, título > 200 → BAD_REQUEST aqui)
-                              │
-                              ▼
-                  mapper.PostInputMapper.toCommand(PostId.newId(), input)   [MapStruct, compile time]
-                              │   devolve CreatePostCommand.CreatePost — a mensagem
-                              ▼
-                  CreatePostCommand.handle(...)     [aplicação — um arquivo por command: a mensagem
-                     │                               aninhada + o método que a trata, sem classe …Handler]
-                     ├─► Post.create(...)           [domínio — valida, DISPARA o evento, devolve o Post]
-                     │      events.raise(PostCreatedEvent) ──► DomainEventPublisher (porta do domínio)
-                     │                                          └─ AppendingDomainEventPublisher ─► EventAppender
-                     └─► PostRepository.save(post)  [a MESMA classe é a entidade JPA — sem DTO no meio]
-                              │
-                              │ commit do ProcessingContext (evento + linha no SQLite, juntos)
-                              ▼
-                  subscribing processor "post-projection"   (mesma thread e transação do command)
-                     │
-                     ├─► PostCreatedEventHandler ──► emit onPostCreated (o post como nasceu: v1, sem tags)
-                     │
-                     └─► AssignDefaultTagOnPostCreated ──► agenda no AFTER_COMMIT:
-                              │   (antes do commit, o stream do post ainda não é legível de volta)
-                              ├─► tag "Untagged" no banco?  não ──► CommandGateway.send(CreateTag)
-                              │                                        └─► TagCreatedEvent + linha em tags
-                              └─► CommandGateway.send(AssignTagToPost)
-                                       └─► Post.assignTag(...) ──► PostUpdatedEvent (com a tag na lista)
-                                                └─► PostUpdatedEventHandler ──► emit onPostUpdated
-                              │
-                              │ o Axon espera o CompletableFuture do AFTER_COMMIT antes de completar o send
-                              ▼
-                  PostMutationController: query do post ──► já vem com a tag Untagged (version 2)
-                              │
-                              ▼
-                  @SubscriptionMapping ──► Spring GraphQL ──► SSE  (event:next / data:{...})
+```bash
+./mvnw quarkus:dev     # http://localhost:8080/q/graphql-ui/  — só precisa de Docker ligado
+./mvnw test            # 123 testes, incluindo ponta a ponta com Postgres e Keycloak de verdade
 ```
 
+---
 
-## Stack
+## O que mudou, peça por peça
 
-| Peça | Versão |
+| Papel | Spring Boot | Quarkus |
+|---|---|---|
+| GraphQL | Spring for GraphQL, schema-first (`posts.graphqls`) | SmallRye GraphQL, **code-first** (o schema sai das classes) |
+| Assíncrono | Reactor (`Mono`/`Flux`) + extensão `axon-reactor` | **Mutiny** (`Uni`/`Multi`) sobre os gateways do núcleo do Axon |
+| Cursor connections | `ScrollSubrange` + `Window<T>` + `ConnectionTypeDefinitionConfigurer` | `interfaces/graphql/relay`: `Connection<N, E>` e `Edge<N>` genéricos |
+| Config do Axon | `axon-spring-boot-starter` | produtor CDI sobre o `EventSourcingConfigurer` do núcleo |
+| Persistência | Spring Data JPA (interfaces geradas) | Hibernate ORM + **Panache** |
+| Transações | `PlatformTransactionManager` | **JTA/Narayana**, via `JtaTransactionManager` |
+| Segurança | `SecurityWebFilterChain` + `@PreAuthorize` + conversor de roles | **quarkus-oidc** + `@RolesAllowed`, sem conversor |
+| Senha | `BCryptPasswordEncoder` | `BcryptUtil` |
+| Mappers | `@Mapper(componentModel = "spring")` | `-Amapstruct.defaultComponentModel=jakarta-cdi` |
+| Infra de teste | Testcontainers à mão (3 classes) | **Dev Services** (zero classes) |
+| Subscriptions | GraphQL over SSE | GraphQL over WebSocket (`graphql-transport-ws`) |
+
+O domínio (`domain/`) atravessou **quase intacto**: mudou uma anotação (`@EventSourced` do módulo Spring
+virou `@EventSourcedEntity` do núcleo do Axon) e o `Role`, que perdeu o prefixo `ROLE_` porque o Quarkus
+não usa nenhum. Isso é o resultado que a arquitetura hexagonal promete e raramente se tem a chance de
+medir: as portas (`PostRepository`, `DomainEventPublisher`, `AuthenticatedUser`, `PasswordVerifier`)
+absorveram a troca inteira de plataforma.
+
+---
+
+## Os pacotes, e a seta que eles desenham
+
+A conversão começou com três pacotes na raiz agrupados **por papel** — `dto/`, `mapper/`, `exceptions/` —
+com a justificativa de "um lugar só para procurar todo input, todo mapeamento, toda tradução de erro".
+Funcionava para achar arquivo e escondia a única coisa que um pacote deveria mostrar: **a camada**. Um
+pacote de mappers na raiz enxerga domínio e protocolo no mesmo arquivo, e nada no projeto dizia se isso
+era permitido ou apenas tolerado.
+
+Hoje cada tipo mora na camada que o possui:
+
+```
+application/<agregado>/view/     PostView, TagView, UserView…, PostPage, *ViewMapper
+interfaces/graphql/api/          os @GraphQLApi — só resolver
+interfaces/graphql/dto/          CreatePostInput, UpdatePostInput
+interfaces/graphql/mapper/       PostInputMapper (input → command)
+interfaces/graphql/relay/        Connection/Edge/PageInfo/Connections/Cursors + Post/TagConnection/Edge
+interfaces/graphql/error/        GraphQlErrors, @TranslatesErrors, as 4 exceções com @ErrorCode
+```
+
+### A regra que decidiu cada caso
+
+**Quem atravessa o bus é da aplicação; quem só existe no schema é da apresentação.**
+
+Os `*View` não são "DTOs de saída do controller": são o **resultado das queries**. `FindPost` devolve
+`PostView`, `FindAllPosts` devolve `PostPage`, as subscriptions emitem `PostView` — tudo isso acontece
+antes de existir um resolver. Deixá-los em `interfaces` faria a aplicação importar a apresentação, que é a
+seta ao contrário. Os `*ViewMapper` (entidade → view) foram junto, porque quem os chama são os query
+handlers.
+
+Os `*Input` são o oposto: nunca saem da borda. O `PostInputMapper` os transforma em command antes de
+qualquer coisa, e depois disso eles não existem mais. Ficaram na apresentação, e o mapper deles também.
+
+### As duas dívidas, anotadas onde elas estão
+
+- **Os `*View` carregam anotações do MicroProfile GraphQL** (`@Name("Post")`, `@Id`, `@Description`). É a
+  aplicação sabendo de protocolo. Separar isso significa duas views por agregado — uma da aplicação, uma do
+  schema — e um mapper a mais entre elas; para o tamanho desta POC, é ceremônia sem decisão nova. Se um dia
+  valer, a fronteira a mexer é o `*ViewMapper`, e nada além dele.
+- **`DataIntegrityTranslator` conhece o Hibernate e mora em `error/`.** Ele traduz violação de constraint
+  em exceção de domínio, e quem precisa disso é o `GraphQlErrors`, uma linha acima. Em `infrastructure` ele
+  criaria a única dependência de apresentação → infraestrutura do projeto, para não ganhar nada.
+
+O `domain/` não foi tocado — de novo. É o segundo rearranjo de pacotes que ele atravessa sem uma linha
+alterada.
+
+---
+
+## Connection e Edge genéricos
+
+Era o pedido mais concreto: *"queria que connection e edge fossem tipos genéricos, que eu passasse a
+classe com que quero trabalhar e simplesmente funcionasse"*.
+
+```java
+// escrito uma vez, em interfaces/graphql/relay
+public abstract class Edge<N>                              { N node; String cursor; }
+public abstract class Connection<N, E extends Edge<N>>     { List<E> edges; PageInfo pageInfo; }
+
+// uma linha por tipo paginado
+public final class PostEdge       extends Edge<PostView> { }
+public final class PostConnection extends Connection<PostView, PostEdge> { }
+```
+
+```java
+// no resolver
+ConnectionArgs args = ConnectionArgs.of("post", first, after);
+return Connections.page(page.items(), page.hasNext(), args, PostEdge::new, PostConnection::new);
+```
+
+### Por que a subclasse de uma linha, e não `Connection<PostView, PostEdge>` direto
+
+Porque o SmallRye nomeia um genérico instanciado pelo tipo **mais um sufixo por argumento**:
+`Connection<PostView>` vira `Connection_Post` no schema. É legal, é estável, e não se parece com nenhum
+cliente Relay do mundo.
+
+Uma classe **sem parâmetros de tipo próprios** é, para o construtor de schema, um tipo comum — e um tipo
+comum leva o nome da classe. O que ela não perde é a resolução dos genéricos: o SmallRye sobe a
+hierarquia, encontra `Edge<PostView>` e resolve `N` para `PostView` ao montar o campo `node`.
+
+O segundo parâmetro (`E extends Edge<N>`) não é redundância: é ele que faz o schema sair com
+`edges: [PostEdge]!` em vez de `[Edge_Post]!`. Declarado como `List<Edge<N>>`, o construtor de schema
+veria um genérico instanciado ali dentro e desfaria o que a subclasse conseguiu.
+
+Duas declarações de uma linha por tipo paginado, e nenhuma lógica de paginação duplicada. É o mais perto
+que dá para chegar do `ConnectionTypeDefinitionConfigurer` do Spring — com a diferença de que os tipos
+existem em Java, o compilador os confere e o IDE navega até eles. O `RelaySchemaTest` guarda o mecanismo:
+ele lê o SDL gerado e falha se `Connection_` voltar a aparecer.
+
+**O que ganhamos de quebra**, e o Spring não tinha:
+
+- **teto de página** (`ConnectionArgs.MAX_LIMIT`): `posts(first: 100000)` é recusado, em vez de descer até
+  o `Limit` do Spring Data;
+- **cursor com prefixo de tipo**: o cursor de `tags` é recusado em `posts`. O `CursorStrategy` do Spring
+  codificava `O_<offset>` sem prefixo, e um cursor servia em qualquer conexão.
+
+---
+
+## O lote: onde o Quarkus ficou mais simples
+
+No projeto Spring, `Post.tags` e `Author.posts` **não podiam** usar `@BatchMapping`: ele não enxerga
+`@Argument` nem `ScrollSubrange`, e os dois campos são paginados. A saída eram duas classes de cinquenta
+linhas — registrar a função no `BatchLoaderRegistry` pelo construtor, nomear o loader numa constante,
+buscar o `DataLoader` no `DataFetchingEnvironment` dentro de um `@SchemaMapping`.
+
+O `BatchDataFetcher` do SmallRye passa os argumentos do campo junto com as chaves no contexto do lote,
+então um `@Source` em lote **pode** ter argumentos:
+
+```java
+@Name("tags")
+public Uni<List<TagConnection>> tags(@Source List<PostView> posts,
+                                     @Name("first") Integer first,
+                                     @Name("after") String after) { … }
+```
+
+Duas classes viraram dois métodos. O `BatchLoadingE2ETest` mede que a simplificação não custou o lote:
+uma resposta com 5 posts gasta **o mesmo número de statements** que uma com 1.
+
+---
+
+## Axon 5 sem starter
+
+Não existe `axon-quarkus-starter`, e não precisa existir: o `EventSourcingConfigurer` é a API **do
+núcleo**, sem dependência de framework. O `infrastructure/axon/AxonProducer` faz, explicitamente, as três
+coisas que o starter do Spring faz por dentro — descobrir handlers, registrar entidades, publicar os
+gateways como beans.
+
+Perde-se a mágica, ganha-se poder apontar para o lugar onde cada decisão foi tomada. E os gateways
+deixam de ser beans invisíveis: no projeto Spring, **todo** ponto de injeção de `CommandGateway` carrega
+um `@SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")`, porque o bean existe mas nenhuma
+declaração estática o anuncia. Aqui é um `@Produces` comum.
+
+A descoberta de handlers também não se perdeu. O `AxonHandlerLookup` varre o `BeanManager` procurando
+classes com métodos `@CommandHandler`/`@QueryHandler`/`@EventHandler` — é o que o `MessageHandlerLookup`
+do módulo Spring faz sobre `BeanDefinition`. A regra do projeto continua valendo: **uma mensagem nova é um
+arquivo novo**, e o `@Namespace` no `package-info.java` continua sendo o que põe um event handler no
+processor certo.
+
+### Três armadilhas que só um teste ponta a ponta pega
+
+Estão documentadas no código porque custaram caro:
+
+1. **`ClientProxy.unwrap`** — o Axon lê os métodos de `instance.getClass()`. Um bean `@ApplicationScoped`
+   chega como *client proxy*, uma subclasse que sobrescreve todo método público — e método sobrescrito não
+   herda anotações. Sem o unwrap, a aplicação sobe e o primeiro command falha com "no handler for …".
+2. **`eventSource` do processor subscribing** — é obrigatório e **não tem default** quando o módulo é
+   registrado avulso: o registry do Axon indexa por tipo exato, e o `EventStore` (que *é* um
+   `SubscribableEventSource`) não é encontrado por uma busca por `SubscribableEventSource.class`.
+3. **`.build()` no módulo do processor** — é ele que registra o processor e os handlers. Registrar o
+   módulo sem construí-lo compila e sobe.
+
+As três falham do mesmo jeito: **silêncio**. A aplicação inicia, o log lista os handlers, e nenhum evento
+chega à projeção. Foi o `PostLifecycleE2ETest` (`aNewPostArrivesAlreadyTaggedAtVersionTwo`) que as
+encontrou.
+
+---
+
+## Mutiny, e onde o trabalho bloqueante acontece
+
+O `SimpleCommandBus` e o `SimpleQueryBus` executam o handler **na thread que despacha**, e lá dentro tem
+JPA bloqueante. Um resolver que devolve `Uni` roda no event-loop do Vert.x, e bloquear um event-loop trava
+todas as requisições que ele serve. É a mesma armadilha que o projeto Spring resolve com
+`subscribeOn(boundedElastic())`, e a mesma resposta, escrita no resolver:
+
+```java
+return Uni.createFrom()
+        .completionStage(() -> queryGateway.query(new FindPost(id), PostView.class))   // Supplier
+        .runSubscriptionOn(Infrastructure.getDefaultWorkerPool());
+```
+
+O `Supplier` é o detalhe que decide: a sobrecarga que recebe o `CompletableFuture` **pronto** exigiria que
+ele já existisse — ou seja, o `gateway.send(...)` teria rodado no event-loop. É a diferença entre offload
+de verdade e offload aparente.
+
+Isto já foi um utilitário (`interfaces/graphql/support/Dispatch`, um método de duas linhas). Saiu: são
+duas chamadas do Mutiny, e escondê-las atrás de um nome próprio custava uma classe e uma indireção para
+economizar nada — no WebFlux a gente chamava direto. O *porquê* do `Supplier`, que é a única coisa ali que
+não é óbvia, ficou no `package-info` da camada, onde vale para todos os resolvers em vez de um só.
+
+**A extensão `axon-reactor` não foi usada.** O `QueryGateway` do núcleo do Axon 5 já devolve
+`CompletableFuture` e, para subscriptions, um `Publisher` de Reactive Streams — que
+`Multi.createFrom().publisher(FlowAdapters.toFlowPublisher(…))` consome direto. Uma dependência a menos, e
+o contrato é o padrão da JVM.
+
+### A subscription que entregava um evento só
+
+O `Publisher` do `subscriptionQuery` **não honra demanda incremental**. Medido nas duas pontas, com o
+mesmo Axon e os mesmos três posts:
+
+```java
+publisher.subscribe(...)                  // request(Long.MAX_VALUE)  → [um, dois, tres]
+publisher.subscribe(umDeCadaVez)          // request(1) a cada onNext → [um]
+```
+
+E `request(1)` a cada item é **exatamente** o que o `SubscriptionSubscriber` do SmallRye faz. Resultado: o
+handshake completa, o primeiro evento chega, a conexão fica aberta e silenciosa para sempre, e nada no log
+reclama. Os quatro testes de subscription que já existiam passavam, porque cada um afirmava sobre **um**
+evento.
+
+```java
+return Multi.createFrom()
+        .publisher(FlowAdapters.toFlowPublisher(queryGateway.subscriptionQuery(…)))
+        .onOverflow().buffer(UPDATE_BUFFER);   // ← separa as duas demandas
+```
+
+O operador faz o Mutiny pedir ilimitado ao Axon e servir o assinante de baixo a partir do próprio buffer.
+O teto existe para a falha ser barulhenta se um assinante travar de vez — melhor um `BackPressureFailure`
+do que memória crescendo em silêncio. O `theSameSubscriptionKeepsReceivingEventAfterEvent` é o teste que
+teria pego isso, e agora pega.
+
+---
+
+## Segurança: o que sumiu
+
+O `SecurityConfig` do projeto Spring tinha cadeia de filtros, `JwtAuthenticationConverter` e um
+`KeycloakRealmRolesConverter` de setenta linhas — este último só porque o conversor de fábrica do Spring
+não lê claim aninhada e porque o Spring exige o prefixo `ROLE_`.
+
+Nada disso tem equivalente aqui. O `quarkus-oidc` descobre o JWKS pelo `auth-server-url`, valida
+assinatura/`exp`/`iss` e põe as roles de `realm_access.roles` no `SecurityIdentity` **como estão**. Sobrou
+um produtor de uma linha (`PasswordVerifier` sobre o `BcryptUtil`).
+
+A divisão continua a mesma, e é a que um endpoint GraphQL exige: a aplicação **não** autentica toda
+requisição (`quarkus.http.auth.proactive=false`), porque `post`/`posts` são públicas e `me`/`createPost`
+não, e as duas chegam pelo mesmo `POST /graphql`. Quem autoriza é o método.
+
+Uma diferença real de comportamento, e para melhor: o Quarkus distingue **`unauthorized`** (sem token) de
+**`forbidden`** (com token, sem a role). No Spring as duas chegavam como `FORBIDDEN`.
+
+---
+
+## Dev Services: três classes de teste viraram três linhas de configuração
+
+O projeto Spring precisava de `Containers` (o `static` que subia Postgres e Keycloak em paralelo),
+`KeycloakContainerConfig` (o container com o realm) e `KeycloakTokens` (o grant `password`). E de
+`docker compose up -d` antes de `spring-boot:run`.
+
+```properties
+quarkus.keycloak.devservices.realm-path=realm-axon-posts.json
+quarkus.keycloak.devservices.realm-name=axon-posts
+quarkus.keycloak.devservices.create-realm=false
+```
+
+O Quarkus sobe os dois containers em dev e em teste, importa **o mesmo arquivo de realm** que o
+`docker-compose.yml` monta (ele entra no classpath pelo `<resources>` do `pom.xml`, sem cópia), e injeta
+as URLs. `./mvnw quarkus:dev` e `./mvnw test` só precisam do Docker ligado.
+
+O `docker-compose.yml` continua, para dois casos: rodar o JAR empacotado, e ter um console de
+administração do Keycloak para mexer no realm à mão.
+
+---
+
+## Schema code-first, e o que ele resolveu
+
+O projeto Spring mantinha, no fim do `posts.graphqls`, um bloco de SDL **gerado por um teste** com os
+tipos que o `ConnectionTypeDefinitionConfigurer` criaria — porque o schema era um arquivo e o que o Spring
+montava em memória não existia para o IDE nem para geradores de cliente.
+
+Aqui o schema **é** gerado, e o Quarkus o serve em `/graphql/schema.graphql`. Não há segunda definição
+para manter em dia. O que era um teste que reescrevia um arquivo virou um teste que lê a única definição
+que existe.
+
+O `schema.graphql` na raiz é uma **cópia** desse SDL, para gerador de cliente e para o diff da revisão
+mostrar o que uma mudança fez com o contrato. Ele não é lido por nada em runtime; para atualizá-lo:
+
+```bash
+curl -s http://localhost:8080/graphql/schema.graphql > schema.graphql
+```
+
+### O teto de profundidade, que vem ligado e é baixo demais
+
+O SmallRye liga um `MaxQueryDepthInstrumentation` **por padrão, com 10**, e não há nada a configurar para
+descobrir isso — só para consertar. Dez é menos do que este schema precisa em dois lugares:
+
+- a consulta de introspecção tem profundidade **15**, então a GraphiQL abre em branco com um único
+  `"maximum query depth exceeded 15 > 10"` — e nenhum gerador de cliente funciona;
+- `posts { edges { node { author { posts { edges { node { tags { edges { node { name` são **11**, ou seja,
+  um cliente Relay legítimo já é recusado.
+
+O sintoma engana porque quase tudo continua de pé: a aplicação sobe, o SDL em `/graphql/schema.graphql`
+é servido normalmente (é HTTP, não é query) e toda query rasa responde.
+
+```properties
+quarkus.smallrye-graphql.instrumentation-query-depth=20
+```
+
+Vinte mantém a defesa contra aninhamento patológico — que é o motivo de o teto existir — com folga para o
+mais fundo que o schema oferece. É o irmão do `ConnectionArgs.MAX_LIMIT`: um limite explícito e anotado, em
+vez de um default herdado. O `SchemaIntrospectionTest` guarda os dois casos.
+
+Duas coisas o code-first cobra, e as duas estão anotadas nas classes:
+
+- **os nomes**: `PostView` precisa de `@Name("Post")`, e `CreatePostInput` de `@Input("CreatePostInput")`
+  (senão o SmallRye o chamaria de `CreatePostInputInput`). É o mesmo problema que o
+  `ClassNameTypeResolver` resolvia num `@Bean` — agora a resposta está na própria classe;
+- **a interface polimórfica**: os acessores de `UserView` levam `@Name` porque o `InterfaceCreator` do
+  SmallRye só considera campo o método que parece um getter *ou* que traz `@Name`. Uma interface sem
+  campos é descartada em silêncio, e o erro aparece na partida como `type User not found in schema`.
+  O `RelaySchemaTest` guarda isso também.
+
+Ganhos de contrato que vieram de graça: `createdAt` é `DateTime!` em vez de `String!`, e `provider` é o
+enum `AuthProvider!` — no SDL escrito à mão o campo era `AuthProvider!` enquanto o DTO carregava `String`,
+e ninguém era obrigado a notar.
+
+---
+
+## A tradução de erro
+
+O Spring GraphQL tem `@GraphQlExceptionHandler`: um método, num bean, e toda exceção de todo controller
+passa por lá. O SmallRye não tem equivalente — o `EventingService` dele *observa* o erro, mas não o
+substitui.
+
+O que o Quarkus tem é **CDI**, e isso basta. O SmallRye não instancia o `@GraphQLApi`: ele o pede ao
+`LookupService`, que aqui é o CDI, e o que volta é o *client proxy* do ArC — então a chamada do resolver
+entra pela cadeia de interceptadores como qualquer outra. É a mesma razão pela qual `@RolesAllowed` e
+`@Valid` já funcionavam ali.
+
+```java
+@GraphQLApi
+@ApplicationScoped
+@TranslatesErrors           // uma anotação por classe; os resolvers não sabem que ela existe
+public class PostQueryApi { … }
+```
+
+O `ErrorTranslationInterceptor` chama o mesmo `GraphQlErrors` de antes — a classificação continua sendo um
+`if` por família percorrendo a **cadeia de causas**, porque uma exceção de dentro de um command chega
+embrulhada pelo `CompletableFuture` do gateway e pelo commit do `ProcessingContext`.
+
+**O que o interceptador conserta**, e uma chamada no corpo do resolver não conseguia: o caminho
+**síncrono**. Um `@Valid` que estoura acontece *antes* de o método rodar, então nunca chegava ao
+`translating(…)` — um input inválido saía como `ValidationError` **sem `extensions.code`**, apesar de a
+decisão documentada ser `BAD_REQUEST`. Agora os dois caminhos convergem no mesmo lugar:
+
+```
+createPost(input: {title: "", content: "y"})
+  antes:  { classification: ValidationError, violations: [...] }          ← sem code
+  agora:  { code: BAD_REQUEST, message: "title não pode ser vazio" }
+```
+
+A contrapartida é que o `violations[]` detalhado do SmallRye deu lugar às mensagens juntadas por
+`GraphQlErrors.describe` — a mesma mensagem que uma violação de value object produziria, que é o ponto da
+validação em duas alturas.
+
+O `extensions.classification` do Spring virou `extensions.code`, alimentado por quatro exceções com
+`@ErrorCode` do SmallRye: `BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`.
+
+### A segurança entrou junto, e foi o que arrumou a saída
+
+Os interceptadores de segurança do Quarkus são `@Priority(150)`; deixar o nosso em `APPLICATION` (2000)
+significava rodar **por dentro** deles, e as recusas escapavam sem tradução. O resultado era ruim de três
+jeitos ao mesmo tempo:
+
+```jsonc
+// sem token, antes
+{"message": null,                      // ← io.quarkus.security.UnauthorizedException não tem mensagem,
+ "extensions": {"code": "unauthorized"}}  //   e listá-la em show-runtime-exception-message publicava o null
+
+// sem token, agora
+{"message": "credenciais inválidas ou ausentes",
+ "extensions": {"code": "UNAUTHORIZED"}}
+```
+
+1. **`"message": null`** — pior que "System Error", porque parece bug da aplicação;
+2. **`code` em minúsculas**, derivado do nome da classe do Quarkus, convivendo com os
+   `BAD_REQUEST`/`FORBIDDEN`/`NOT_FOUND` do projeto;
+3. e no log, a `AuthenticationFailedException` crua: a pilha inteira do Mutiny, uma `CompositeException`
+   e um `Caused by: [CIRCULAR REFERENCE: ...]` — cinquenta linhas para dizer "token inválido".
+
+`@Priority(Interceptor.Priority.PLATFORM_BEFORE + 100)` põe a tradução por fora de tudo e resolve os três
+de uma vez: a recusa vira uma exceção classificada, com mensagem e código, e o log passa a mostrar **uma
+linha** (`SRGQL012000: ... ForbiddenException: sem permissão para esta operação`) porque a exceção
+traduzida é rasa e não tem causa. O que **não** é esperado continua subindo inteiro, com causa e pilha —
+`GraphQlErrors.translate` devolve o original quando nada casa.
+
+A distinção que o Quarkus dá de graça continua: sem token é `UNAUTHORIZED`, com token e sem a role é
+`FORBIDDEN`. Só os nomes ficaram consistentes com o resto.
+
+**O que não dá para arrumar por aqui**: token presente mas com assinatura inválida é recusado pelo
+`HttpAuthenticator` do Quarkus *antes* de qualquer resolver, e a resposta é **HTTP 401 com corpo vazio** —
+sem `errors`. Token ausente passa pelo `@Authenticated` e vira erro de GraphQL; token podre não chega lá.
+Mudar isso exigiria um `HttpAuthenticationMechanism` próprio, que é muita máquina para o que se ganha.
+
+---
+
+## Testes
+
+123 testes, nas mesmas três alturas do projeto original:
+
+| | o que exercita |
 |---|---|
-| Java | 21 |
-| Spring Boot (WebFlux + GraphQL + Data JPA) | 3.5.x |
-| Axon Framework (`axon-spring-boot-starter`, sem Axon Server) | 5.3.x |
-| Axon Reactor extension (`axon-reactor`) | 5.3.x |
-| PostgreSQL (`postgresql`) | gerenciado pelo Boot |
-| Flyway (`flyway-core` + `flyway-database-postgresql`) | gerenciado pelo Boot |
-| Spring Security (WebFlux + OAuth2 resource server) | gerenciado pelo Boot |
-| Keycloak (broker de identidade, em container) | 26.0 |
-| Testcontainers (`postgresql`, `junit-jupiter`) | gerenciado pelo Boot |
-| Testcontainers Keycloak (`com.github.dasniko`) | 3.7.0 |
-| Bean Validation (`spring-boot-starter-validation` / Hibernate Validator) | gerenciado pelo Boot |
-| MapStruct (`mapstruct` + `mapstruct-processor`) | 1.6.3 |
+| `domain/*` | domínio puro: sem Axon, sem CDI, sem JPA. O único colaborador é `RecordingDomainEvents` |
+| `application/*` | `AxonTestFixture` given-when-then, um por command, com repositório em memória |
+| `interfaces/graphql/relay/ConnectionsTest` | cursor ↔ offset, teto de página, montagem da connection |
+| `interfaces/graphql/relay/RelaySchemaTest` | o SDL gerado carrega `PostConnection`/`PostEdge` e a `interface User` |
+| `interfaces/graphql/SchemaIntrospectionTest` | a GraphiQL consegue introspectar, e a query Relay mais funda passa |
+| `e2e/*` | HTTP → token do realm → `@RolesAllowed` → Axon → domínio → JPA → projeção → JSON |
 
-As entidades `Post` e `Tag` são mapeadas por JPA e event-sourced pelo Axon ao mesmo tempo; os value objects são `@Embeddable`.
+Os testes de domínio e de command atravessaram **sem uma linha alterada** — eles nunca souberam que
+existia Spring.
 
-## Camadas
+---
 
-Três regras de camada, e três pacotes na raiz que cruzam todas elas:
+## Event store em memória
 
-1. **Um arquivo por mensagem, e a classe leva o nome dela.** Não existe classe `…Handler`: `CreatePostCommand` **é** o command — traz aninhado o record da mensagem (`CreatePostCommand.CreatePost`) e o método `@CommandHandler` que a trata. Vale igual para query (`FindPostQuery.FindPost`) e subscription (`OnPostUpdatedSubscription.OnPostUpdated`). Quem despacha importa o record e escreve `new CreatePost(...)`. Do lado dos eventos a regra é a mesma, invertida: uma classe por *reação*, em `application.post.event` — para saber tudo o que acontece quando um `PostCreated` chega, abrem-se os dois handlers dele, e nada mais.
-2. **O domínio dispara, a aplicação ouve.** Os *eventos de domínio* vivem em `domain.*.event` e quem os dispara são as entidades, pela porta `DomainEventPublisher`. Os *event handlers* que reagem a eles vivem em `application.post.event`.
-3. **O command decide e salva; o evento notifica e orquestra.** O command chama o domínio, recebe a entidade pronta e a grava. Os event handlers não gravam nada: um emite para as subscriptions, o outro despacha os commands que dão sequência à história.
+Como no projeto original: `InMemoryEventStorageEngine`, Postgres só com o read model, nenhuma tabela do
+Axon. **Cada reinício apaga os eventos enquanto as linhas continuam no Postgres.** Um post criado antes de
+um live reload segue respondendo em `post(id:)` e passa a dar `NOT_FOUND` no `updatePost`, que reidrata o
+agregado do stream. Não é bug; é a POC — e o live reload do Quarkus torna isso mais frequente do que o
+DevTools do Spring tornava.
 
-Os três pacotes de raiz — `dto`, `mapper` e `exceptions` — são agrupados **por papel**, não por camada: um lugar só para procurar "todo input", "todo mapeamento" e "toda tradução de erro".
+Trocar por um event store persistente é trocar um método em `AxonProducer`.
 
-```
-dev.manuelantunes.axonposts
-├── dto/controller                              # a forma do dado NO PROTOCOLO
-│   ├── CreatePostInput, UpdatePostInput        #   entrada: espelham os input do schema + Bean Validation
-│   └── PostView, TagView                       #   saída: achatam os value objects para o schema
-├── mapper                                      # TODO mapeamento do projeto, todo em MapStruct
-│   ├── PostInputMapper                         #   input GraphQL → command   (protocolo → aplicação)
-│   └── PostViewMapper                          #   Post → PostView           (domínio → protocolo)
-├── exceptions
-│   └── AppGraphQlExceptionHandler              #   validação/domínio/Axon → ErrorType do GraphQL
-│
-├── domain                                      # regras, invariantes E o mapeamento do próprio estado
-│   ├── shared/DomainEvent, DomainEventPublisher    # marcador dos fatos + porta de saída de eventos
-│   ├── post
-│   │   ├── Post                                # @Entity + @EventSourced + comportamento, numa classe só
-│   │   │                                       #   decidir: create()/update()/assignTag() disparam e devolvem o estado
-│   │   │                                       #   evoluir: @EntityCreator + @EventSourcingHandler idempotente
-│   │   ├── PostRepository                      #   porta do repositório (DDD: a interface é do domínio)
-│   │   ├── vo/PostId, PostTitle, PostContent, Author, PostVersion, TagRef   # @Embeddable records
-│   │   ├── event/PostCreatedEvent, PostUpdatedEvent   # @Event + @EventTag; payload primitivo (contrato)
-│   │   └── exception/InvalidPostException, PostAlreadyExistsException
-│   └── tag
-│       ├── Tag                                 # @Entity + @EventSourced; agregado independente
-│       ├── TagRepository, vo/TagId, TagName
-│       ├── event/TagCreatedEvent
-│       └── exception/InvalidTagException, TagAlreadyExistsException
-├── application                                 # orquestra: carrega, carimba tempo, salva, pagina, encadeia
-│   ├── shared/AppendingDomainEventPublisher    #   adapter DomainEventPublisher → EventAppender do Axon
-│   ├── post
-│   │   ├── PostPage                            #   uma fatia de posts (itens + offset + hasNext)
-│   │   ├── command/CreatePostCommand, UpdatePostCommand, AssignTagToPostCommand
-│   │   │                                       #   um arquivo por command; a classe leva o nome dele e
-│   │   │                                       #   traz a mensagem aninhada: CreatePostCommand.CreatePost
-│   │   ├── event/PostCreatedEventHandler       #   OUVE: emite onPostCreated
-│   │   ├── event/PostUpdatedEventHandler       #   OUVE: emite onPostUpdated
-│   │   ├── event/AssignDefaultTagOnPostCreated #   OUVE: garante a tag padrão despachando commands
-│   │   ├── event/package-info                  #   @Namespace("post-projection") vale pro pacote inteiro
-│   │   ├── query/FindPostQuery, FindAllPostsQuery        # idem: FindPostQuery.FindPost é a mensagem
-│   │   └── subscription/OnPostCreatedSubscription, OnPostUpdatedSubscription   # idem: .OnPostCreated
-│   └── tag/command/CreateTagCommand            #   com a mensagem CreateTag aninhada
-├── infrastructure                              # escolhas de deploy; nenhuma regra de negócio
-│   ├── persistence/sqlite/JpaPostRepository, JpaTagRepository        # adapters das portas
-│   ├── persistence/sqlite/SpringDataPostRepository, SpringDataTagRepository
-│   └── axon/AxonConfig                         # InMemoryEventStorageEngine, subscribingMatching(...), Clock
-└── interfaces/graphql
-    ├── PostQueryController, PostMutationController, PostSubscriptionController
-    ├── PostTagsController                      #   campo Post.tags: DataLoader + cursor connection
-    └── Connections                             #   cursor ↔ offset, compartilhado pelas duas connections
-```
-
-Schema em `src/main/resources/graphql/posts.graphqls`.
-
-## O que mudou do Axon 4 pro 5 (e por quê está assim)
-
-| Axon 4 | Axon 5 (este projeto) |
-|---|---|
-| `@Aggregate` + `@AggregateIdentifier` + construtor `@CommandHandler` | `@EventSourced(tagKey, idType)` na entidade; sem campo de identidade anotado |
-| `AggregateLifecycle.apply(evento)` | o domínio chama `events.raise(evento)`; o adapter da aplicação traduz pro `EventAppender.append(evento)` injetado no handler |
-| `@CommandHandler` dentro do agregado | `@CommandHandler` em classe própria **por command** — `CreatePostCommand`, com a mensagem `CreatePost` aninhada —, recebendo `@InjectEntity Post` (ou `Optional<Post>` na criação) |
-| `@TargetAggregateIdentifier` | `@TargetEntityId` no command; `@EventTag` no evento liga os dois ao mesmo stream |
-| `EventSourcingRepository` por aggregate type | stream por **tag** (`postId=<id>`), a consistency boundary é dinâmica (DCB) |
-| Saga / `@SagaEventHandler` para encadear agregados | event handler comum despachando command no `ProcessingContext.onAfterCommit(...)` |
-| `@EventSourcingHandler void on(...)` mutando | `@EventSourcingHandler void on(...)` mutando também — mas idempotente, porque a entidade é JPA e o evento chega por dois caminhos |
-| `ReactorQueryGateway.queryUpdates(...)` sem handler | `subscriptionQuery(...)` = initial result **+** updates; o `@QueryHandler` da subscription existe e devolve `Optional.empty()` |
-| `QueryUpdateEmitter` injetado no construtor | `QueryUpdateEmitter` chega como **parâmetro** do `@EventHandler`, já ligado ao `ProcessingContext` |
-| `@ProcessingGroup` + `axon.eventhandling.processors.*.mode` | `@Namespace` (aqui, no `package-info`) + `EventProcessorDefinition.subscribingMatching(...)` bean (ou a mesma propriedade) |
-| XStream/Jackson serializer | `Converter` (Jackson 3 por padrão: `axon.converter.general=jackson`) |
+---
 
 ## Rodando
 
-A infra vem primeiro: Postgres (dois bancos) e Keycloak (realm já importado).
-
 ```bash
-docker compose up -d          # espera o healthcheck do Keycloak (~30s na primeira vez)
-./mvnw spring-boot:run
-# ou
-./mvnw package && java -jar target/axon-graphql-posts-0.2.0-SNAPSHOT.jar
+# dev: Dev Services sobem Postgres + Keycloak; só precisa de Docker
+./mvnw quarkus:dev
+#   GraphiQL   http://localhost:8080/q/graphql-ui/
+#   SDL        http://localhost:8080/graphql/schema.graphql
+#   Dev UI     http://localhost:8080/q/dev/   (a URL do Keycloak aparece lá)
+
+# testes (mesma coisa: só Docker)
+./mvnw test
+./mvnw test -Dtest=PostTest                      # uma classe
+./mvnw test -Dtest='*E2ETest'                    # só os ponta a ponta
+
+# JAR empacotado, contra o docker-compose
+docker compose up -d                             # POSTGRES_PORT=5433 se a 5432 estiver ocupada
+./mvnw package
+java -jar target/quarkus-app/quarkus-run.jar
+docker compose down -v                           # reset total
 ```
 
-| Serviço | URL | Credenciais |
-|---|---|---|
-| Aplicação | http://localhost:8080/graphiql | token do Keycloak no header |
-| Keycloak (admin) | http://localhost:8081 | `admin` / `admin` |
-| Realm | `axon-posts` | cliente público `axon-posts-api` |
-| Postgres (app) | `localhost:5432/axonposts` | `axonposts` / `axonposts` |
-| Postgres (Keycloak) | `localhost:5432/keycloak` | `keycloak` / `keycloak` |
+### O token precisa vir do Keycloak que a aplicação está validando
 
-Usuários semeados no realm (senha `segredo123`):
+É a pegadinha mais fácil de cair, porque **existem dois Keycloak**: o do `docker-compose` (porta 8081,
+fixa) e o do Dev Services (porta aleatória, novo a cada `quarkus:dev`). Em dev mode a aplicação usa o do
+Dev Services — `quarkus.oidc.auth-server-url` só é configurado no perfil `prod`.
 
-| Usuário | Role | Vira |
-|---|---|---|
-| `manuel@example.com` | `author` | `Author` local, pode escrever |
-| `leitor@example.com` | — | `Reader` local, só lê |
-| `promovido@example.com` | `author` | demonstra a promoção `User` → `Author` |
+Pegar o token no 8081 e mandar para o `quarkus:dev` dá isto no log, e `unauthorized` para o cliente:
 
-**O schema vem do Flyway, não do `ddl-auto`.** `src/main/resources/db/migration/V1__initial_schema.sql`
-cria tudo, e o Hibernate roda em `validate`: ele confere que as entidades e as migrations dizem a mesma
-coisa e **não sobe** se divergirem. Um campo novo sem migration vira erro na partida, em vez de um `ALTER
-TABLE` silencioso.
-
-`baseline-on-migrate` é `false` de propósito — um banco não-vazio sem histórico é um banco que alguém
-criou por fora, e uma baseline silenciosa esconderia justamente o que o Flyway existe para evitar. Se você
-tem um banco antigo vindo do `ddl-auto`:
-
-```bash
-docker compose down -v && docker compose up -d
+```
+JWK with kid '…' is not available
+Request http://localhost:<porta-aleatória>/…/token/introspect has failed: 403 "Client not allowed."
 ```
 
-**Dois bancos, dois usuários, um servidor.** O `docker/postgres/init/01-keycloak-role.sql` cria o papel e o
-banco do Keycloak separados dos da aplicação: pools de conexão independentes, o `ddl-auto` da aplicação
-sem enxergar as tabelas do Keycloak, e o usuário da aplicação sem alcance às tabelas de credencial.
+Não é erro de configuração: é uma assinatura que o emissor daquela aplicação não conhece. O Quarkus tenta
+a introspecção como plano B, e o realm não permite (é um cliente público, sem segredo).
 
-**Nenhum usuário é cadastrado na aplicação.** O `users`/`accounts` local é preenchido *just-in-time*: na
-primeira requisição com um token novo, o `UserProvisioning` cria o perfil e liga a conta — ou, se o
-e-mail já existir localmente, **liga a conta ao usuário existente** (account linking).
-
-Endpoints (tudo em `/graphql`, transporte escolhido pelo `Accept` / upgrade):
-
-- `POST /graphql` + `Accept: application/json` → queries e mutations
-- `POST /graphql` + `Accept: text/event-stream` → **subscriptions via SSE**
-- WebSocket em `/graphql` (graphql-ws) → só pra GraphiQL: http://localhost:8080/graphiql
-
-## Testando na mão
-
-Primeiro, um token de verdade do Keycloak:
+Então pegue o issuer da própria aplicação:
 
 ```bash
-TOKEN=$(curl -s -X POST \
-  http://localhost:8081/realms/axon-posts/protocol/openid-connect/token \
+ISS=$(curl -s localhost:8080/q/dev-v1/io.quarkus.quarkus-oidc/provider | grep -o 'http[^"]*realms/axon-posts')
+# ou simplesmente: a URL aparece no /q/dev/ e no log da partida
+
+TOKEN=$(curl -s -X POST $ISS/protocol/openid-connect/token \
   -d grant_type=password -d client_id=axon-posts-api \
   -d username=manuel@example.com -d password=segredo123 | jq -r .access_token)
-
-curl -s -X POST http://localhost:8080/graphql \
-  -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
-  -d '{"query":"{ me { __typename id name email accounts { provider subject hasPassword } ... on Author { bio } } }"}'
 ```
 
-O `grant_type=password` só funciona porque o realm importa o cliente com `directAccessGrantsEnabled` —
-é o que torna a POC testável por `curl`. Num cliente de produção isso ficaria desligado e o token viria
-do *authorization code* + PKCE.
+Com o JAR empacotado contra o compose, o issuer é fixo: `http://localhost:8081/realms/axon-posts`.
 
-Terminal 1 — abre a subscription global (fica pendurado):
+### E precisa ser um *access token*, não o cookie de sessão do Keycloak
 
-```bash
-curl -N -X POST http://localhost:8080/graphql \
-  -H 'Content-Type: application/json' -H 'Accept: text/event-stream' \
-  -d '{"query":"subscription { onPostCreated { id title author version } }"}'
-```
+O mesmo par de erros (`JWK ... is not available` + `introspect ... 403`) aparece por um segundo motivo, e
+esse é mais difícil de ver: quem faz login no console do Keycloak e copia o JWT que está lá copia o
+**cookie `KEYCLOAK_IDENTITY`**, que é um JWT legítimo, do issuer certo, e não serve para nada aqui.
 
-Terminal 2 — dispara o command:
+Dá para distinguir sem adivinhar — decodifique o payload:
 
-```bash
-curl -s -X POST http://localhost:8080/graphql -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"query":"mutation { createPost(input:{title:\"Axon 5 + GraphQL\", content:\"oi\"}) { id title version author { name } tags(first: 5) { edges { node { id name } } } } }"}'
-```
+| | cookie de sessão | access token |
+|---|---|---|
+| `alg` | `HS512` (simétrico, chave **interna** do realm) | `RS256` (a chave publicada no JWKS) |
+| `typ` | `Serialized-ID` | `Bearer` |
+| claims | `sid`, `state_checker` | `azp`, `scope`, `realm_access.roles`, `preferred_username` |
+| validade | 10 horas | 30 minutos |
 
-O input **não tem** campo `author`: ele vem do token. Sem `Authorization`, ou com o token do leitor, a
-mutation devolve `FORBIDDEN`.
+O `HS512` é a explicação do log: a chave HMAC do realm **nunca** vai para o JWKS, então o `kid` é
+genuinamente desconhecido. O Quarkus então tenta a introspecção, e o `axon-posts-api` é cliente público —
+403. Um token sem `realm_access.roles` também nunca passaria pelo `@RolesAllowed("author")`.
 
-O terminal 1 recebe:
+O access token sai do `grant_type=password` acima, e só de lá.
 
-```
-event:next
-data:{"data":{"onPostCreated":{"id":"…","title":"Axon 5 + GraphQL","author":"manuel","version":1}}}
-```
-
-E a mutation responde com a tag padrão já atribuída — `version: 2`, porque criar e etiquetar são dois eventos:
-
-```json
-{"data":{"createPost":{"id":"…","title":"Axon 5 + GraphQL","version":2,
-   "tags":{"edges":[{"cursor":"T18w","node":{"id":"…","name":"Untagged"}}],
-           "pageInfo":{"hasNextPage":false}}}}}
-```
-
-Subscription filtrada por tópico (só updates daquele post):
-
-```bash
-curl -N -X POST http://localhost:8080/graphql \
-  -H 'Content-Type: application/json' -H 'Accept: text/event-stream' \
-  -d '{"query":"subscription { onPostUpdated(postId: \"<ID>\") { id title content version } }"}'
-```
-
-```bash
-curl -s -X POST http://localhost:8080/graphql -H 'Content-Type: application/json' \
-  -d '{"query":"mutation { updatePost(input:{id: \"<ID>\", title: \"editado\"}) { id title version } }"}'
-
-curl -s -X POST http://localhost:8080/graphql -H 'Content-Type: application/json' \
-  -d '{"query":"{ post(id: \"<ID>\") { id title content updatedAt version } }"}'
-
-# cursor connection: primeira página, depois `after` = endCursor da anterior
-curl -s -X POST http://localhost:8080/graphql -H 'Content-Type: application/json' \
-  -d '{"query":"{ posts(first: 1) { edges { cursor node { id title } } pageInfo { hasNextPage endCursor } } }"}'
-
-curl -s -X POST http://localhost:8080/graphql -H 'Content-Type: application/json' \
-  -d '{"query":"{ posts(first: 1, after: \"T18w\") { edges { cursor node { id title } } pageInfo { hasNextPage } } }"}'
-```
-
-Smoke test automatizado (builda, sobe, abre 3 subscriptions SSE, dispara mutations, confere contagens, derruba — logs em `.poc-logs/`):
-
-```bash
-bash scripts/poc-smoke.sh
-```
-
-Testes unitários (`./mvnw test`):
-
-- `PostTest` / `TagTest` — domínio puro. O único colaborador é o `RecordingDomainEvents`, um duplo da porta do próprio domínio: dá para afirmar exatamente o que foi disparado sem Axon, sem Spring e sem JPA — mesmo com as entidades mapeadas.
-- `CreatePostCommandTest`, `UpdatePostCommandTest`, `AssignTagToPostCommandTest`, `CreateTagCommandTest` — given-when-then com o `AxonTestFixture` do Axon 5, um por command. Cada um monta só o command que testa, então uma dependência acidental entre dois deles quebra o teste. Como salvar virou responsabilidade do command, os repositórios em memória provam que ele salvou — e o quê.
-- `FindAllPostsQueryTest` — a mecânica do `limit + 1`: a linha extra nunca vaza para o resultado e o `hasNext` bate.
-- `ConnectionsTest` — a tradução cursor ↔ offset e o recorte em memória, que é a parte da cursor connection que é lógica nossa e não do Spring. É o mesmo código por trás de `posts` e de `Post.tags`.
-- `SoftDeletableTest` / `AuthenticatableTest` — os dois mixins isolados. O `Authenticatable` migrou de `User` para `Account` na adoção do Keycloak, e os casos do teste **não mudaram**: só de quem se pergunta.
-
-Testes com **Testcontainers** (exigem Docker rodando). Um Postgres e um Keycloak sobem **uma vez** para
-a suíte inteira (`support/Containers`, containers estáticos iniciados em paralelo), e as classes ponta a
-ponta compartilham o mesmo contexto Spring — só a primeira paga a subida:
-
-- `e2e/PostLifecycleE2ETest` — o ciclo inteiro pela API: criar → tag padrão chegando no `AFTER_COMMIT`
-  (por isso um post nasce na versão 2) → editar preservando tags → apagar (some das consultas, linha
-  permanece) → restaurar (volta com autor e tags). Mais as guardas do mixin e a paginação por cursor.
-- `e2e/AuthorizationE2ETest` — a matriz de permissão como teste parametrizado sobre as quatro mutations
-  de escrita. Enumerar as operações numa fonte de argumentos é o que faz uma mutation nova sem
-  `@PreAuthorize` aparecer: o risco não é o caso que falha, é o que ninguém escreveu.
-- `e2e/IdentityProvisioningE2ETest` — a costura Keycloak ↔ banco local: provisionamento just-in-time,
-  idempotência, account linking por e-mail (o usuário mantém id e posts), e a promoção `Reader` → `Author`
-  quando a role chega depois.
-- `e2e/NewsletterSubscriptionE2ETest` — subscriptions filtradas por autor, **sobre SSE de verdade**. O
-  `HttpGraphQlTester` recusa subscriptions sobre HTTP, então há um `SseSubscriptions` que fala o protocolo
-  GraphQL over SSE direto. O caso que importa é o negativo: um assinante de outro autor não pode receber
-  e descartar — o post não pode chegar nele.
-- `e2e/BatchLoadingE2ETest` — os DataLoaders, medidos pela estatística do Hibernate em vez de linhas de
-  log: a mesma consulta com 1 e com 5 posts precisa custar **o mesmo número de statements**. É a
-  propriedade que importa (o custo não acompanhar o tamanho do resultado), não um número mágico que muda
-  a cada ajuste de mapeamento.
-- `UserSoftDeleteJpaTest` — a exclusão lógica contra o Postgres. Metade do que ele verifica é SQL: o
-  `@SQLDelete` por tabela da herança `JOINED`, o `@SQLRestriction`, o INSERT nativo da promoção.
-
-Estes testes substituem o `scripts/poc-smoke.sh`, que continua no repositório como roteiro manual: o que
-antes se conferia numa sessão de terminal agora quebra o build.
-
-## Decisões que valem comentar
-
-**`User` é entidade polimórfica do Axon.** `@EventSourced(concreteTypes = {Reader, Author})` na raiz
-abstrata e um `@EntityCreator` que lê o primeiro evento do stream: `event.author()` decide a classe. Não há
-coluna de discriminador nem consulta — o tipo é função pura do histórico, e o Hibernate concorda pelo lado
-dele (a herança `JOINED` resolve pelo child table que existe).
-
-A regra que vem junto está na documentação do Axon: *the concrete type is fixed at creation time*. Um
-`Reader` não vira `Author` no mesmo stream. Promover é **encerrar um agregado e abrir outro** —
-`UserSupersededEvent` fecha o do leitor e libera as credenciais, um `UserRegisteredEvent` com `supersedes`
-preenchido abre o do autor, e um `LinkAccount` por credencial religa. Não se perde nada porque um leitor
-nunca escreveu post: `createPost` exige `ROLE_AUTHOR`, então não há `posts.author_id` apontando para ele.
-
-O preço: a promoção são três unidades de trabalho, não uma. Se o `RegisterUser` falhar depois do
-`PromoteToAuthor`, resta um leitor encerrado sem sucessor — fechar essa janela é trabalho de saga, e está
-documentado no `UserProvisioning`.
-
-**A migration inicial foi gerada, não escrita.** O DDL saiu do `schema-generation` do próprio Hibernate
-(com o dialeto do Postgres, contra o mapeamento real) e depois foi curado: nomes de constraint legíveis no
-lugar dos hashes, índices para as consultas que existem, e um índice que nenhuma anotação JPA expressa:
-
-```sql
-create unique index uk_users_email_active on users (email)
-    where superseded_by is null and deleted_at is null;
-```
-
-O e-mail não pode ser único na tabela — um leitor encerrado e o autor que o substituiu convivem com o
-mesmo e-mail — mas precisa ser único **entre os ativos**, senão `findByEmail` viraria uma escolha entre
-duas linhas. Só o SQL diz isso, e é a razão prática de sair do `ddl-auto`. Os índices parciais de `posts`
-seguem a mesma lógica: as consultas sempre filtram `deleted_at is null`, então o índice não carrega as
-linhas que elas nunca vão ver.
-
-Os testes de integração rodam **as mesmas migrations**, não uma segunda definição de schema que poderia
-divergir delas.
-
-**Ser autor autoriza a escrever, não a escrever no alheio.** `updatePost`, `deletePost` e `restorePost`
-exigem `ROLE_AUTHOR` **e** ser o autor daquele post. A checagem está no domínio (`Post.assertWrittenBy`),
-não no controller, porque depende do estado do agregado — isso é invariante, não permissão, e vale venha o
-command de onde vier. Funciona até num post apagado: o agregado vem do stream, com o `author`
-reconstituído do `PostCreatedEvent`, então a regra não depende de a linha estar visível.
-
-**Apagar a conta é evento, e a reativação é o login.** `deleteMe` dispara `UserDeletedEvent`; entrar de
-novo com a mesma credencial do Keycloak dispara `UserRestoredEvent` em vez de criar um segundo usuário.
-Depois que `User` virou agregado event-sourced, marcar `deleted_at` sem evento produziria um usuário que
-some do banco e reaparece vivo em qualquer replay — a mesma razão que já valia para o `Post`.
-
-Um efeito colateral que ninguém programou e que por isso tem teste próprio: **apagar a conta esconde os
-posts do autor**. Nada os toca, mas `Post.author` é `@ManyToOne(optional = false)` e o `@SQLRestriction`
-do `User` torna o join INNER contra uma linha filtrada. Reativar traz tudo de volta.
-
-**A promoção interrompida se conserta sozinha, para a frente.** São três unidades de trabalho e a janela
-entre elas existe — um command não escreve em dois agregados. Mas o estado quebrado é *detectável*
-("existe um encerrado cujo sucessor não existe") e o destino é *determinístico* (o id do sucessor já está
-em `supersededBy`), então o `UserProvisioning` termina o que faltou no login seguinte. Sem saga, sem job,
-sem agendador: a operação já é naturalmente repetida, e quem tenta entrar é exatamente quem ficou sem
-conta. Compensar seria pior — exigiria um evento que "descancela" o encerramento.
-
-**A apresentação não alcança `domain` nem `infrastructure`.** Os controllers falavam com
-`infrastructure.security.CurrentUser` e com repositórios de domínio — a seta apontando para o lado errado,
-e um caminho de leitura que pulava a camada de aplicação enquanto todos os outros passavam pelo query bus.
-Agora existe a porta `application.auth.AuthenticatedUser` (implementada pelo `CurrentUser`, que continua
-sendo quem conhece JWT e claims), e os três batch loaders despacham queries: `FindTagsByPostIds`,
-`FindPostsByAuthorIds`, `FindUsersByIds`.
-
-**Uma consulta de usuário onde havia três.** `email`, `bio` e `accounts` eram três `@BatchMapping`
-separados, cada um voltando ao banco para preencher **um** campo — inclusive quando quem montou a view já
-tinha o usuário inteiro carregado. Agora o `UserViewMapper` monta a view completa de uma vez, a partir do
-que o ORM já hidratou: a herança `JOINED` traz a bio no mesmo join, o `join fetch` traz as contas. O
-`PostView` carrega só o `authorId`, e `Post.author` é resolvido pelo mesmo loader de usuários — o que
-mantém o caminho da subscription funcionando sem tocar no banco.
-
-
-
-**Uma classe por entidade, não duas.** `Post` é `@Entity` + `@EventSourced` + comportamento ao mesmo tempo, e `Tag` idem. O JPA é agnóstico de banco e o mapeamento é por anotação, então não há razão para manter uma entidade de domínio e uma cópia anêmica de infraestrutura em sincronia. Os value objects são `@Embeddable` de verdade — e o schema gerado mostra que o resultado não é o embeddable aninhado de sempre:
-
-```
-posts:      id | title | content | author | created_at | updated_at | version
-post_tags:  post_id | tag_id | name
-tags:       id | name | created_at
-```
-
-`PostTitle` vira a coluna `title`, não `title_value` (é o `@AttributeOverride` na entidade), e as tags são um `@ElementCollection` gravado direto. O que sobrou de "infraestrutura" é o adapter do repositório, hoje uma classe fina de três métodos.
-
-O preço: a entidade precisa ser mutável — o JPA exige construtor sem argumentos e campos não-finais — então o estilo imutável de antes (`@EventSourcingHandler` devolvendo cópia) deu lugar a mutação. Ela continua sem setters públicos: só eventos mudam estado, e só decisões produzem eventos.
-
-**O `@EventSourcingHandler` é idempotente, e tem de ser.** Numa entidade mutável o mesmo `PostUpdatedEvent` chega por dois caminhos: o domínio o aplica ao decidir (para devolver o Post pronto para salvar) e o Axon o aplica ao apendar. Com `version.next()` dentro do `on(...)`, a versão contava duas vezes — foi exatamente o bug que apareceu ao trocar para o estilo mutável. A correção foi levar a versão resultante **dentro do evento**: todo campo do `on(...)` passou a ser valor absoluto, e aplicar duas vezes dá no mesmo. O teste `applyingTheSameEventTwiceLeavesTheSameState` trava isso.
-
-**Decidir termina chamando evoluir.** `Post.create(...)` termina no construtor `@EntityCreator`, e `update`/`assignTag` terminam em `on(evento)` — os mesmos caminhos que o Axon usa para reconstituir a entidade do stream. Existe um único lugar que define como um evento vira estado, então "o que o command acabou de salvar" e "o que sai de um replay" não podem divergir. É o que o teste `theStateReturnedByUpdateIsTheSameAsSourcingTheRaisedEvent` trava.
-
-**A tag padrão: orquestração pelo Axon, e o `AFTER_COMMIT` que a torna possível.** Todo post criado sem tags recebe a tag `Untagged`. Quem faz isso é um event handler (`AssignDefaultTagOnPostCreated`) que não escreve no banco nem monta eventos — ele só **despacha commands** e deixa o framework carregar o agregado certo, aplicar as regras dele e apendar o evento. `CreatePostCommand` não sabe que existem tags; o domínio de `Tag` não sabe que existem posts.
-
-O detalhe que custou uma iteração: despachar o `AssignTagToPost` **direto** falha com `EntityNotFoundException`. O handler roda durante o commit do `CreatePost`, e nesse ponto o `PostCreatedEvent` ainda não é legível de volta do event store — o Axon tenta reidratar um Post cujo stream não enxerga. Passar o `ProcessingContext` do evento para o gateway também não resolve. O que resolve é registrar o trabalho em `context.onAfterCommit(...)`, que roda depois de o stream estar gravado.
-
-E é o mesmo `onAfterCommit` que faz a mutation devolver o post **já com a tag**: ele recebe uma função que devolve um `CompletableFuture`, e o Axon espera por ele antes de concluir o processamento. Logo, `commandGateway.send(CreatePost)` só completa depois de a tag estar atribuída, e o controller consulta o post depois disso. Nenhum polling, nenhuma espera artificial — só a ordem que o processor *subscribing* garante. Por isso um post recém-criado nasce na **versão 2**: um evento de criação, um de atribuição da tag.
-
-**Agregado referencia agregado por identidade.** `Post` não tem `@ManyToMany Tag`: guarda um `TagRef` (id + nome copiados) num `@ElementCollection`. Uma associação JPA entre os dois criaria fronteira transacional compartilhada, cascatas e lazy loading atravessando o limite de consistência — e tornaria impossível reconstruir o `Post` só a partir dos seus eventos. O nome vem junto porque exibir um post não deveria obrigar a carregar o agregado `Tag`.
-
-**O command decide e salva; o evento notifica.** O command chama o domínio, recebe a entidade pronta e a grava — tudo dentro do `ProcessingContext`, então o append do evento e a escrita no SQLite commitam juntos.
-
-> **O preço disso:** o estado gravado deixa de ser *derivado* do stream. Um replay dos eventos não o reconstrói, porque os event handlers não escrevem nada. Voltar a projetar no event handler (e tirar o `save` do command) é o que devolve essa propriedade.
-
-**Cursor connection montada pelo Spring, não à mão.** O campo `posts` é uma Relay connection e não há um único tipo de connection escrito neste projeto. Três peças que o Boot autoconfigura por causa do Spring Data no classpath fazem o trabalho: `ScrollSubrange` como parâmetro do controller (decodifica `first`/`after` num `ScrollPosition`), `Window<PostView>` como retorno (o `WindowConnectionAdapter` vira `edges` + `cursor` + `pageInfo`), e o `ConnectionTypeDefinitionConfigurer`, que **gera** `PostConnection`, `PostEdge` e `PageInfo` a partir do sufixo `Connection` — por isso o `.graphqls` declara o campo mas não os tipos.
-
-A tradução acontece em degraus, cada um no seu lugar: o controller converte cursor ↔ `offset`/`limit` (o cursor `T18w` é o base64 de `O_0`, um `OffsetScrollPosition`); a mensagem `FindAllPosts` carrega só os dois números, porque mensagem não carrega tipo de framework; a query decide o `hasNext` pedindo **uma linha a mais** e descartando-a; e o adapter volta para `ScrollPosition`/`Window`, o suporte a scrolling nativo do Spring Data. A ordenação é `createdAt, id` — `createdAt` sozinho não é único, e dois posts do mesmo instante fariam a paginação por offset pular ou repetir linhas. Paginação só para frente (`first`/`after`), declarada assim em vez de aceitar `last`/`before` e ignorá-los.
-
-**`Post.tags`: connection paginada, servida por DataLoader.** Uma query `posts(first: 20) { edges { node { tags { … } } } }` dispararia 21 consultas — uma para os posts e uma para as tags de cada um. Com o DataLoader, o graphql-java junta os 20 pedidos do mesmo nível de execução e chama a função de lote **uma vez**, com os 20 ids; `findTagsByPostIds` resolve tudo num `join fetch` só. O smoke test prova isso lendo o log: duas queries que trazem dois posts produzem **duas** chamadas de lote de 2 chaves, não quatro de 1.
-
-Para o lote ter o que evitar, `Post.tags` virou `@ElementCollection(fetch = LAZY)` e o `PostView` **perdeu** o campo `tags`: com `EAGER` o Hibernate faria um SELECT por post e o N+1 aconteceria antes de o DataLoader entrar em cena. Efeito colateral bem-vindo: quem não pede `tags` na query não paga por elas.
-
-**Por que `@SchemaMapping` + DataLoader, e não `@BatchMapping`.** `@BatchMapping` é açúcar para exatamente o que o `PostTagsController` faz à mão — o javadoc dele diz isso: registrar a função no `BatchLoaderRegistry` e expor um `DataFetcher` que consulta o `DataLoader`. O que ele **não** faz é enxergar argumentos de campo: o `BatchLoaderHandlerMethod` só resolve a coleção de chaves, `@ContextValue`, `GraphQLContext` e `BatchLoaderEnvironment` — não há `@Argument` nem `ScrollSubrange`.
-
-Como `tags` é paginado (`first`/`after`), a forma anotada não dá conta. A escolha era entre um campo sem paginação e a forma explícita; ficou a explícita — mesmo DataLoader, mesmo lote, com o argumento na mão. Se `tags` deixar de ser paginado um dia, o método vira um `@BatchMapping` de três linhas.
-
-O lote traz todas as tags de cada post e a paginação recorta **em memória** (`Connections.slice`). É o certo para uma coleção filha pequena: ela já veio inteira no lote, e paginar no banco por post desfaria o lote. Para uma coleção grande, o caminho seria uma consulta com janela por chave dentro da própria função de lote — a fronteira do controller não mudaria.
-
-**Validação em duas alturas, de propósito.** As constraints em `CreatePostInput`/`UpdatePostInput` são fail-fast de borda: o `@Valid` no `@Argument` faz o Spring GraphQL validar antes de existir command, e o cliente recebe `BAD_REQUEST` com a mensagem do campo. Os value objects continuam validando por conta própria, e é essa a validação que **vale** — ela protege a invariante venha o command de onde vier (outro adapter, um teste, uma migração). A borda existe para dar erro melhor e mais cedo, não para substituir o domínio. No `UpdatePostInput` o "nulo pode, vazio não" é `@Pattern` e não `@NotBlank`: constraints são ignoradas quando o valor é `null`, que é justamente a semântica de update parcial.
-
-**MapStruct é o mapper padrão de todas as camadas.** Os dois saltos que o dado dá têm um mapper cada, ambos em `mapper/` e gerados em tempo de compilação (`target/generated-sources/annotations`, Java comum, zero reflexão): `PostInputMapper` (input GraphQL → command) e `PostViewMapper` (domínio → DTO de saída). O terceiro salto — read model ↔ entidade JPA — simplesmente deixou de existir quando `Post` virou a própria entidade mapeada. O ganho não é escrever menos linhas: é `-Amapstruct.unmappedTargetPolicy=ERROR` no `pom.xml`, que faz um campo novo no destino sem origem **quebrar o build** em vez de chegar `null` do outro lado.
-
-O `PostInputMapper` o MapStruct resolve sozinho (record → record), assim como o `toTagViews` que o `PostTagsController` toma emprestado (`TagRef` → `TagView`). O `PostViewMapper` precisa de `expression = "java(post.title().value())"` por campo, porque o MapStruct descobre propriedades por acessor JavaBean (`getTitle()`) ou componente de `record`, e `Post` não é nem um nem outro — é entidade de domínio com acessores `title()` devolvendo value objects. Escrever a origem à mão não custa a garantia que importa: o **destino** continua conferido pelo compilador.
-
-**`dto`, `mapper` e `exceptions` na raiz: agrupados por papel.** As camadas continuam valendo para o que tem regra (`domain`, `application`, `infrastructure`, `interfaces`), mas os artefatos puramente técnicos ficam agrupados pelo que são — um lugar só para procurar "todo input", "todo mapeamento", "toda tradução de erro". O preço é que esses pacotes cruzam fronteiras. As **exceções** em si não se mudaram: `InvalidPostException` e `InvalidTagException` seguem nos seus domínios, porque são vocabulário deles; o que foi para `exceptions/` é quem as *ouve* na borda.
-
-**O domínio dispara; a aplicação ouve.** `Post.create(...)` e `post.update(...)` chamam `events.raise(...)` na porta `DomainEventPublisher`, que é do domínio — a regra de negócio dispara o fato sem conhecer o Axon. Quem implementa a porta é `AppendingDomainEventPublisher`, um invólucro de vida curta sobre o `EventAppender` que o `@CommandHandler` recebe por parâmetro (por isso o append é transacional). Do outro lado, *ouvir* o fato é da aplicação.
-
-**Um arquivo por command, query e subscription — e a classe é o command.** Antes eram dois arquivos por mensagem (`UpdatePostCommand` + `UpdatePostCommandHandler`) e um pacote com o dobro de nomes, metade deles só sufixo. Hoje a classe leva o nome do command e o record da mensagem mora aninhado nela:
-
-```java
-@Component
-public class UpdatePostCommand {
-
-    @Command(namespace = "posts", name = "UpdatePost", version = "1.0.0")
-    public record UpdatePost(@TargetEntityId PostId postId, String title, String content) {}
-
-    @CommandHandler
-    public void handle(UpdatePost command, @InjectEntity Post post, EventAppender eventAppender) { … }
-}
-```
-
-Duas coisas caem no lugar. **Localidade:** tudo o que um `UpdatePost` provoca está num arquivo só, e a mensagem não pode divergir de quem a trata porque não há como abrir uma sem a outra. **Nome:** `…Handler` era ruído — a classe não é "quem trata o command", ela *é* o command; o record é só a forma de despachá-lo. Quem despacha importa o tipo aninhado e o call site lê `new UpdatePost(id, título, conteúdo)`, sem sufixo nenhum.
-
-O nome da mensagem no wire vem da anotação (`namespace`/`name`/`version`), não da classe, então aninhar o record não mexeu em contrato nenhum: `posts.UpdatePost#1.0.0` continua igual.
-
-Os eventos ficaram de fora dessa regra de propósito: o evento é um fato do **domínio** (`domain.post.event`) e pode ter N reações na aplicação, então lá vale o inverso — uma classe por reação. Os dois handlers de `PostCreatedEvent` são o exemplo: um notifica, o outro orquestra a tag, e são responsabilidades diferentes em arquivos diferentes.
-
-Como a ordem entre handlers do mesmo processor **não** é garantida, o `PostCreatedEventHandler` monta a view que emite a partir do **payload do evento**, não do banco: assim `onPostCreated` publica sempre o post como ele nasceu (v1, sem tags), tenha a tag sido atribuída antes ou depois. A tag chega logo em seguida pelo `onPostUpdated` — que é a ordem em que os fatos de fato aconteceram.
-
-**`@Namespace` no `package-info`, não em cada classe.** O Axon procura a anotação no tipo, nas classes envolventes, no pacote e no módulo. Declarada uma vez em `application/post/event/package-info.java`, ela casa todos os handlers do pacote com o `EventProcessorDefinition.subscribingMatching("post-projection")` do `AxonConfig` — handler novo no pacote entra no processor sem tocar em configuração.
-
-**Value objects donos das invariantes.** `PostId`, `PostTitle`, `PostContent`, `Author`, `PostVersion` e `TagRef` (mais `TagId`/`TagName` do outro agregado) validam e normalizam no construtor canônico, então um `PostTitle` que existe é sempre válido e a entidade não checa nada ao guardá-lo. Como são `@Embeddable` em `record`, o Hibernate os instancia pelo construtor canônico — a invariante roda também quando a linha volta do banco. `PostVersion` não é `@Version` do JPA de propósito: aquele é lock otimista do ORM, este é o contador da reconstituição por eventos.
-
-Os **eventos**, porém, carregam primitivos: evento é contrato, atravessa processo e fica gravado para sempre. A conversão acontece nas fronteiras da entidade.
-
-**Construtores nomeados.** `PostId.of(...)` vs `PostId.newId()` dizem no call site qual dos dois casos é; `PostVersion.initial()` / `next()` são as duas únicas formas de obter uma versão; `AppendingDomainEventPublisher.appendingTo(appender)` lê como a frase que descreve o que faz. `Post.create(...)` e `Tag.create(...)` são os construtores nomeados das entidades: validam, disparam o evento e devolvem a instância pronta para salvar.
-
-**Entidade nasce do primeiro evento.** Sem eventos para o id, o Axon não constrói nada: `@InjectEntity Post` lança `EntityNotFoundException` (vira `NOT_FOUND` no GraphQL) e `@InjectEntity Optional<Post>` vem vazio — é assim que `createPost` rejeita id duplicado. Carregar a entidade na criação ainda coloca o stream `postId=<id>` na consistency boundary do append, então duas criações concorrentes com o mesmo id conflitam no event store.
-
-**`subscriptionQuery` no Axon 5 exige o `@QueryHandler`.** Diferente do 4.x (onde `queryUpdates` nunca despachava a query), o `SimpleQueryBus` do 5 executa o initial result na hora e concatena os updates. Para a semântica de subscription GraphQL o handler devolve `Optional.empty()`; se quiser snapshot + updates, devolva o `PostView` atual ali.
-
-**Filtro por tópico é avaliado no emit.** `OnPostUpdatedSubscription.OnPostUpdated(postId)` é o payload da subscription query e carrega o próprio predicado (`matches`); o event handler chama `emitter.emit(OnPostUpdated.class, sub -> sub.matches(view.id()), view)`. Cada subscriber ativo recebe (ou não) conforme o próprio filtro — sem `filter()` no Flux.
-
-**Emit sai depois do commit.** O `QueryUpdateEmitter` do Axon 5 é ligado ao `ProcessingContext` e adia o emit para o after-commit. Como os event handlers rodam em modo *subscribing*, o `save` do command já aconteceu quando o handler roda — é por isso que o `PostUpdatedEventHandler` consegue ler o post para emitir — e o SQLite já está commitado quando o SSE recebe o `PostView`.
-
-**Bloqueio fora do event-loop.** `SimpleCommandBus`/`SimpleQueryBus` executam o handler na thread que despacha, e lá dentro tem JPA bloqueante. Os controllers fazem `subscribeOn(Schedulers.boundedElastic())` para não segurar o Netty.
-
-**SQLite em WAL com `busy_timeout`.** Leituras não bloqueiam a escrita e um writer espera o outro em vez de estourar `SQLITE_BUSY`.
-
-## Próximos passos possíveis
-
-- Trocar o `InMemoryEventStorageEngine` pelo event store JPA do Axon (mesmo SQLite) ou Axon Server — só o bean em `AxonConfig` e a exclusão no `application.yml` mudam.
-- Mutations de tag de verdade (`createTag`, `assignTag`, `removeTag`) — o command e o agregado já existem; falta só o `@MutationMapping`.
-- Voltar a projetar o read model nos event handlers (tirando o `save` do command) pra recuperar o read model derivado do stream — e, aí sim, poder rodar o processor em modo pooled streaming (o default do Axon 5) e ver consistência eventual de verdade. Enquanto o command salva, trocar pra pooled só atrasa o `emit`: a escrita no SQLite continua síncrona.
-- Explorar o DCB de verdade: um segundo `@EventSourced` (ex.: `AuthorQuota` com `tagKey = "author"`) carregado no mesmo command via `@InjectEntity(idProperty = "author")`, e a consistency boundary passa a cobrir os dois streams.
-- `DateTime` scalar (graphql-java-extended-scalars) no lugar de `String` pros timestamps.
-- Paginação por keyset (`KeysetScrollPosition`) no lugar de offset em `posts`: cursor estável mesmo com inserção concorrente, e sem o custo de `OFFSET n` em tabela grande. O `ScrollSubrange` já entrega os dois — só a query do Axon e o adapter mudariam.
+Usuários semeados (senha `segredo123`): `manuel@example.com` (role `author`), `leitor@example.com`
+(sem role), `promovido@example.com` (role `author`, existe para exercitar a promoção `Reader` → `Author`).
+O realm habilita `directAccessGrantsEnabled` só para esse grant `password`.

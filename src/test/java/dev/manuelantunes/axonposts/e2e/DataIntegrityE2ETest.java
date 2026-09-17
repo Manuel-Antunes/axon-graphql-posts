@@ -1,55 +1,71 @@
 package dev.manuelantunes.axonposts.e2e;
 
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+
+import org.axonframework.messaging.commandhandling.gateway.CommandGateway;
+import org.junit.jupiter.api.Test;
+
 import dev.manuelantunes.axonposts.application.post.command.CreatePostCommand.CreatePost;
 import dev.manuelantunes.axonposts.application.user.command.RegisterUserCommand.RegisterUser;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.user.exception.NotAnAuthorException;
 import dev.manuelantunes.axonposts.domain.user.vo.UserId;
-import dev.manuelantunes.axonposts.exceptions.DataIntegrityTranslator;
+import dev.manuelantunes.axonposts.interfaces.graphql.error.DataIntegrityTranslator;
 import dev.manuelantunes.axonposts.support.AbstractGraphQlE2ETest;
-import dev.manuelantunes.axonposts.support.KeycloakContainerConfig;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.axonframework.messaging.commandhandling.gateway.CommandGateway;
+import io.quarkus.test.junit.QuarkusTest;
+import jakarta.inject.Inject;
 
-import java.util.List;
-import java.util.Set;
-
+import static dev.manuelantunes.axonposts.support.PostCommandFixtures.hasCause;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 /**
  * As restrições do banco como <b>garantia</b>, e a tradução delas em erro de domínio.
  *
- * <h2>O que mudou, e por quê</h2>
+ * <h2>Por que a chave estrangeira, e não uma consulta</h2>
  * O {@code CreatePostCommand} consultava o agregado {@code User} para confirmar que o {@code authorId}
  * existia e era de um autor. A consulta saiu por três razões, e a terceira é a que decide: ela
  * <b>não garantia nada</b>. Entre o SELECT e o INSERT o autor pode ser apagado — a janela existe e a
  * checagem só tranquilizava. A chave estrangeira não tem janela.
  * <p>
  * O que faltava para poder confiar nela era a tradução: um erro de integridade não pode chegar ao cliente
- * como {@code INTERNAL_ERROR}. Estes testes garantem as duas metades — que a restrição recusa, e que a
- * recusa vira o mesmo erro tipado que a checagem produzia.
+ * como erro interno. Estes testes garantem as duas metades — que a restrição recusa, e que a recusa vira
+ * o mesmo erro tipado que a checagem produzia.
+ *
+ * <h2>Percorrer a cadeia, e não olhar a raiz</h2>
+ * A versão Spring afirmava {@code .rootCause().isInstanceOf(EntityNotFoundException.class)}, porque lá a
+ * exceção chegava embrulhada em pelo menos uma camada. No Quarkus o {@code sendAndWait} entrega a
+ * {@code EntityNotFoundException} <b>crua</b>, sem causa — e {@code rootCause()} do AssertJ exige que haja
+ * uma. Afirmar sobre a <i>cadeia</i> ({@code hasCause}) é o que vale nos dois casos, e é a mesma coisa que
+ * {@code GraphQlErrors} e {@code DataIntegrityTranslator} fazem em produção: nenhum dos dois assume
+ * profundidade de embrulho.
  */
+@QuarkusTest
 class DataIntegrityE2ETest extends AbstractGraphQlE2ETest {
 
-    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")  // bean do registry do Axon
-    @Autowired
-    private CommandGateway commandGateway;
+    @Inject
+    CommandGateway commandGateway;
 
     /**
-     * Um produtor que não seja o controller GraphQL — outro serviço, um consumidor de mensagem, um
+     * Um produtor que não seja o resolver GraphQL — outro serviço, um consumidor de mensagem, um
      * script — pode mandar qualquer {@code authorId}. É esse o caminho que a chave estrangeira protege, e
-     * é por ele que o teste entra: pelo controller não dá, porque lá o autor sai do token.
+     * é por ele que o teste entra: pelo resolver não dá, porque lá o autor sai do token.
      */
     @Test
     void aPostWithAnUnknownAuthorIsRefusedByTheForeignKey() {
         assertThatThrownBy(() -> commandGateway.sendAndWait(
                 new CreatePost(PostId.newId(), "De um fantasma", "conteúdo", UserId.newId())))
-                .rootCause()
-                .isInstanceOf(jakarta.persistence.EntityNotFoundException.class);
+                .satisfies(thrown -> assertThat(hasCause(thrown, jakarta.persistence.EntityNotFoundException.class))
+                        .as("a recusa do Hibernate precisa estar na cadeia, embrulhada ou não").isTrue());
 
-        assertThat(jdbc.queryForObject("select count(*) from posts", Integer.class))
+        assertThat(count("select count(*) from posts"))
                 .as("evento e linha commitam juntos: nenhum dos dois sobrou").isZero();
     }
 
@@ -62,23 +78,24 @@ class DataIntegrityE2ETest extends AbstractGraphQlE2ETest {
     @Test
     void aPostWrittenByAReaderIsRefusedByTheSameForeignKey() {
         UserId readerId = UserId.newId();
-        commandGateway.sendAndWait(new RegisterUser(readerId, "leitor-teste@example.com", "Leitor", false, null, null));
+        commandGateway.sendAndWait(
+                new RegisterUser(readerId, "leitor-teste@example.com", "Leitor", false, null, null));
 
         assertThatThrownBy(() -> commandGateway.sendAndWait(
                 new CreatePost(PostId.newId(), "Escrito por leitor", "conteúdo", readerId)))
-                .rootCause()
-                .isInstanceOf(jakarta.persistence.EntityNotFoundException.class);
+                .satisfies(thrown -> assertThat(hasCause(thrown, jakarta.persistence.EntityNotFoundException.class))
+                        .isTrue());
 
-        assertThat(jdbc.queryForObject("select count(*) from posts", Integer.class)).isZero();
+        assertThat(count("select count(*) from posts")).isZero();
     }
 
     @Test
     void theRefusalIsTranslatedIntoADomainError() {
-        Throwable thrown = org.assertj.core.api.Assertions.catchThrowable(() -> commandGateway.sendAndWait(
+        Throwable thrown = catchThrowable(() -> commandGateway.sendAndWait(
                 new CreatePost(PostId.newId(), "De um fantasma", "conteúdo", UserId.newId())));
 
-        // é o que o AppGraphQlExceptionHandler faz antes de classificar: sem isto, o cliente veria
-        // INTERNAL_ERROR com um stack trace de JDBC
+        // é o que GraphQlErrors faz antes de classificar: sem isto, o cliente veria "System Error" com um
+        // stack trace de JDBC
         assertThat(DataIntegrityTranslator.translate(thrown))
                 .hasValueSatisfying(translated -> assertThat(translated)
                         .isInstanceOf(NotAnAuthorException.class)
@@ -92,8 +109,8 @@ class DataIntegrityE2ETest extends AbstractGraphQlE2ETest {
      * <h3>Por que ele precisa existir</h3>
      * O tradutor casa por <b>nome de constraint</b>, então ele depende de a migration e o mapa dele
      * concordarem. Renomear {@code fk_posts_author} no {@code V1} sem tocar no tradutor não quebraria
-     * nada em tempo de compilação — a violação simplesmente voltaria a ser {@code INTERNAL_ERROR}, em
-     * silêncio, e só apareceria para um usuário.
+     * nada em tempo de compilação — a violação simplesmente voltaria a ser erro interno, em silêncio, e só
+     * apareceria para um usuário.
      * <p>
      * Este teste pergunta ao Postgres se cada nome existe de fato. É o que torna o acoplamento seguro em
      * vez de frágil — e é também a razão de o {@code V1} ter sido curado à mão: não dá para ancorar
@@ -103,12 +120,12 @@ class DataIntegrityE2ETest extends AbstractGraphQlE2ETest {
     void everyConstraintTheTranslatorKnowsActuallyExists() {
         // constraints e índices: um índice único parcial (uk_users_email_active) não vira constraint,
         // mas o Hibernate reporta o nome dele igual numa violação
-        List<String> inDatabase = jdbc.queryForList("""
+        List<String> inDatabase = names("""
                 select conname as name from pg_constraint
                   where connamespace = 'public'::regnamespace
                 union
                 select indexname as name from pg_indexes where schemaname = 'public'
-                """, String.class);
+                """);
 
         Set<String> known = DataIntegrityTranslator.knownConstraints();
         assertThat(known).isNotEmpty();
@@ -120,12 +137,23 @@ class DataIntegrityE2ETest extends AbstractGraphQlE2ETest {
     @Test
     void theRegularPathStillWorks() {
         // a FK não atrapalha quem tem direito: o autor do token escreve normalmente
-        createPost(asAuthor(), "Do autor de verdade", "conteúdo");
+        asAuthor().createPost("Do autor de verdade", "conteúdo");
 
-        anonymous.document(
-                //language=GraphQL
-                "{ posts(first: 5) { edges { node { title } } } }").execute()
-                .path("posts.edges").entityList(Object.class).hasSize(1);
-        assertThat(KeycloakContainerConfig.AUTHOR_USERNAME).isNotBlank();
+        assertThat(anonymous.execute("{ posts(first: 5) { edges { node { title } } } }")
+                .list("posts.edges")).hasSize(1);
+    }
+
+    private List<String> names(String sql) {
+        List<String> names = new ArrayList<>();
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery(sql)) {
+            while (rows.next()) {
+                names.add(rows.getString(1));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("falha ao listar constraints", e);
+        }
+        return names;
     }
 }

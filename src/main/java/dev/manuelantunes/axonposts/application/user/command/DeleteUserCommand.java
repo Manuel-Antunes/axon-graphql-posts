@@ -8,7 +8,7 @@ import org.axonframework.messaging.commandhandling.annotation.CommandHandler;
 import org.axonframework.messaging.eventhandling.gateway.EventAppender;
 import org.axonframework.modelling.annotation.InjectEntity;
 import org.axonframework.modelling.annotation.TargetEntityId;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.time.Clock;
 
@@ -34,7 +34,7 @@ import static dev.manuelantunes.axonposts.application.shared.AppendingDomainEven
  * Manter os posts publicados com o autor apagado seria a outra decisão possível, e exigiria trabalho
  * explícito: tornar a associação opcional e o join externo, e decidir o que mostrar no lugar do autor.
  */
-@Component
+@ApplicationScoped
 public class DeleteUserCommand {
 
     @Command(namespace = "users", name = "DeleteUser", version = "1.0.0")
