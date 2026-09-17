@@ -1,6 +1,7 @@
 package dev.manuelantunes.axonposts.domain.user;
 
 import dev.manuelantunes.axonposts.domain.shared.DomainEventPublisher;
+import dev.manuelantunes.axonposts.domain.shared.EmbeddableSoftDeletable;
 import dev.manuelantunes.axonposts.domain.shared.SoftDeletable;
 import dev.manuelantunes.axonposts.domain.shared.SoftDeletion;
 import dev.manuelantunes.axonposts.domain.user.event.AccountLinkedEvent;
@@ -83,12 +84,20 @@ import java.util.Set;
 @EventSourced(tagKey = User.TAG_KEY, idType = UserId.class, concreteTypes = {Reader.class, Author.class})
 @SQLRestriction(User.ALIVE)
 @SQLDelete(sql = "update users set deleted_at = current_timestamp where id = ?")
-public abstract class User implements SoftDeletable {
+public abstract class User implements
+        // Contracts
+        SoftDeletable,
+        // Mixins
+        EmbeddableSoftDeletable {
 
-    /** Chave da tag no event store; tem de bater com o {@code @EventTag} dos eventos de usuário. */
+    /**
+     * Chave da tag no event store; tem de bater com o {@code @EventTag} dos eventos de usuário.
+     */
     public static final String TAG_KEY = "userId";
 
-    /** Predicado de "não apagado", em SQL. */
+    /**
+     * Predicado de "não apagado", em SQL.
+     */
     public static final String ALIVE = SoftDeletion.COLUMN + " is null";
 
     @EmbeddedId
@@ -106,12 +115,16 @@ public abstract class User implements SoftDeletable {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
-    /** Preenchido quando este usuário foi promovido: aponta para o agregado que o substituiu. */
+    /**
+     * Preenchido quando este usuário foi promovido: aponta para o agregado que o substituiu.
+     */
     @Embedded
     @AttributeOverride(name = "value", column = @Column(name = "superseded_by", length = 36))
     private UserId supersededBy;
 
-    /** O usuário que este substitui, se nasceu de uma promoção. O caminho inverso de {@link #supersededBy}. */
+    /**
+     * O usuário que este substitui, se nasceu de uma promoção. O caminho inverso de {@link #supersededBy}.
+     */
     @Embedded
     @AttributeOverride(name = "value", column = @Column(name = "supersedes", length = 36))
     private UserId supersedes;
@@ -131,11 +144,15 @@ public abstract class User implements SoftDeletable {
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private Set<Account> accounts = new LinkedHashSet<>();
 
-    /** O estado que o mixin {@link SoftDeletable} pede. Nasce vazio: todo usuário nasce vivo. */
+    /**
+     * O estado que o mixin {@link EmbeddableSoftDeletable} pede. Nasce vazio: todo usuário nasce vivo.
+     */
     @Embedded
     private SoftDeletion softDeletion = new SoftDeletion();
 
-    /** Exigido pelo JPA. */
+    /**
+     * Exigido pelo JPA.
+     */
     protected User() {
     }
 
@@ -197,7 +214,9 @@ public abstract class User implements SoftDeletable {
         return accountFor(provider).orElseThrow();
     }
 
-    /** Atalho para o caso normal: conta federada, sem senha local. */
+    /**
+     * Atalho para o caso normal: conta federada, sem senha local.
+     */
     public Account link(AuthProvider provider, String subject, Instant now, DomainEventPublisher events) {
         return link(provider, subject, null, now, events);
     }
@@ -325,7 +344,9 @@ public abstract class User implements SoftDeletable {
         applyDeletion(event.occurredAt());
     }
 
-    /** A contraparte, pelo mesmo motivo. */
+    /**
+     * A contraparte, pelo mesmo motivo.
+     */
     @EventSourcingHandler
     public void on(UserRestoredEvent event) {
         applyRestoration();
@@ -341,7 +362,9 @@ public abstract class User implements SoftDeletable {
         return accountFor(provider).isPresent();
     }
 
-    /** Cópia defensiva: quem quiser mexer nas contas passa por {@link #link}. */
+    /**
+     * Cópia defensiva: quem quiser mexer nas contas passa por {@link #link}.
+     */
     public Set<Account> accounts() {
         return Set.copyOf(accounts);
     }
@@ -356,12 +379,16 @@ public abstract class User implements SoftDeletable {
         return EnumSet.of(Role.USER);
     }
 
-    /** {@code true} se este usuário pode ser tratado como {@link Author}. */
+    /**
+     * {@code true} se este usuário pode ser tratado como {@link Author}.
+     */
     public boolean isAuthor() {
         return this instanceof Author;
     }
 
-    /** {@code true} se foi promovido: existe outro agregado no lugar deste. */
+    /**
+     * {@code true} se foi promovido: existe outro agregado no lugar deste.
+     */
     public boolean isSuperseded() {
         return supersededBy != null;
     }
@@ -374,7 +401,9 @@ public abstract class User implements SoftDeletable {
         return supersedes;
     }
 
-    /** {@code true} se esta instância é uma referência do replay, e não um usuário carregado. */
+    /**
+     * {@code true} se esta instância é uma referência do replay, e não um usuário carregado.
+     */
     public boolean isReference() {
         return createdAt == null;
     }
@@ -407,9 +436,8 @@ public abstract class User implements SoftDeletable {
     // ---- o que os mixins pedem ------------------------------------------------------------------
 
     /**
-     * A guarda contra o {@code null} do Hibernate: quando <b>todas</b> as colunas de um {@code @Embedded}
-     * vêm nulas — que é o caso de toda entidade viva, já que {@code deleted_at} é a única — ele deixa o
-     * componente inteiro nulo em vez de instanciar um vazio.
+     * A guarda contra o {@code @Embedded} nulo do Hibernate, que toda entidade apagável repete — o porquê
+     * está em {@link EmbeddableSoftDeletable}.
      */
     @Override
     public SoftDeletion softDeletion() {

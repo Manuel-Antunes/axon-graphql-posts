@@ -8,18 +8,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * O mixin {@link SoftDeletable} testado <b>sozinho</b>, sem Post, sem User, sem JPA.
+ * As regras de {@link SoftDeletable}, como {@link EmbeddableSoftDeletable} as entrega, testadas
+ * <b>sozinhas</b>: sem Post, sem User, sem JPA.
  * <p>
- * É o que justifica ele ser uma interface com defaults: o comportamento é testável uma vez, e as duas
- * entidades que o usam herdam o teste junto com o código.
+ * É o que justifica o mixin ser uma interface com defaults: o comportamento é testável uma vez, sobre a
+ * classe de teste abaixo, e as duas entidades que o usam herdam o teste junto com o código.
  */
 class SoftDeletableTest {
 
     private static final Instant T0 = Instant.parse("2026-09-05T12:00:00Z");
     private static final Instant T1 = T0.plusSeconds(60);
 
-    /** O mínimo que o mixin exige: o holder e uma identidade. */
-    private static final class Thing implements SoftDeletable {
+    /**
+     * O mínimo que o mixin exige: o holder e uma identidade.
+     */
+    private static final class Thing implements SoftDeletable, EmbeddableSoftDeletable {
 
         private final SoftDeletion softDeletion = new SoftDeletion();
 

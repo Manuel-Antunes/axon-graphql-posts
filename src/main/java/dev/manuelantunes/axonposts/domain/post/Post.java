@@ -11,6 +11,7 @@ import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.post.vo.PostTitle;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
 import dev.manuelantunes.axonposts.domain.shared.DomainEventPublisher;
+import dev.manuelantunes.axonposts.domain.shared.EmbeddableSoftDeletable;
 import dev.manuelantunes.axonposts.domain.shared.SoftDeletable;
 import dev.manuelantunes.axonposts.domain.shared.SoftDeletion;
 import dev.manuelantunes.axonposts.domain.tag.Tag;
@@ -86,12 +87,20 @@ import java.util.Set;
  */
 @SQLRestriction(Post.ALIVE)
 @SQLDelete(sql = "update posts set deleted_at = current_timestamp where id = ?")
-public class Post implements SoftDeletable {
+public class Post implements
+        // Contracts
+        SoftDeletable,
+        // Mixins
+        EmbeddableSoftDeletable {
 
-    /** Predicado de "não apagado", em SQL. */
+    /**
+     * Predicado de "não apagado", em SQL.
+     */
     public static final String ALIVE = SoftDeletion.COLUMN + " is null";
 
-    /** Chave da tag no event store; tem de bater com o nome do campo {@code @EventTag} dos eventos. */
+    /**
+     * Chave da tag no event store; tem de bater com o nome do campo {@code @EventTag} dos eventos.
+     */
     public static final String TAG_KEY = "postId";
 
     @EmbeddedId
@@ -131,7 +140,9 @@ public class Post implements SoftDeletable {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
-    /** O estado que o mixin {@link SoftDeletable} pede. Nasce vazio: todo post nasce vivo. */
+    /**
+     * O estado que o mixin {@link EmbeddableSoftDeletable} pede. Nasce vazio: todo post nasce vivo.
+     */
     @Embedded
     private SoftDeletion softDeletion = new SoftDeletion();
 
@@ -172,7 +183,9 @@ public class Post implements SoftDeletable {
     )
     private Set<Tag> tags = new LinkedHashSet<>();
 
-    /** Exigido pelo JPA. Nenhum código de aplicação constrói um Post por aqui. */
+    /**
+     * Exigido pelo JPA. Nenhum código de aplicação constrói um Post por aqui.
+     */
     protected Post() {
     }
 
@@ -437,7 +450,9 @@ public class Post implements SoftDeletable {
         this.version = new PostVersion(event.version());
     }
 
-    /** A contraparte, pelo mesmo motivo. */
+    /**
+     * A contraparte, pelo mesmo motivo.
+     */
     @EventSourcingHandler
     public void on(PostRestoredEvent event) {
         applyRestoration();
@@ -482,13 +497,8 @@ public class Post implements SoftDeletable {
     // ---- o que o mixin pede ---------------------------------------------------------------------
 
     /**
-     * A guarda contra o {@code null} do Hibernate: quando <b>todas</b> as colunas de um {@code @Embedded}
-     * vêm nulas — que é o caso de toda entidade viva, já que {@code deleted_at} é a única — ele deixa o
-     * componente inteiro nulo em vez de instanciar um vazio. Sem isto, {@code isDeleted()} estouraria em
-     * qualquer entidade lida do banco.
-     * <p>
-     * O inicializador do campo cobre as instâncias construídas em Java; esta linha cobre as hidratadas
-     * pelo ORM. As duas são necessárias, e foi um teste contra o banco de verdade que mostrou a segunda.
+     * A guarda contra o {@code @Embedded} nulo do Hibernate, que toda entidade apagável repete — o porquê
+     * está em {@link EmbeddableSoftDeletable}.
      */
     @Override
     public SoftDeletion softDeletion() {
