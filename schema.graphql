@@ -149,6 +149,15 @@ enum AuthProvider {
   KEYCLOAK
 }
 
+"Scalar for BigDecimal"
+scalar BigDecimal
+
+"Scalar for BigInteger"
+scalar BigInteger
+
+"Scalar for DateTime"
+scalar DateTime
+
 input CreatePostInput {
   content: String!
   title: String!

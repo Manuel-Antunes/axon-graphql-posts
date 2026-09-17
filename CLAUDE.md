@@ -24,6 +24,7 @@ projeto Spring original, e as portas do host são variáveis (`POSTGRES_PORT`, `
 ```bash
 docker compose up -d && ./mvnw package && java -jar target/quarkus-app/quarkus-run.jar
 docker compose down -v         # reset total
+curl -s localhost:8080/q/health | jq    # inclui "Axon eventprocessors", da extensão
 ```
 
 `quarkus:dev` recarrega sozinho na próxima requisição depois de uma classe mudar.
@@ -111,6 +112,7 @@ interfaces/graphql/dto/          CreatePostInput, UpdatePostInput
 interfaces/graphql/mapper/       PostInputMapper (input → command)
 interfaces/graphql/relay/        Connection/Edge/PageInfo/Connections/Cursors + Post/TagConnection/Edge
 interfaces/graphql/error/        GraphQlErrors, @TranslatesErrors, as 4 exceções com @ErrorCode
+interfaces/graphql/sse/          GraphQL over SSE: a rota, o handler e o formato do fio
 ```
 
 A regra que decide: **quem atravessa o bus é da aplicação; quem só existe no schema é da apresentação.**
@@ -146,8 +148,9 @@ domínio na mesma classe. Não existe entidade de infraestrutura espelho; os val
 - **Eventos carregam primitivos** — são contrato, ficam gravados. A conversão para value object acontece nas
   fronteiras da entidade.
 - O tipo do id da entidade **não** está numa anotação: ele é o primeiro argumento de
-  `EventSourcedEntityModule.autodetected(PostId.class, Post.class)`, no `AxonProducer`. No starter do
-  Spring era o `idType` do `@EventSourced`, que só existia para o scan ter onde lê-lo.
+  `EventSourcedEntityModule.autodetected(PostId.class, Post.class)`, e quem o fornece é o mapa de
+  `infrastructure/axon/EventSourcedEntities`. No starter do Spring era o `idType` do `@EventSourced`, que
+  só existia para o scan ter onde lê-lo.
 
 ### Identidade e autorização
 
@@ -231,14 +234,37 @@ domínio na mesma classe. Não existe entidade de infraestrutura espelho; os val
 - **Subscriptions**: `subscriptionQuery(...)` do `QueryGateway` do núcleo devolve um `Publisher` de
   Reactive Streams, adaptado para `Multi` com `FlowAdapters.toFlowPublisher`. O `@QueryHandler` da
   subscription **precisa existir** (devolve `Optional.empty()`). O filtro por tópico é avaliado no `emit`:
-  o payload da subscription carrega o próprio predicado. Transporte: `graphql-transport-ws`.
+  o payload da subscription carrega o próprio predicado.
+- **Dois transportes no mesmo `/graphql`, escolhidos por cabeçalho.** `Upgrade: websocket` →
+  `graphql-transport-ws`/`graphql-ws`, que vem do SmallRye. `Accept: text/event-stream` → GraphQL over
+  SSE, que **não** vem: o SmallRye 2.18.5 e a extensão do Quarkus 3.39 não têm uma linha de
+  `event-stream`, e `interfaces/graphql/sse` é a porta escrita aqui (modo *distinct connections* do
+  `graphql-sse`). O handler herda de `SmallRyeGraphQLAbstractHandler` — a mesma classe do handler HTTP e
+  do de WebSocket do Quarkus —, e é isso que faz contexto de requisição, `SecurityIdentity`,
+  `@RolesAllowed` e tradução de erro valerem igual nas três portas. Dependência consciente de um pacote
+  `runtime` de extensão, que não é API pública.
+- **A GraphiQL do Quarkus fala WebSocket, sempre — não é bug do SSE.** O `render.js` do webjar traz
+  `Accept: application/json` nos headers padrão e `subscriptionUrl: getWsUrl()` fixo, e o `updateUrl` do
+  `SmallRyeGraphQLProcessor` só reescreve `const api`/`const logo`. Sem `subscriptionUrl` o
+  `createGraphiQLFetcher` **lança** em subscription em vez de cair em SSE. Exercitar a porta de SSE é
+  `curl -N` ou `new EventSource('/graphql?query=subscription{...}')` no console; quem a trava de verdade
+  é o `SseSubscriptionE2ETest`. **Não** tratar "a UI usa ws" como sinal de que o SSE quebrou.
+- **A ordem da rota de SSE é o que quebra, e o número não é chutável.** O Quarkus numera as rotas da
+  aplicação em **sequência** (WebSocket `-99`, schema `2`, execução `4`), não em 10 000. Um `order` alto
+  cai depois do handler de execução, que devolve `406 Not Acceptable` a quem pediu `text/event-stream` —
+  a rota nova simplesmente não roda. Daí ser `-SecurityHandlerPriorities.AUTHORIZATION + 2`. E como o
+  Vert.x Web **pausa** a requisição ao rotear e esta rota não tem `BodyHandler` (de propósito: ela devolve
+  com `ctx.next()` o que não é SSE, e o corpo seria lido duas vezes), falta o `request.resume()` — sem
+  ele o POST fica pendurado. `SseSubscriptionE2ETest` trava as duas coisas, inclusive que o POST JSON de
+  sempre continua respondendo `application/graphql-response+json`.
 - **`.onOverflow().buffer(...)` depois do `publisher(...)` é obrigatório, não afinamento.** O `Publisher`
   do `subscriptionQuery` **não honra demanda incremental**: com `request(Long.MAX_VALUE)` entrega tudo,
   com `request(1)` a cada item — que é o que o `SubscriptionSubscriber` do SmallRye faz — entrega o
   primeiro e para. O buffer separa as duas demandas (Mutiny pede ilimitado ao Axon e serve o assinante do
   próprio buffer). Falha em silêncio: handshake completa, o primeiro evento chega, a conexão fica aberta.
   **Subscription nova = o operador junto**, e `NewsletterSubscriptionE2ETest.theSameSubscriptionKeeps...`
-  é o que pega a falta dele.
+  é o que pega a falta dele — junto com o irmão dele em `SseSubscriptionE2ETest`, porque o assinante de
+  SSE pede um item de cada vez pelo mesmo motivo e cai na mesma armadilha.
 - **Validação em duas alturas**: Bean Validation nos `*Input` é fail-fast de borda (`BAD_REQUEST` antes de
   existir command); os value objects continuam validando por conta própria, e é essa a validação que vale.
   Em update parcial usar `@Pattern`, não `@NotBlank` — constraints são ignoradas quando o valor é `null`.
@@ -258,22 +284,53 @@ domínio na mesma classe. Não existe entidade de infraestrutura espelho; os val
 
 ### Configuração de infraestrutura
 
-`infrastructure/axon/AxonProducer` concentra as escolhas de deploy: `InMemoryEventStorageEngine`, os
-`EventSourcedEntityModule`, os módulos de command/query montados a partir do `AxonHandlerLookup`, os
-processors em modo **subscribing**, o `Clock` (bean para poder ser fixo em teste) e os gateways
-publicados como beans.
+**Quem configura o Axon é a extensão de Quarkus** `at.meks.quarkiverse.axonframework-extension`
+(`quarkus-axon` + `quarkus-axon-transaction`, versão no `${quarkus-axon.version}` do pom). Ela descobre
+entidades, command/query/event handlers em **build time** e publica gateways e buses como beans. O
+`AxonProducer`, o `AxonHandlerLookup` e o `JtaTransactionManager` escritos à mão **não existem mais** —
+539 linhas viraram 78. O README tem a avaliação da troca, inclusive o que piorou.
 
-Três detalhes falham em **silêncio** se esquecidos — a aplicação sobe, o log lista os handlers, e nenhum
-evento chega à projeção. Estão comentados no código e vale reler antes de mexer lá:
+Sobrou em `infrastructure/axon` o que a extensão não tem como adivinhar, um arquivo por decisão:
 
-1. `ClientProxy.unwrap(...)` em cada componente (proxy do ArC não herda anotações de método);
-2. `.customized(... eventSource(EventStore.class))` no processor subscribing (não há default quando o
-   módulo é registrado avulso);
-3. `.build()` no módulo do processor (é ele que registra processor e handlers).
+- **`EventSourcedEntities`** — o tipo do id de cada entidade, implementando o
+  `EventSourcedEntityConfigurer`. **Entidade nova = uma linha no mapa.** A alternativa que a extensão
+  oferece é `@IdType(PostId.class)` na entidade, e ela está **descartada de propósito**: seria a primeira
+  dependência de `domain` para uma biblioteca de plataforma.
+- **`ApplicationClock`** — o `Clock` como bean, para poder ser fixo em teste.
 
-O `@Namespace("post-projection")` está no `package-info.java` de `application/post/event`, não em cada
-classe: handler novo no pacote entra no processor sem tocar em configuração — o `AxonHandlerLookup` lê a
-anotação do pacote, como o Axon faria.
+Duas linhas de `application.properties` valem tanto quanto código, e as duas falham em silêncio:
+
+1. `quarkus.axon.subscribingprocessor.namespaces` — a lista de pacotes que rodam **subscribing**. O valor
+   é o nome do pacote porque a extensão lê `@Namespace` da *classe* e cai no pacote como default (por isso
+   o `@Namespace` do `package-info.java` saiu: ali não tinha mais efeito).
+   **Handler novo no pacote já listado: nada a fazer. Handler num PACOTE NOVO: mais um item na lista.**
+   Quem fica de fora não dá erro — vai para um `PooledStreamingEventProcessor`, assíncrono, e a projeção
+   daquele agregado vira eventualmente consistente sem ninguém pedir. É falha silenciosa, e quem a pega é
+   `AxonWiringTest.everyPackageWithAnEventHandlerRunsInTheSubscribingProcessor`.
+   **A ordem é handler primeiro, propriedade depois**: namespace listado sem nenhum handler faz a
+   aplicação não subir, com `NullPointerException` na partida (`getEventhandlers` faz
+   `map(mapa::get).flatMap(...)` sobre um `null`).
+2. Nenhuma linha de event store — o **default da extensão é o em memória**, que é a escolha do projeto.
+   Trocar por Postgres é acrescentar `quarkus-axon-jpa-eventstore`.
+
+**As substituições funcionam por ausência**, e é isso que `AxonWiringTest` trava: a extensão declara
+`@DefaultBean`s e cede a vez a quem existir. Apagar `EventSourcedEntities` ou tirar o
+`quarkus-axon-transaction` do pom não quebra compilação — volta o `String` como id e o
+`NoTransactionManager`, que não commita o evento junto com a linha.
+
+Herdados da extensão, com efeito visível:
+
+- exceção de domínio chega ao resolver dentro de uma `CommandExecutionException`
+  (`quarkus.axon.exception-handling.wrap-on-command-handler`, `true` por default). Nada quebrou porque
+  `GraphQlErrors` e `PostCommandFixtures.hasCause` percorrem a **cadeia**;
+- `/q/health` traz `Axon eventprocessors` (daí o `quarkus-smallrye-health` no pom);
+- `quarkus.axon.update-check.disabled=true` desliga a chamada de rede da AxonIQ na partida.
+
+**Live reload é o ponto fraco.** Já foi observado, uma vez e sem reprodução depois, a projeção parar em
+silêncio após um reload: post nasce na versão 1, sem tag, e o log não reclama. Se acontecer, reiniciar o
+`quarkus:dev`. O botão que a extensão documenta para o sintoma vizinho ("no command handler available") é
+`quarkus.axon.live-reload.shutdown.wait-duration.amount`; ele **não** é usado aqui porque não se provou
+que resolve este caso.
 
 ## Testes
 
@@ -288,6 +345,11 @@ Surefire roda tudo em `./mvnw test`, inclusive os `*E2ETest` — **Docker precis
   No projeto Spring essa parte era do framework; aqui é código nosso, então aqui tem teste.
 - **Schema** (`RelaySchemaTest`): lê o SDL gerado e falha se `Connection_`/`Edge_` voltarem a aparecer, ou
   se a `interface User` sumir. É o guarda do mecanismo dos genéricos, que nenhum compilador confere.
+- **Wiring do Axon** (`AxonWiringTest`): três coisas que a extensão decide por default e que este projeto
+  decide diferente — o `TransactionManager`, o tipo do id de cada entidade, e a cobertura de
+  `subscribingprocessor.namespaces`. As duas primeiras valem por **ausência** de `@DefaultBean` (sumir não
+  quebra compilação); a terceira varre o `BeanManager` atrás de `@EventHandler` e falha se algum pacote
+  ficou de fora da propriedade.
 - **Ponta a ponta** (`e2e/*`): Dev Services sobem Postgres e Keycloak; uma única aplicação é compartilhada
   por todas as classes. Cada método começa com `truncate ... cascade` (o event store em memória fica; todo
   id é UUID novo). Uma subclasse que acrescente `@TestProfile` ganha aplicação própria e a suíte paga
@@ -301,8 +363,9 @@ Surefire roda tudo em `./mvnw test`, inclusive os `*E2ETest` — **Docker precis
 - `BatchLoadingE2ETest` afere o lote pela estatística do Hibernate: a mesma query com 1 e com 5 posts
   precisa custar o **mesmo número de statements** — a propriedade, não um número mágico.
 - Asserção sobre exceção do gateway percorre a **cadeia** (`PostCommandFixtures.hasCause`), não a raiz: o
-  Quarkus entrega a exceção crua onde o Spring entregava embrulhada, e `rootCause()` do AssertJ exige que
-  haja uma causa.
+  Quarkus entregava a exceção crua onde o Spring entregava embrulhada — e com a extensão ela volta
+  embrulhada numa `CommandExecutionException`. Percorrer a cadeia é o que sobrevive às duas formas;
+  `rootCause()` do AssertJ, não.
 
 ## Convenções
 

@@ -12,7 +12,9 @@
  *       "o que o cliente mandou" e vira "o que a aplicação executa";</li>
  *   <li>{@code relay} — a cursor connection inteira: a mecânica genérica e as subclasses concretas que
  *       dão os nomes da convenção;</li>
- *   <li>{@code error} — como cada falha aparece para o cliente.</li>
+ *   <li>{@code error} — como cada falha aparece para o cliente;</li>
+ *   <li>{@code sse} — a terceira porta do endpoint: subscriptions sobre Server-Sent Events, que o
+ *       SmallRye não serve. É transporte puro — não conhece resolver, schema nem view.</li>
  * </ul>
  *
  * <h2>Threading: o {@code Supplier} não é estilo</h2>

@@ -18,10 +18,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * Assina uma subscription GraphQL por <b>WebSocket</b>, no protocolo {@code graphql-transport-ws} — o
  * transporte que o SmallRye GraphQL serve.
  *
- * <h2>Por que WebSocket, e não SSE como no projeto Spring</h2>
- * Porque é o que existe deste lado. O Spring for GraphQL serve GraphQL-over-SSE no mesmo
- * {@code POST /graphql}, e o teste de lá fala SSE porque o {@code HttpGraphQlTester} recusa subscriptions
- * sobre HTTP. O SmallRye serve o protocolo WebSocket, então é por ele que se entra.
+ * <h2>Por que WebSocket, sendo que agora há SSE também</h2>
+ * Porque são <b>duas</b> portas, e cada uma precisa do seu teste. Esta é a que o SmallRye serve de
+ * fábrica; a de SSE é do projeto ({@code interfaces.graphql.sse}) e tem o
+ * {@link SseSubscriptions} ao lado. Comparar os dois clientes lado a lado é, por si só, a
+ * medida da diferença entre os protocolos: aqui há handshake de subprotocolo, {@code connection_init} e
+ * {@code connection_ack}; lá há um POST.
  * <p>
  * O cliente é o {@link WebSocket} do próprio JDK: nenhuma dependência de teste a mais, e o handshake do
  * subprotocolo é uma linha.

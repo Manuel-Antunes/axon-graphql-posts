@@ -18,12 +18,17 @@ import jakarta.enterprise.context.ApplicationScoped;
  * Camada de interface das <b>subscriptions</b> GraphQL: devolve o {@link Multi} do handler de aplicação
  * daquela subscription. Quem sabe falar com o {@code QueryBus} é o handler; aqui só se escolhe qual.
  * <p>
- * O transporte é do SmallRye:
+ * <h2>Dois transportes, e nenhum deles aparece aqui</h2>
+ * O mesmo {@code /graphql} atende os dois, escolhendo pelo cabeçalho da requisição:
  * <ul>
- *   <li>upgrade WebSocket em {@code /graphql} → {@code graphql-transport-ws} e {@code graphql-ws};</li>
- *   <li>POST {@code /graphql} com {@code Accept: text/event-stream} → GraphQL over SSE.</li>
+ *   <li>{@code Upgrade: websocket} → {@code graphql-transport-ws} / {@code graphql-ws}, que é o que o
+ *       SmallRye serve;</li>
+ *   <li>{@code Accept: text/event-stream} → GraphQL over SSE, que o SmallRye <b>não</b> serve e o pacote
+ *       {@code interfaces.graphql.sse} acrescenta.</li>
  * </ul>
- * Quando o cliente desconecta, o {@code Multi} é cancelado e o Axon fecha a subscription query.
+ * Este resolver não sabe por qual dos dois está sendo servido, e é esse o ponto: um {@code Multi} é um
+ * {@code Multi}. Quando o cliente desconecta — fechar o WebSocket ou fechar a conexão HTTP —, o
+ * {@code Multi} é cancelado e o Axon fecha a subscription query.
  *
  * <h2>Os tópicos, e onde eles são avaliados</h2>
  * Os argumentos {@code postId}/{@code authorId} viram campos da mensagem de subscription, e o predicado

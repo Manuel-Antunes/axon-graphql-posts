@@ -17,17 +17,23 @@
  * eventos não o reconstrói mais, porque estes handlers não escrevem nada. Voltar a projetar aqui (e
  * tirar o {@code save} do command) é o que devolve essa propriedade.
  *
- * <h2>{@code @Namespace} no pacote</h2>
- * O {@code @Namespace} abaixo vale para <b>todas</b> as classes do pacote (o Axon procura a anotação no
- * tipo, nas classes envolventes, no pacote e no módulo, nessa ordem). É o que casa estes handlers com o
- * {@code EventProcessorDefinition.subscribingMatching(...)} do {@code AxonConfig}: em vez de repetir a
- * anotação em cada handler novo, basta pôr a classe neste pacote.
+ * <h2>O nome deste pacote é configuração</h2>
+ * Estes handlers rodam num processor <b>subscribing</b>, e quem diz isso é uma linha de
+ * {@code application.properties}:
+ * <pre>{@code
+ * quarkus.axon.subscribingprocessor.namespaces=dev.manuelantunes.axonposts.application.post.event
+ * }</pre>
+ * O valor é o <b>nome deste pacote</b>, e não um apelido. A extensão de Quarkus agrupa os event handlers
+ * por {@code @Namespace} lido <i>da classe</i>, caindo no nome do pacote quando não há anotação — então
+ * é o pacote que identifica o grupo. A propriedade continua valendo a regra de sempre: <b>handler novo
+ * aqui dentro entra no processor sem tocar em configuração</b>. Mover a classe para outro pacote, não.
  * <p>
- * Em modo <b>subscribing</b> os handlers executam na mesma thread e no mesmo {@code ProcessingContext}
- * (e transação) do command — é isso que garante que o {@code save} do command já aconteceu quando o
- * handler roda, e que o emit sai uma única vez, depois do commit no Postgres.
+ * Em modo subscribing os handlers executam na mesma thread e no mesmo {@code ProcessingContext} (e
+ * transação) do command — é isso que garante que o {@code save} do command já aconteceu quando o handler
+ * roda, e que o emit sai uma única vez, depois do commit no Postgres. Sem a propriedade, a extensão não
+ * cria processor subscribing nenhum e estes handlers caem num pooled, que é assíncrono: o
+ * {@code createPost} passaria a responder <b>antes</b> da tag padrão. Quem pega isso é o
+ * {@code PostLifecycleE2ETest.aNewPostArrivesAlreadyTaggedAtVersionTwo}, que afirma a versão 2 na
+ * resposta da mutation.
  */
-@Namespace(PostProjection.PROCESSOR)
 package dev.manuelantunes.axonposts.application.post.event;
-
-import org.axonframework.messaging.core.annotation.Namespace;

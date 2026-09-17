@@ -18,6 +18,7 @@
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.version>3.39.2</quarkus.platform.version>
+        <quarkus-axon.version>2.0.0-alpha6</quarkus-axon.version>
 
         <!-- Axon Framework 5.3.x: entidades anotadas (@EventSourcedEntity/@EntityCreator), command
              handlers como classes (@InjectEntity). Sem a extensão Spring e sem a extensão Reactor: o
@@ -62,11 +63,18 @@
     <dependencies>
         <!-- ==== GraphQL ======================================== -->
         <!-- SmallRye GraphQL code-first: schema a partir das classes, Uni/Multi nativos, DataLoader
-             embutido no @Source em lote. O transporte de subscription (WebSocket graphql-ws e SSE)
-             vem junto. -->
+             embutido no @Source em lote. De transporte de subscription vem só o WebSocket
+             (graphql-transport-ws e graphql-ws); SSE NÃO vem, e é o que interfaces/graphql/sse
+             acrescenta. -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-smallrye-graphql</artifactId>
+        </dependency>
+        <!-- Já vinha transitivo pelo GraphQL; declarado porque agora é compilado contra: a rota de SSE
+             é registrada observando o Router do Vert.x, e o handler herda o da extensão de GraphQL. -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-vertx-http</artifactId>
         </dependency>
 
         <!-- ==== Persistência: read model em PostgreSQL ======================================== -->
@@ -119,9 +127,33 @@
             <artifactId>quarkus-arc</artifactId>
         </dependency>
 
-        <!-- ==== Axon Framework 5, sem starter ======================================== -->
-        <!-- axon-eventsourcing arrasta modelling -> messaging -> common/conversion. Não existe starter
-             de Quarkus: quem monta a AxonConfiguration é um produtor CDI (infrastructure/axon). -->
+        <!-- ==== Axon Framework 5, pela extensão de Quarkus ======================================== -->
+        <!-- Descobre entidades e handlers em BUILD TIME e publica os gateways como beans. Não é oficial
+             da AxonIQ nem do Quarkiverse: é de terceiros e está em alpha. A avaliação da troca, com o
+             que ela apagou daqui, está no README. A versão é fixada à mão porque a extensão não entra
+             no quarkus-bom. -->
+        <dependency>
+            <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
+            <artifactId>quarkus-axon</artifactId>
+            <version>${quarkus-axon.version}</version>
+        </dependency>
+        <!-- A ponte para o JTA do Quarkus. Substituiu um JtaTransactionManager escrito à mão: além do
+             mesmo begin-or-join, ele ativa o request context do CDI e implementa
+             attachToProcessingLifecycle, que publica o EntityManager/Connection da transação no
+             ProcessingContext — o que um event store JPA/JDBC precisa para compartilhar a conexão. -->
+        <dependency>
+            <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
+            <artifactId>quarkus-axon-transaction</artifactId>
+            <version>${quarkus-axon.version}</version>
+        </dependency>
+        <!-- O health check dos event processors é da extensão, mas só aparece se houver quem sirva
+             /q/health. Uma linha para ganhar a checagem de que a projeção está de pé. -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-health</artifactId>
+        </dependency>
+        <!-- axon-eventsourcing arrasta modelling -> messaging -> common/conversion. Declarado mesmo
+             vindo pela extensão: é o BOM daqui que fixa a versão do Axon, não o dela. -->
         <dependency>
             <groupId>org.axonframework</groupId>
             <artifactId>axon-eventsourcing</artifactId>
