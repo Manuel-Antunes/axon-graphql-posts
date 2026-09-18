@@ -38,7 +38,7 @@ public enum AuthProvider {
      * <h2>De onde vem o alias</h2>
      * Da claim {@code identity_provider}, que o Cognito <b>não emite sozinho</b>: quem a põe é um
      * trigger <i>pre token generation</i> V1_0 (o que o tier Lite oferece), em
-     * {@code infra/aws/cognito/identity-provider.mjs}. Sem ele o alias chega nulo e o default abaixo
+     * {@code infra/aws/identity/identity-provider.mjs}. Sem ele o alias chega nulo e o default abaixo
      * responde {@link #KEYCLOAK} — que é o certo para dev e teste, e errado na AWS.
      */
     COGNITO,
