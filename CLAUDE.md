@@ -224,7 +224,7 @@ domínio na mesma classe. Não existe entidade de infraestrutura espelho; os val
 ### GraphQL
 
 - **Schema code-first.** Não há `.graphqls`; o SDL é gerado e servido em `/graphql/schema.graphql`. O
-  `schema.graphql` da raiz é uma cópia versionada dele (nada o lê em runtime); atualizar com
+  `src/main/resources/schema.graphql` da raiz é uma cópia versionada dele (nada o lê em runtime); atualizar com
   `curl -s http://localhost:8080/graphql/schema.graphql > schema.graphql` ao mexer no contrato. Ele traz
   `@link`/`@key`/`@shareable` porque `schema-include-directives` e `schema-include-schema-definition` estão
   ligados — as duas linhas existem para que esse arquivo **componha** sem a aplicação de pé, e tirar
