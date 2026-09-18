@@ -1,0 +1,13 @@
+{
+  "name": "dev.manuelantunes:axonposts-tagging",
+  "targets": {
+    "serve": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "continuous": true,
+      "options": {
+        "command": "./mvnw quarkus:dev -pl apps/tagging"
+      }
+    }
+  }
+}

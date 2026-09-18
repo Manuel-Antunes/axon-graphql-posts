@@ -14,16 +14,5 @@
       "plugin": "@nx/maven"
     }
   ],
-  "targetDefaults": {
-    "build": {
-      "cache": true,
-      "inputs": ["production", "^production"],
-      "dependsOn": ["^build"]
-    },
-    "test": {
-      "cache": true,
-      "inputs": ["default", "^production"],
-      "dependsOn": ["build"]
-    }
-  }
+  "analytics": false
 }

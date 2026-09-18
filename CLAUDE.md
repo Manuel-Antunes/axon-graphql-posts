@@ -36,13 +36,19 @@ só ele tem — e `CurrentUser` depende de `UserProvisioning`, que é aplicaçã
 Em dev e em teste **não é preciso subir nada**: o Dev Services do Quarkus levanta Postgres e Keycloak
 (com o realm importado) sozinho. Basta o Docker ligado.
 
-**`-pl <módulo>` NÃO funciona neste repositório**, com ou sem `-am`: o
+**`-pl <módulo>` NÃO funciona para os goals de BUILD**, com ou sem `-am`: o
 `quarkus-extension-maven-plugin` do `axon-native-support` valida que o artefato de deployment está no
 reator, e um build parcial o deixa de fora — `Deployment artifact ... is missing the following
-dependencies`. Rode da raiz e filtre com `-Dtest=`.
+dependencies`. Para compilar, empacotar ou testar, rode da raiz e filtre com `-Dtest=`.
+
+**Para `quarkus:dev` o `-pl` funciona, e é o jeito certo.** O goal não constrói a extensão — ele a
+resolve do `~/.m2` e descobre as libs pelo workspace do reator —, então a validação nem roda. Sem `-pl`
+o Maven percorreria os oito módulos em série para subir duas aplicações. É o que `pnpm dev` usa.
 
 ```bash
-./mvnw quarkus:dev -pl apps/posts-api   # NÃO — ver acima; use o quarkus:dev da raiz
+pnpm dev                       # as DUAS aplicações em dev mode, em paralelo — ver a seção abaixo
+pnpm libs                      # só instala as libs no ~/.m2; é o que `pnpm dev` faz antes
+./mvnw quarkus:dev -pl apps/posts-api   # uma aplicação só
 ./mvnw test                    # suíte inteira — EXIGE Docker
 ./mvnw package                 # build + testes
 ./docker/e2e/run.sh            # a saga entre DOIS processos, com broker de verdade
@@ -50,6 +56,7 @@ dependencies`. Rode da raiz e filtre com `-Dtest=`.
 ./mvnw test -Dtest=PostLifecycleE2ETest#aNewPostArrivesAlreadyTaggedAtVersionTwo   # um método
 ./mvnw test -Dtest='*E2ETest'                                     # só os ponta a ponta
 open target/jacoco-report/index.html   # cobertura — o quarkus-jacoco roda junto com `test`
+open http://localhost:3001     # Grafana do Dev Services: traces, logs e métricas DOS DOIS serviços
 ```
 
 Federado (Apollo Router na frente). O `-Dquarkus.http.host=0.0.0.0` **não** é detalhe: em dev o Quarkus
@@ -71,6 +78,46 @@ docker compose up -d && ./mvnw package && java -jar target/quarkus-app/quarkus-r
 docker compose down -v         # reset total
 curl -s localhost:8080/q/health | jq    # inclui "Axon eventprocessors", da extensão
 ```
+
+### `pnpm dev`: o nx roda os processos, o Maven resolve os módulos
+
+`pnpm dev` = `pnpm libs && nx run-many --target dev`. O target `dev` de cada app é um
+`nx:run-commands` declarado em `apps/*/project.json`, e tudo que ele faz é
+`./mvnw quarkus:dev -pl apps/<app>`. O nx aqui é **só o executor paralelo de dois processos contínuos**;
+quem resolve dependência entre módulos continua sendo o reator do Maven.
+
+Provado de ponta a ponta: as duas aplicações sobem juntas, o Dev Services dá **um Postgres para cada uma**
+(event store próprio, como o desenho exige) e **um RabbitMQ, um Keycloak e um LGTM para as duas**, e a
+saga atravessa — o post nasce na versão 1 sem tag e chega à 2 com a `Untagged` decidida pelo outro
+processo, num único trace com os dois `service.name` dentro (`http://localhost:3001`, ver
+*Observabilidade* mais abaixo).
+
+**NÃO usar o target `quarkus:dev` que o `@nx/maven` infere.** Ele não funciona, por duas razões
+independentes, as duas medidas na versão 23.2.1 (a mais recente) e nenhuma delas configurável:
+
+1. **O plugin decompõe o ciclo de vida do Maven em um target por execução de mojo**, então `package` roda
+   `jar:jar@default-jar` sozinho. Como o mesmo plugin também restaura `target/nx-build-state.json` — que
+   grava `mainArtifact.file` — o mojo encontra o artefato JÁ anexado ao projeto e aborta com
+   `You have to use a classifier to attach supplemental artifacts to the project instead of replacing
+   them`. Passa uma vez depois de um `clean` e falha em TODAS as seguintes; apagar o
+   `nx-build-state.json` conserta aquela execução e a próxima o regrava. Como todo target inferido
+   depende de `^install`, qualquer target do plugin cai nisso. Os targets `*-ci` rodam o mesmo mojo e
+   têm o mesmo defeito.
+2. **Os goals rodam num Maven RESIDENTE, em processo**, e o `quarkus:dev` precisa de um CLI de verdade:
+   ali ele morre com `Cannot invoke "String.toLowerCase(java.util.Locale)" because "version" is null`.
+   O mesmo goal pelo `./mvnw` sobe normalmente.
+
+Daí `pnpm libs` instalar as libs com um `./mvnw install` de verdade em vez de pedir `^install` ao nx. O
+filtro é por exclusão (`-pl '!apps/posts-api,!apps/tagging'`) e não por enumeração: mantém os DOIS
+módulos do `axon-native-support` no reator, que é o que a validação da extensão exige, e não precisa ser
+editado quando uma lib nova entra. Pular as aplicações também evita o `quarkus:build` delas — que é
+justamente o passo intermitente documentado logo abaixo.
+
+Duas linhas saíram do `nx.json` junto, e as duas eram armadilha: o `targetDefaults.build` apontava para
+um target que **não existe** neste workspace (o `@nx/maven` infere fases, não `build`), e o
+`targetDefaults.test` sobrescrevia o `dependsOn` inferido por esse mesmo `build` inexistente —
+`targetDefaults` tem precedência sobre target inferido por plugin, então `nx test` rodava o surefire
+**sem compilar nada antes**, calado. Quem roda a suíte é `./mvnw test`, da raiz, como sempre.
 
 `quarkus:dev` recarrega sozinho na próxima requisição depois de uma classe mudar.
 O event store é **persistente** desde que a saga passou a ser coreografada: recarga não apaga mais nada.
@@ -556,6 +603,59 @@ silêncio após um reload: post nasce na versão 1, sem tag, e o log não reclam
 `quarkus:dev`. O botão que a extensão documenta para o sintoma vizinho ("no command handler available") é
 `quarkus.axon.live-reload.shutdown.wait-duration.amount`; ele **não** é usado aqui porque não se provou
 que resolve este caso.
+
+### Observabilidade: OpenTelemetry em TODA aplicação
+
+**REGRA: aplicação nova nasce instrumentada.** `quarkus-opentelemetry` mais o
+`quarkus-observability-devservices-lgtm` em `provided`, e as mesmas linhas de `quarkus.otel` que os
+dois apps já têm. Sinal que existe num serviço e não no outro dá um trace pela metade, e um trace pela
+metade é pior que nenhum: **a lacuna parece latência**. Foi exatamente o que aconteceu enquanto só o
+`posts-api` exportava — o publish aparecia e depois vinha um silêncio de duração desconhecida, que era
+o `tagging` decidindo a tag sem nada registrar.
+
+O que a instrumentação custa em código: **nada**. Traces de HTTP, JDBC e do conector de mensageria são
+automáticos, e o elo entre os processos sai de graça porque `tracing.enabled` já é `true` por default
+nos dois lados do conector do RabbitMQ. A saga inteira é **um trace só**, medido:
+
+```
+quarkus-axon-graphql-posts   POST /graphql                                SERVER     322 ms
+quarkus-axon-graphql-posts     GraphQL                                    INTERNAL   309 ms
+quarkus-axon-graphql-posts     axonposts.events publish                   PRODUCER   (×3)
+axonposts-tagging              axonposts.tagging.post-precreated receive  CONSUMER     2 ms
+axonposts-tagging                axonposts.events publish                 PRODUCER
+quarkus-axon-graphql-posts     axonposts.posts-api.post-completed receive CONSUMER
+```
+
+Quatro coisas que valem por si, e as três primeiras falham em silêncio:
+
+1. **`quarkus.application.name` é o `service.name` do Grafana.** Sem ele todo trace chega como
+   `unknown_service` — e com dois serviços no mesmo trace isso apaga justamente a informação que o
+   trace distribuído tem para dar: em qual lado o tempo foi gasto.
+2. **Logs e métricas são `false` por default no Quarkus.** Só traces vêm ligados, então
+   `quarkus.otel.logs.enabled` e `quarkus.otel.metrics.enabled` são o que faz o sinal EXISTIR. Não são
+   afinamento.
+3. **O container do LGTM é COMPARTILHADO** (`quarkus.observability.lgtm.shared` é `true` por default,
+   `service-name` é `lgtm`): uma stack, um Grafana, os dois `service.name` dentro. Quem o SOBE é quem
+   partir primeiro — e no `pnpm dev` os dois partem juntos. Daí
+   `quarkus.observability.lgtm.grafana-port=3001` estar declarada nos DOIS apps: **a duplicação é
+   necessária**, porque sem ela a URL da Grafana passaria a depender de quem ganhou a corrida.
+   Verificado com as duas no ar: um container só, e a corrida não produz um segundo.
+4. **`quarkus-opentelemetry` NÃO traz porta HTTP** — depende de `quarkus-vertx`, não de
+   `quarkus-vertx-http`. É o que permite instrumentar o `tagging` sem lhe dar um endpoint nem fazê-lo
+   disputar o 8080 com o outro app no `pnpm dev`.
+
+Em **teste** a observabilidade está desligada nos dois (`%test.quarkus.observability.enabled=false` +
+`%test.quarkus.otel.sdk.disabled=true`), e as duas razões são medidas: subir Loki+Grafana+Tempo+Mimir
+por suíte custa memória de Docker que esta máquina não tem sobrando, e com o SDK ligado sem coletor todo
+teste paga tentativa de exportação e enche o log de falha de conexão. `sdk.disabled` desliga a
+instrumentação inteira, não só o exportador. O `provided` do devservice não o tira do classpath de
+teste — por isso as linhas, e não a ausência da dependência, é que o desligam.
+
+**O ponto cego que sobrou, e ele é grande:** o que o Axon faz por dentro do command/event bus não é
+instrumentado — a extensão não publica spans. O trabalho aparece DENTRO do span do `receive`, sem
+sub-spans: o append no event store, o `@EventSourcingHandler` e a decisão de domínio são um bloco
+opaco de 2 ms. Enquanto for 2 ms não incomoda; no dia em que um `receive` ficar lento, o trace diz
+"foi aqui dentro" e não mais que isso.
 
 ## O segundo serviço (`apps/tagging`)
 

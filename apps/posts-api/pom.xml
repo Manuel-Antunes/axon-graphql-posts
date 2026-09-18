@@ -6,7 +6,7 @@
 
     <parent>
         <groupId>dev.manuelantunes</groupId>
-        <artifactId>quarkus-axon-graphql-posts-parent</artifactId>
+        <artifactId>quarkus-axon-graphql</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
@@ -243,9 +243,39 @@
              ser atribuída a este serviço. O quarkus-opentelemetry instrumenta HTTP, JDBC e o contexto
              de segurança sozinho; o que o Axon faz por dentro do command/event bus NÃO é instrumentado
              por ele (a extensão do Axon não publica spans). -->
+        <!-- `quarkus-micrometer-opentelemetry` e NÃO `quarkus-opentelemetry`: ele é o superconjunto
+             (depende dos dois mais a ponte `opentelemetry-micrometer-1.5`) e é o que faz métrica de
+             Micrometer sair pelo OTLP em vez de por um endpoint de scraping. Sem ele, ligar as métricas
+             do Axon — que são Micrometer — abriria um SEGUNDO pipeline: trace e log indo para o LGTM por
+             OTLP e métrica esperando um Prometheus que ninguém sobe.
+             É extensão em PREVIEW no Quarkus 3.39 ("backward compatibility and presence in the ecosystem
+             is not guaranteed"). Aceitável aqui porque o alvo é uma POC e a alternativa é métrica sem
+             coletor; se ela mudar de forma, o que muda é esta linha. -->
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-opentelemetry</artifactId>
+            <artifactId>quarkus-micrometer-opentelemetry</artifactId>
+        </dependency>
+        <!-- As métricas DO AXON, que são as únicas que ninguém mais tem como produzir: contagem e timer
+             por tipo de mensagem, capacidade do processor e — a que importa nesta arquitetura —
+             `EventProcessorLatencyMonitor`, o atraso entre o evento e a projeção. Trace nenhum dá isso:
+             trace mede uma requisição, e o que se quer saber aqui é o quanto a leitura está atrás da
+             escrita.
+             A extensão registra o `MetricsConfigurationEnhancer` do Axon com o `MeterRegistry` do
+             Quarkus, pelo gancho `AxonMetricsConfigurer` do `quarkus-axon`. Vem LIGADA:
+             `quarkus.axon.metrics.enabled` e `use-dimensions` são `true` por default.
+             A EXCLUSÃO não é opcional: a extensão arrasta `quarkus-micrometer-registry-prometheus`, e
+             com ele cada métrica sairia duas vezes — uma raspada em `/q/metrics`, uma pelo OTLP. Um
+             pipeline, um destino. -->
+        <dependency>
+            <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
+            <artifactId>quarkus-axon-metrics</artifactId>
+            <version>${quarkus-axon.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>io.quarkus</groupId>
+                    <artifactId>quarkus-micrometer-registry-prometheus</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <!-- Dev Services do stack LGTM (Loki, Grafana, Tempo, Mimir) numa imagem só: em dev o Quarkus
              sobe o container e APONTA o exportador para ele sozinho, sem uma linha de endpoint.

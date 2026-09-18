@@ -6,7 +6,7 @@
 
     <parent>
         <groupId>dev.manuelantunes</groupId>
-        <artifactId>quarkus-axon-graphql-posts-parent</artifactId>
+        <artifactId>quarkus-axon-graphql</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
@@ -120,6 +120,35 @@
             <groupId>dev.manuelantunes</groupId>
             <artifactId>axonposts-posts</artifactId>
             <version>${project.version}</version>
+        </dependency>
+
+        <!-- ==== Observabilidade: OpenTelemetry ======================================== -->
+        <!-- Entra aqui pelo motivo INVERSO do que a põe no `posts-api`. Lá o argumento é o router na
+             frente; aqui é que este serviço é o único lugar onde a primeira tag é decidida — e é o
+             lado da saga que, sem isto, não aparece em trace nenhum. Uma latência entre
+             `PostPreCreated` e `PostCreated` ficava sem dono: o `posts-api` mostrava o publish e
+             depois um silêncio de duração desconhecida.
+             O elo entre os dois processos sai de graça: `tracing.enabled` já é `true` por default nos
+             dois lados do conector do RabbitMQ, então o span do publish lá vira o pai do span do
+             consume aqui, e o trace atravessa o broker.
+             NÃO traz porta HTTP — `quarkus-opentelemetry` depende de `quarkus-vertx`, não de
+             `quarkus-vertx-http`. Este serviço continua sem uma linha de HTTP, e sem disputar o 8080
+             com o outro app no `pnpm dev`.
+             O que ele NÃO instrumenta, aqui como lá: o que o Axon faz por dentro do command/event bus
+             (a extensão não publica spans). O trabalho aparece DENTRO do span do consume, sem
+             sub-spans. -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-opentelemetry</artifactId>
+        </dependency>
+        <!-- Dev Services do stack LGTM, `provided` como no outro app: ferramenta de desenvolvimento,
+             não vai para o runner de produção. As DUAS aplicações declaram porque o container é
+             COMPARTILHADO (`quarkus.observability.lgtm.shared` é `true` por default) — quem sobe é
+             quem partir primeiro, e no `pnpm dev` os dois partem juntos. -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-observability-devservices-lgtm</artifactId>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 

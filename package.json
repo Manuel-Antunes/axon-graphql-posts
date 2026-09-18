@@ -5,5 +5,9 @@
   "devDependencies": {
     "@nx/maven": "23.2.1",
     "nx": "23.2.1"
+  },
+  "scripts": {
+    "dev": "nx run-many --target serve",
+    "test": "./mvnw test"
   }
 }
