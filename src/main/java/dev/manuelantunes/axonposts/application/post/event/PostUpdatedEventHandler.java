@@ -3,13 +3,13 @@ package dev.manuelantunes.axonposts.application.post.event;
 import dev.manuelantunes.axonposts.application.post.subscription.OnPostUpdatedSubscription.OnPostUpdated;
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.event.PostUpdatedEvent;
-import dev.manuelantunes.axonposts.dto.controller.PostView;
-import dev.manuelantunes.axonposts.mapper.PostViewMapper;
+import dev.manuelantunes.axonposts.application.post.view.PostView;
+import dev.manuelantunes.axonposts.application.post.view.PostViewMapper;
 import org.axonframework.messaging.eventhandling.annotation.EventHandler;
 import org.axonframework.messaging.queryhandling.QueryUpdateEmitter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 /**
  * Handler de <b>um</b> evento de domínio: {@link PostUpdatedEvent}. Como o de criação, faz uma coisa só —
@@ -23,7 +23,7 @@ import org.springframework.stereotype.Component;
  * Vale tanto para um update de título/conteúdo quanto para a atribuição de uma tag: os dois são o mesmo
  * evento, e é por isso que assinar {@code onPostUpdated} basta para ver a tag padrão chegar.
  */
-@Component
+@ApplicationScoped
 public class PostUpdatedEventHandler {
 
     private static final Logger log = LoggerFactory.getLogger(PostUpdatedEventHandler.class);

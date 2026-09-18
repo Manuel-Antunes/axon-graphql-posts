@@ -1,0 +1,23 @@
+# O mesmo supergraph, com um segundo subgraph que só existe como SDL.
+#
+#   rover supergraph compose --config docker/federation/supergraph-example.yaml
+#
+# Compõe sem que exista serviço de comentários: a composição é estática, e é ela que responde "as chaves
+# que este projeto publica bastam para alguém estender o grafo?". Hoje a resposta é sim, e é isto que a
+# prova — o `comments-example.graphql` acrescenta um campo a `Post` e, por `@interfaceObject`, um campo a
+# TODO usuário sem conhecer `Author` nem `Reader`.
+federation_version: =2.9.3
+
+subgraphs:
+  posts:
+    # routing_url é o endereço que o ROUTER vai chamar, e ele roda em container: daí o
+    # host.docker.internal. schema.subgraph_url é quem o ROVER introspecciona, daqui do host — e ele vai
+    # ANINHADO em `schema:`. Solto no nível de cima o rover não reclama: descarta o subgraph inteiro em
+    # silêncio e falha com "No subgraphs were found in the supergraph config".
+    routing_url: http://host.docker.internal:8080/graphql
+    schema:
+      subgraph_url: http://localhost:8080/graphql
+  comments:
+    routing_url: http://localhost:8090/graphql
+    schema:
+      file: ./comments-example.graphql

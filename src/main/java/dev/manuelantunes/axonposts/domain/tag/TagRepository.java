@@ -3,6 +3,8 @@ package dev.manuelantunes.axonposts.domain.tag;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagName;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -22,6 +24,8 @@ public interface TagRepository {
 
     /** Usada pelo handler que garante a tag padrão: existe alguma tag com este nome? */
     Optional<Tag> findByName(TagName name);
+
+    List<Tag> findAllById(Collection<TagId> tagIds);
 
     /** Existe <b>alguma</b> tag definida no banco? */
     boolean isEmpty();

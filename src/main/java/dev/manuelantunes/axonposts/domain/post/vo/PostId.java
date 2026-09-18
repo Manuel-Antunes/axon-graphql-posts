@@ -13,8 +13,9 @@ import java.util.UUID;
  * invariante roda também quando a linha volta do banco. A chave primária pede
  * {@link Serializable} — daí a interface.
  * <p>
- * Três papéis num tipo só: {@code @EmbeddedId} da entidade JPA, {@code idType} da entidade do Axon e
- * {@code @TargetEntityId} dos commands. O {@link #toString()} devolve o valor cru <b>de propósito</b> —
+ * Três papéis num tipo só: {@code @EmbeddedId} da entidade JPA, tipo de id com que a entidade é
+ * registrada no Axon ({@code EventSourcedEntityModule.autodetected(PostId.class, Post.class)}, em
+ * {@code AxonProducer}) e {@code @TargetEntityId} dos commands. O {@link #toString()} devolve o valor cru <b>de propósito</b> —
  * é ele que vira o valor da tag ({@code postId=<uuid>}) no event store.
  */
 @Embeddable

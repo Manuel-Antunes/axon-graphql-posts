@@ -1,0 +1,307 @@
+schema @link(import : ["@key", "@shareable"], url : "https://specs.apollo.dev/federation/v2.7"){
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
+}
+
+"Indicates a Bean Validation constraint"
+directive @constraint(format: String, max: BigInteger, maxFloat: BigDecimal, maxLength: Int, min: BigInteger, minFloat: BigDecimal, minLength: Int, pattern: String) repeatable on ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION
+
+"This directive allows results to be deferred during execution"
+directive @defer(
+    "Deferred behaviour is controlled by this argument"
+    if: Boolean! = true,
+    "A unique label that represents the fragment being deferred"
+    label: String
+  ) on FRAGMENT_SPREAD | INLINE_FRAGMENT
+
+"Marks the field, argument, input field or enum value as deprecated"
+directive @deprecated(reason: String) on FIELD_DEFINITION | ARGUMENT_DEFINITION | ENUM_VALUE | INPUT_FIELD_DEFINITION
+
+"This directive disables error propagation when a non nullable field returns null for the given operation."
+directive @experimental_disableErrorPropagation on QUERY | MUTATION | SUBSCRIPTION
+
+"Indicates to composition that the target element is accessible only to the authenticated supergraph users."
+directive @federation__authenticated on SCALAR | OBJECT | FIELD_DEFINITION | INTERFACE | ENUM
+
+"Indicates to composition that all uses of a particular custom type system directive in the subgraph schema should be preserved in the supergraph schema (by default, composition omits most directives from the supergraph schema)."
+directive @federation__composeDirective(name: String!) repeatable on SCHEMA
+
+"""
+Indicates that an object or interface definition is an extension of another definition of that same type.
+If your subgraph library supports GraphQL's built-in extend keyword, do not use this directive! Instead, use extend.
+"""
+directive @federation__extends on OBJECT | INTERFACE
+
+"""
+Indicates that this subgraph usually can't resolve a particular object field, but it still needs to define that field for other purposes.
+This directive is always used in combination with another directive that references object fields, such as @provides or @requires.
+"""
+directive @federation__external on OBJECT | FIELD_DEFINITION
+
+"Indicates that a definition in the subgraph schema should be omitted from the router's API schema, even if that definition is also present in other subgraphs. This means that the field is not exposed to clients at all."
+directive @federation__inaccessible on SCALAR | OBJECT | FIELD_DEFINITION | ARGUMENT_DEFINITION | INTERFACE | UNION | ENUM | ENUM_VALUE | INPUT_OBJECT | INPUT_FIELD_DEFINITION
+
+"""
+Indicates that an object definition serves as an abstraction of another subgraph's entity interface. This abstraction enables a subgraph to automatically contribute fields to all entities that implement a particular entity interface.
+During composition, the fields of every @interfaceObject are added both to their corresponding interface definition and to all entity types that implement that interface.
+"""
+directive @federation__interfaceObject on OBJECT
+
+"""
+Indicates that an object field is now resolved by this subgraph instead of another subgraph where it's also defined. This enables you to migrate a field from one subgraph to another.
+You can apply @override to entity fields and fields of the root operation types (such as Query and Mutation).
+"""
+directive @federation__override(from: String!, label: String) on FIELD_DEFINITION
+
+"Indicates to composition that the target element is restricted based on authorization policies that are evaluated in a Rhai script or coprocessor."
+directive @federation__policy(policies: [[federation__Policy!]!]!) on SCALAR | OBJECT | FIELD_DEFINITION | INTERFACE | ENUM
+
+"""
+Specifies a set of entity fields that a subgraph can resolve, but only at a particular schema path (at other paths, the subgraph can't resolve those fields).
+If a subgraph can always resolve a particular entity field, do not apply this directive.
+Using this directive is always an optional optimization. It can reduce the total number of subgraphs that your graph router needs to communicate with to resolve certain operations, which can improve performance.
+"""
+directive @federation__provides(fields: federation__FieldSet!) on FIELD_DEFINITION
+
+"Indicates that the resolver for a particular entity field depends on the values of other entity fields that are resolved by other subgraphs. This tells the graph router that it needs to fetch the values of those externally defined fields first, even if the original client query didn't request them."
+directive @federation__requires(fields: federation__FieldSet!) on FIELD_DEFINITION
+
+"Indicates to composition that the target element is accessible only to the authenticated supergraph users with the appropriate JWT scopes"
+directive @federation__requiresScopes(scopes: [[federation__Scope!]!]!) on SCALAR | OBJECT | FIELD_DEFINITION | INTERFACE | ENUM
+
+"Applies arbitrary string metadata to a schema location. Custom tooling can use this metadata during any step of the schema delivery flow, including composition, static analysis, and documentation. Apollo Studio's enterprise contracts feature uses @tag with its inclusion and exclusion filters."
+directive @federation__tag(name: String!) repeatable on SCALAR | OBJECT | FIELD_DEFINITION | ARGUMENT_DEFINITION | INTERFACE | UNION | ENUM | ENUM_VALUE | INPUT_OBJECT | INPUT_FIELD_DEFINITION
+
+"Directs the executor to include this field or fragment only when the `if` argument is true"
+directive @include(
+    "Included when true."
+    if: Boolean!
+  ) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+
+"Designates an object type as an entity and specifies its key fields (a set of fields that the subgraph can use to uniquely identify any instance of the entity). You can apply multiple @key directives to a single entity (to specify multiple valid sets of key fields)."
+directive @key(fields: federation__FieldSet!, resolvable: Boolean = true) repeatable on OBJECT | INTERFACE
+
+"This directive links definitions from an external specification to this schema."
+directive @link(as: String, for: link__Purpose, import: [link__Import], url: String!) repeatable on SCHEMA
+
+"Indicates an Input Object is a OneOf Input Object."
+directive @oneOf on INPUT_OBJECT
+
+"Used to specify the role required to execute a given field or operation."
+directive @rolesAllowed(value: String) on FIELD_DEFINITION
+
+"Indicates that an object type's field is allowed to be resolved by multiple subgraphs (by default in Federation 2, object fields can be resolved by only one subgraph)."
+directive @shareable repeatable on OBJECT | FIELD_DEFINITION
+
+"Directs the executor to skip this field or fragment when the `if` argument is true."
+directive @skip(
+    "Skipped when true."
+    if: Boolean!
+  ) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+
+"Exposes a URL that specifies the behaviour of this scalar."
+directive @specifiedBy(
+    "The URL that specifies the behaviour of this scalar."
+    url: String!
+  ) on SCALAR
+
+"Quem tem conta. Interface porque a hierarquia do domínio é polimórfica"
+interface User @key(fields : "id") {
+  "As credenciais deste usuário, uma por provedor"
+  accounts: [Account]!
+  email: String!
+  id: ID!
+  name: String!
+}
+
+union _Entity = Author | Post | Reader | Tag
+
+"Uma credencial. Identidade em `users`, credencial em `accounts`, uma linha por provedor"
+type Account {
+  "Se dá para entrar com senha por esta conta. Falso para toda conta federada"
+  hasPassword: Boolean!
+  "ISO-8601"
+  linkedAt: DateTime!
+  provider: AuthProvider!
+  "O identificador da conta NO provedor (o `sub` do token). Não é o e-mail"
+  subject: String!
+}
+
+"Usuário que escreve. Subclasse table-per-type de User: linha em `users` + linha em `authors`"
+type Author implements User @key(fields : "id") {
+  accounts: [Account]!
+  "Campo que só a subclasse tem, e por isso pode ser NOT NULL em `authors`"
+  bio: String!
+  email: String!
+  id: ID!
+  name: String!
+  "Posts deste autor, mais recentes primeiro, como Relay cursor connection"
+  posts(
+    "Cursor do último post já visto; ausente = do começo"
+    after: String,
+    "Quantos posts trazer; ausente = 20"
+    first: Int
+  ): PostConnection!
+}
+
+"Mutation root"
+type Mutation {
+  "Despacha o command CreatePost e devolve o Post já projetado"
+  createPost(input: CreatePostInput!): Post! @rolesAllowed(value : "author")
+  "Apaga a própria conta (exclusão lógica). Exige apenas estar autenticado"
+  deleteMe: Boolean!
+  "Exclusão lógica: o post some das consultas, mas a linha e o stream continuam lá"
+  deletePost(id: ID!): Boolean! @rolesAllowed(value : "author")
+  "Desfaz a exclusão lógica. Funciona porque o agregado é reidratado dos eventos"
+  restorePost(id: ID!): Post! @rolesAllowed(value : "author")
+  "Despacha o command UpdatePost e devolve o Post já projetado"
+  updatePost(input: UpdatePostInput!): Post! @rolesAllowed(value : "author")
+}
+
+type PageInfo @shareable {
+  endCursor: String
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+}
+
+"Um post publicado, com o estado resultante de todos os eventos aplicados a ele"
+type Post @key(fields : "id") {
+  "Quem escreveu. Resolvido em lote: N posts de M autores custam UMA consulta"
+  author: Author!
+  content: String!
+  "ISO-8601"
+  createdAt: DateTime!
+  id: ID!
+  "Tags do post, como Relay cursor connection. Resolvidas em lote"
+  tags(
+    "Cursor da última tag já vista; ausente = do começo"
+    after: String,
+    "Quantas tags trazer; ausente = 20"
+    first: Int
+  ): TagConnection!
+  title: String!
+  "ISO-8601"
+  updatedAt: DateTime!
+  version: Int!
+}
+
+type PostConnection {
+  "Os itens desta página, cada um com a sua posição"
+  edges: [PostEdge]!
+  "Se existe página seguinte/anterior, e os cursores das pontas desta"
+  pageInfo: PageInfo!
+}
+
+type PostEdge {
+  "Posição opaca deste item; devolva-a em `after` para continuar daqui"
+  cursor: String!
+  "O item desta posição da conexão"
+  node: Post!
+}
+
+"Query root"
+type Query {
+  _entities(representations: [_Any!]!): [_Entity]!
+  _service: _Service!
+  "Quem está logado. Exige Authorization: Bearer <token emitido pelo Keycloak>"
+  me: User!
+  "Um Post pelo id; null se não existir"
+  post(id: ID!): Post
+  "Posts em ordem de criação, como Relay cursor connection"
+  posts(
+    "Cursor do último post já visto; ausente = do começo"
+    after: String,
+    "Quantos posts trazer; ausente = 20"
+    first: Int
+  ): PostConnection!
+}
+
+"Usuário que só lê. É o `User` do Java sem linha na tabela `authors`"
+type Reader implements User @key(fields : "id") {
+  accounts: [Account]!
+  email: String!
+  id: ID!
+  name: String!
+}
+
+"Subscription root"
+type Subscription {
+  "Emite a cada PostCreated. authorId filtra por tópico (null = todos)"
+  onPostCreated(authorId: ID): Post!
+  "Emite a cada PostUpdated. Os dois filtros combinam (AND); null em ambos = tudo"
+  onPostUpdated(authorId: ID, postId: ID): Post!
+}
+
+"Uma tag. Agregado próprio: tem id e stream de eventos independentes do post"
+type Tag @key(fields : "id") {
+  id: ID!
+  name: String!
+}
+
+type TagConnection {
+  "Os itens desta página, cada um com a sua posição"
+  edges: [TagEdge]!
+  "Se existe página seguinte/anterior, e os cursores das pontas desta"
+  pageInfo: PageInfo!
+}
+
+type TagEdge {
+  "Posição opaca deste item; devolva-a em `after` para continuar daqui"
+  cursor: String!
+  "O item desta posição da conexão"
+  node: Tag!
+}
+
+type _Service {
+  sdl: String!
+}
+
+enum AuthProvider {
+  CREDENTIAL
+  GITHUB
+  GOOGLE
+  KEYCLOAK
+}
+
+enum link__Purpose {
+  "`EXECUTION` features provide metadata necessary for operation execution."
+  EXECUTION
+  "`SECURITY` features provide metadata necessary to securely resolve fields."
+  SECURITY
+}
+
+"Scalar for BigDecimal"
+scalar BigDecimal
+
+"Scalar for BigInteger"
+scalar BigInteger
+
+"Scalar for DateTime"
+scalar DateTime
+
+scalar _Any
+
+"Scalar for FieldSet"
+scalar federation__FieldSet
+
+"Scalar for Policy"
+scalar federation__Policy
+
+"Scalar for Scope"
+scalar federation__Scope
+
+"Scalar for Import"
+scalar link__Import
+
+input CreatePostInput {
+  content: String!
+  title: String! @constraint(maxLength : 200)
+}
+
+input UpdatePostInput {
+  content: String @constraint(pattern : "(?s).*\\S.*")
+  id: ID!
+  title: String @constraint(pattern : ".*\\S.*") @constraint(maxLength : 200)
+}

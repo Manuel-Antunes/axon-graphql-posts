@@ -1,13 +1,13 @@
 package dev.manuelantunes.axonposts.application.post.query;
 
-import dev.manuelantunes.axonposts.application.post.PostPage;
+import dev.manuelantunes.axonposts.application.post.view.PostPage;
 import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
-import dev.manuelantunes.axonposts.dto.controller.PostView;
-import dev.manuelantunes.axonposts.mapper.PostViewMapper;
+import dev.manuelantunes.axonposts.application.post.view.PostView;
+import dev.manuelantunes.axonposts.application.post.view.PostViewMapper;
 import org.axonframework.messaging.queryhandling.annotation.Query;
 import org.axonframework.messaging.queryhandling.annotation.QueryHandler;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.util.List;
 
@@ -19,7 +19,7 @@ import java.util.List;
  * mais</b> do que o cliente quer, e a existência dessa linha extra é a resposta para "tem próxima
  * página?". Ela é descartada antes de sair — o cliente recebe exatamente o que pediu.
  */
-@Component
+@ApplicationScoped
 public class FindAllPostsQuery {
 
     /**

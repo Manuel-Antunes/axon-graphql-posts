@@ -1,24 +1,26 @@
 package dev.manuelantunes.axonposts.application.post.subscription;
 
-import dev.manuelantunes.axonposts.dto.controller.PostView;
-import org.axonframework.extension.reactor.messaging.queryhandling.gateway.ReactorQueryGateway;
+import java.util.Optional;
+
 import org.axonframework.messaging.queryhandling.annotation.Query;
 import org.axonframework.messaging.queryhandling.annotation.QueryHandler;
-import org.springframework.stereotype.Component;
-import reactor.core.publisher.Flux;
+import org.axonframework.messaging.queryhandling.gateway.QueryGateway;
+import org.reactivestreams.FlowAdapters;
 
-import java.util.Optional;
+import dev.manuelantunes.axonposts.application.post.view.PostView;
+import io.smallrye.mutiny.Multi;
+import jakarta.enterprise.context.ApplicationScoped;
 
 /**
  * A subscription <b>OnPostUpdated</b>: a mensagem {@link OnPostUpdated} e as duas pontas dela. Mesma
  * mecânica da {@link OnPostCreatedSubscription}, com um tópico opcional por {@code postId}.
  */
-@Component
+@ApplicationScoped
 public class OnPostUpdatedSubscription {
 
     /**
      * A mensagem: "me avise quando um Post for atualizado".
-     *
+     * <p>
      * Os dois filtros são independentes e combinam por <b>E</b>: com os dois preenchidos, o assinante
      * recebe um post específico e só enquanto ele for daquele autor. O filtro é avaliado no emit, pelo
      * {@code PostUpdatedEventHandler}.
@@ -43,11 +45,15 @@ public class OnPostUpdatedSubscription {
         }
     }
 
-    private final ReactorQueryGateway queryGateway;
+    /**
+     * Quantos eventos podem ficar em espera enquanto o assinante não pede o próximo. Ver
+     * {@link #subscribe} sobre por que este buffer é obrigatório e não um afinamento.
+     */
+    private static final int UPDATE_BUFFER = 256;
 
-    // o gateway vem do registry de componentes do Axon, não de um @Bean: a inspeção do IDE não o vê
-    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
-    public OnPostUpdatedSubscription(ReactorQueryGateway queryGateway) {
+    private final QueryGateway queryGateway;
+
+    public OnPostUpdatedSubscription(QueryGateway queryGateway) {
         this.queryGateway = queryGateway;
     }
 
@@ -63,12 +69,26 @@ public class OnPostUpdatedSubscription {
     }
 
     /**
-     * Flux de Posts atualizados a partir de agora.
+     * Stream de edições a partir de agora.
      *
-     * @param postId   tópico opcional: {@code null} = todos os Posts; preenchido = só aquele Post
-     * @param authorId tópico opcional: {@code null} = todos os autores; preenchido = só aquele autor
+     * <h2>{@code onOverflow().buffer(...)} não é afinamento: sem ele a subscription é de um evento só</h2>
+     * O {@code Publisher} que o {@code subscriptionQuery} devolve <b>não honra demanda incremental</b>.
+     * Assinado com {@code request(Long.MAX_VALUE)} ele entrega tudo; assinado com {@code request(1)} e um
+     * {@code request(1)} a cada item — que é exatamente o que o {@code SubscriptionSubscriber} do SmallRye
+     * faz — ele entrega o <b>primeiro</b> e nunca mais nada. O cliente recebe um evento, a conexão fica
+     * aberta e silenciosa, e nada no log reclama.
+     * <p>
+     * O operador separa as duas demandas: o Mutiny pede ilimitado ao Axon e serve o assinante de baixo a
+     * partir do próprio buffer. O teto existe para a falha ser barulhenta se um assinante travar de vez —
+     * melhor um {@code BackPressureFailure} do que memória crescendo em silêncio.
+     *
+     * @param postId   tópico opcional: {@code null} = todos os posts
+     * @param authorId tópico opcional: {@code null} = todos os autores. Os dois combinam com AND
      */
-    public Flux<PostView> subscribe(String postId, String authorId) {
-        return queryGateway.subscriptionQuery(new OnPostUpdated(postId, authorId), PostView.class);
+    public Multi<PostView> subscribe(String postId, String authorId) {
+        return Multi.createFrom()
+                .publisher(FlowAdapters.toFlowPublisher(
+                        queryGateway.subscriptionQuery(new OnPostUpdated(postId, authorId), PostView.class)))
+                .onOverflow().buffer(UPDATE_BUFFER);
     }
 }

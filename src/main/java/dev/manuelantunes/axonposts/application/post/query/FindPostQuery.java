@@ -2,11 +2,11 @@ package dev.manuelantunes.axonposts.application.post.query;
 
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
-import dev.manuelantunes.axonposts.dto.controller.PostView;
-import dev.manuelantunes.axonposts.mapper.PostViewMapper;
+import dev.manuelantunes.axonposts.application.post.view.PostView;
+import dev.manuelantunes.axonposts.application.post.view.PostViewMapper;
 import org.axonframework.messaging.queryhandling.annotation.Query;
 import org.axonframework.messaging.queryhandling.annotation.QueryHandler;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.util.Optional;
 
@@ -20,7 +20,7 @@ import java.util.Optional;
  * Um id que não existe simplesmente não acha nada: {@code Optional} vazio vira resposta vazia (o
  * {@code Mono} do gateway completa sem valor), que o GraphQL serializa como {@code null}.
  */
-@Component
+@ApplicationScoped
 public class FindPostQuery {
 
     /**

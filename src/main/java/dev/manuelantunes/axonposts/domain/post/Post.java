@@ -32,7 +32,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import org.axonframework.eventsourcing.annotation.EventSourcingHandler;
 import org.axonframework.eventsourcing.annotation.reflection.EntityCreator;
-import org.axonframework.extension.spring.stereotype.EventSourced;
+import org.axonframework.eventsourcing.annotation.EventSourcedEntity;
 import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 
@@ -53,8 +53,11 @@ import java.util.Set;
  *   <li>{@code @Entity} + {@code @Table}: o estado atual é gravado direto, com os value objects como
  *       {@code @Embedded} e as tags como {@code @ManyToMany}. JPA é agnóstico de banco, então o
  *       mapeamento vale para Postgres, MySQL ou qualquer outro;</li>
- *   <li>{@code @EventSourced(tagKey = "postId", idType = PostId.class)}: o histórico são os eventos com
- *       a tag {@code postId=<id>}, e é deles que o Axon reidrata a entidade ao tratar um command;</li>
+ *   <li>{@code @EventSourcedEntity(tagKey = "postId")}: o histórico são os eventos com a tag
+ *       {@code postId=<id>}, e é deles que o Axon reidrata a entidade ao tratar um command. É a
+ *       anotação do <b>núcleo</b> do Axon, e não o {@code @EventSourced} do módulo Spring: aquele é um
+ *       meta-anotação que acrescenta {@code @Component} para o scan do Spring achar a classe. Aqui quem
+ *       declara a entidade é o {@code AxonProducer}, explicitamente, e é lá que mora o tipo do id;</li>
  *   <li>o comportamento: {@link #create}, {@link #update} e {@link #assignTag} validam invariantes e
  *       disparam eventos. Nada aqui é getter/setter puro — não é um registro anêmico com regra
  *       espalhada por serviços.</li>
@@ -76,7 +79,7 @@ import java.util.Set;
  */
 @Entity
 @Table(name = "posts")
-@EventSourced(tagKey = Post.TAG_KEY, idType = PostId.class)
+@EventSourcedEntity(tagKey = Post.TAG_KEY)
 /*
  * Exclusão lógica: @SQLRestriction esconde os apagados de toda consulta, @SQLDelete troca o DELETE do
  * JpaRepository por um UPDATE. Ver SoftDeletable.

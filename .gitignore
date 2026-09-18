@@ -1,4 +1,6 @@
 target/
+# artefato de build: sai do `rover supergraph compose`, não da mão de ninguém
+docker/federation/supergraph.graphql
 data/
 .poc-logs/
 .mvn/wrapper/maven-wrapper.jar

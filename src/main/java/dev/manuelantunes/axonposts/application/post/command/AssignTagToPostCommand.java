@@ -12,7 +12,7 @@ import org.axonframework.messaging.commandhandling.annotation.CommandHandler;
 import org.axonframework.messaging.eventhandling.gateway.EventAppender;
 import org.axonframework.modelling.annotation.InjectEntity;
 import org.axonframework.modelling.annotation.TargetEntityId;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.time.Clock;
 
@@ -40,7 +40,7 @@ import static dev.manuelantunes.axonposts.application.shared.AppendingDomainEven
  * sem cascade nenhum. Nada aqui escreve na tabela {@code tags}, e a Tag segue sem evento algum sobre
  * posts — quem registra o vínculo é o {@code PostUpdatedEvent}, do agregado que o vínculo pertence.
  */
-@Component
+@ApplicationScoped
 public class AssignTagToPostCommand {
 
     /**

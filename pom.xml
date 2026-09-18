@@ -4,35 +4,52 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <parent>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.16</version>
-        <relativePath/>
-    </parent>
-
     <groupId>dev.manuelantunes</groupId>
-    <artifactId>axon-graphql-posts</artifactId>
-    <version>0.2.0-SNAPSHOT</version>
-    <name>axon-graphql-posts</name>
-    <description>POC: Axon Framework 5 (entidades anotadas, DCB) + Reactor extension + GraphQL subscriptions over SSE</description>
+    <artifactId>quarkus-axon-graphql-posts</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <name>quarkus-axon-graphql-posts</name>
+    <description>Axon Framework 5 (entidades anotadas, DCB) + SmallRye GraphQL com Mutiny, em Quarkus</description>
 
     <properties>
-        <java.version>21</java.version>
-        <!-- Axon Framework 5.3.x: entidades anotadas (@EventSourced/@EntityCreator), command handlers como
-             classes (@InjectEntity), reactor extension (Mono/Flux gateways) no mesmo repositório. -->
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.version>3.39.2</quarkus.platform.version>
+        <quarkus-axon.version>2.0.0-alpha6</quarkus-axon.version>
+
+        <!-- Axon Framework 5.3.x: entidades anotadas (@EventSourcedEntity/@EntityCreator), command
+             handlers como classes (@InjectEntity). Sem a extensão Spring e sem a extensão Reactor: o
+             núcleo do Axon 5 tem API de configuração própria (ApplicationConfigurer) e os gateways já
+             devolvem CompletableFuture / Publisher, que o Mutiny consome direto. -->
         <axon.version>5.3.1</axon.version>
-        <!-- MapStruct: mapeamento input GraphQL -> command, gerado em tempo de compilação
-             (código-fonte legível em target/generated-sources, zero reflexão em runtime). -->
+        <!-- Reactor é `optional` nos módulos do Axon, mas subscriptionQuery usa Sinks por dentro:
+             sem esta dependência explícita, a primeira subscription falha com NoClassDefFoundError. -->
+        <reactor.version>3.7.10</reactor.version>
+        <!-- MapStruct: input GraphQL -> command e entidade -> view, gerados em tempo de compilação -->
         <mapstruct.version>1.6.3</mapstruct.version>
-        <!-- Módulo Testcontainers do Keycloak; não está no BOM do Boot -->
-        <testcontainers-keycloak.version>3.7.0</testcontainers-keycloak.version>
-        <!-- JaCoCo: cobertura dos testes. O parent do Boot não gerencia a versão deste plugin -->
-        <jacoco.version>0.8.13</jacoco.version>
+        <assertj.version>3.27.6</assertj.version>
+
+        <compiler-plugin.version>3.14.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.3</surefire-plugin.version>
+        <skipITs>true</skipITs>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <!-- O BOM do Quarkus vem PRIMEIRO de propósito: ele é quem fixa Jackson 2, Reactive Streams,
+                 SLF4J e companhia para a plataforma inteira. O BOM do Axon entra depois e gerencia só os
+                 artefatos org.axonframework — o converter do Axon usa Jackson 3 (tools.jackson), que é
+                 coordenada distinta e não disputa versão com o Quarkus. -->
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>org.axonframework</groupId>
                 <artifactId>axon-framework-bom</artifactId>
@@ -44,170 +61,175 @@
     </dependencyManagement>
 
     <dependencies>
-        <!-- Web: WebFlux + Spring for GraphQL (HTTP, SSE e WebSocket no mesmo /graphql) -->
+        <!-- ==== GraphQL ======================================== -->
+        <!-- SmallRye GraphQL code-first: schema a partir das classes, Uni/Multi nativos, DataLoader
+             embutido no @Source em lote. De transporte de subscription vem só o WebSocket
+             (graphql-transport-ws e graphql-ws); SSE NÃO vem, e é o que interfaces/graphql/sse
+             acrescenta. -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-graphql</artifactId>
         </dependency>
+        <!-- Já vinha transitivo pelo GraphQL; declarado porque agora é compilado contra: a rota de SSE
+             é registrada observando o Router do Vert.x, e o handler herda o da extensão de GraphQL. -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-graphql</artifactId>
-        </dependency>
-
-        <!-- DevTools: reinício automático quando as classes mudam, e LiveReload.
-             `optional` para não vazar para quem depender deste artefato; o spring-boot-maven-plugin já o
-             exclui do jar executável, então isto é ferramenta de desenvolvimento e nada mais.
-
-             ATENÇÃO ao que um reinício significa aqui: o event store é em memória (AxonConfig), então
-             cada restart apaga os eventos enquanto as LINHAS continuam no Postgres. Um post criado antes
-             do restart continua aparecendo em `post(id:)` e some do `updatePost`, que reidrata o agregado
-             do stream — EntityNotFoundException, NOT_FOUND. Não é bug do DevTools; é a POC. Para uma
-             sessão longa de edição, ou se recria os dados depois de cada restart, ou se troca o
-             InMemoryEventStorageEngine pelo event store JPA. -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-devtools</artifactId>
-            <scope>runtime</scope>
-            <optional>true</optional>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-vertx-http</artifactId>
         </dependency>
 
-        <!-- Bean Validation (Hibernate Validator): valida os inputs do GraphQL na borda.
-             O AnnotatedControllerConfigurer do Spring GraphQL liga a validação sozinho quando
-             encontra um bean jakarta.validation.Validator no contexto. -->
+        <!-- ==== Persistência: read model em PostgreSQL ======================================== -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
-        </dependency>
-
-        <!-- MapStruct: só as anotações; o processor fica no annotationProcessorPaths abaixo -->
-        <dependency>
-            <groupId>org.mapstruct</groupId>
-            <artifactId>mapstruct</artifactId>
-            <version>${mapstruct.version}</version>
-        </dependency>
-
-        <!-- Read model: Spring Data JPA sobre PostgreSQL.
-             Saiu o SQLite (e com ele o hibernate-community-dialects, que só existia para o dialeto dele):
-             o Keycloak precisa de um banco de verdade, e rodar os dois no mesmo Postgres do compose é o
-             que torna o ambiente reproduzível. -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <scope>runtime</scope>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
         </dependency>
-
-        <!-- Flyway: o schema passa a ser versionado em SQL, e o ddl-auto vira `validate`.
-             O flyway-database-postgresql é obrigatório desde o Flyway 10: o suporte a cada banco saiu
-             do core para módulos próprios. -->
+        <!-- O schema é versionado em SQL e o Hibernate roda em `validate`: entidade nova sem migration
+             não sobe. O módulo do Postgres é obrigatório desde o Flyway 10. -->
         <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-core</artifactId>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
         </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
-        <!-- Segurança: WebFlux reativo + resource server JWT.
-             O resource-server traz o nimbus-jose-jwt, que é o que assina e valida o token HS256;
-             o starter-security traz o BCryptPasswordEncoder e o @EnableReactiveMethodSecurity. -->
+        <!-- ==== Segurança: resource server do realm do Keycloak ======================================== -->
+        <!-- quarkus-oidc lê o issuer, descobre o JWKS e valida assinatura/exp/iss sozinho; as roles de
+             realm do Keycloak (realm_access.roles) já viram roles do SecurityIdentity sem conversor. -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-security</artifactId>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-oidc</artifactId>
         </dependency>
+        <!-- BcryptUtil: a coluna accounts.password_hash existe para as contas CREDENTIAL do modelo de
+             account linking. Quem valida a senha de quem entra pelo Keycloak é o Keycloak. -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
-        </dependency>
-
-        <!-- Axon Framework 5: starter Spring Boot (messaging + modelling + eventsourcing + autoconfigure) -->
-        <dependency>
-            <groupId>org.axonframework.extensions.spring</groupId>
-            <artifactId>axon-spring-boot-starter</artifactId>
-        </dependency>
-        <!-- Reactor extension: ReactorCommandGateway / ReactorQueryGateway (Mono/Flux).
-             Não está no BOM, por isso a versão explícita. -->
-        <dependency>
-            <groupId>org.axonframework.extensions.reactor</groupId>
-            <artifactId>axon-reactor</artifactId>
-            <version>${axon.version}</version>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-elytron-security-common</artifactId>
         </dependency>
 
-        <!-- Tests -->
+        <!-- ==== Validação e mapeamento ======================================== -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-validator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mapstruct</groupId>
+            <artifactId>mapstruct</artifactId>
+            <version>${mapstruct.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+
+        <!-- ==== Axon Framework 5, pela extensão de Quarkus ======================================== -->
+        <!-- Descobre entidades e handlers em BUILD TIME e publica os gateways como beans. Não é oficial
+             da AxonIQ nem do Quarkiverse: é de terceiros e está em alpha. A avaliação da troca, com o
+             que ela apagou daqui, está no README. A versão é fixada à mão porque a extensão não entra
+             no quarkus-bom. -->
+        <dependency>
+            <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
+            <artifactId>quarkus-axon</artifactId>
+            <version>${quarkus-axon.version}</version>
+        </dependency>
+        <!-- A ponte para o JTA do Quarkus. Substituiu um JtaTransactionManager escrito à mão: além do
+             mesmo begin-or-join, ele ativa o request context do CDI e implementa
+             attachToProcessingLifecycle, que publica o EntityManager/Connection da transação no
+             ProcessingContext — o que um event store JPA/JDBC precisa para compartilhar a conexão. -->
+        <dependency>
+            <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
+            <artifactId>quarkus-axon-transaction</artifactId>
+            <version>${quarkus-axon.version}</version>
+        </dependency>
+        <!-- O health check dos event processors é da extensão, mas só aparece se houver quem sirva
+             /q/health. Uma linha para ganhar a checagem de que a projeção está de pé. -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-health</artifactId>
+        </dependency>
+        <!-- axon-eventsourcing arrasta modelling -> messaging -> common/conversion. Declarado mesmo
+             vindo pela extensão: é o BOM daqui que fixa a versão do Axon, não o dela. -->
+        <dependency>
+            <groupId>org.axonframework</groupId>
+            <artifactId>axon-eventsourcing</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-core</artifactId>
+            <version>${reactor.version}</version>
+        </dependency>
+        <!-- ==== Testes ======================================== -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- AxonTestFixture: given-when-then por command, com repositório em memória -->
         <dependency>
             <groupId>org.axonframework</groupId>
             <artifactId>axon-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>io.projectreactor</groupId>
-            <artifactId>reactor-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- Testcontainers: os testes sobem Postgres e Keycloak de verdade.
-             O spring-boot-testcontainers dá o @ServiceConnection, que dispensa escrever
-             @DynamicPropertySource para o datasource. -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-testcontainers</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>postgresql</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <!-- Módulo comunitário do Keycloak: sobe o container já com o realm importado -->
-        <dependency>
-            <groupId>com.github.dasniko</groupId>
-            <artifactId>testcontainers-keycloak</artifactId>
-            <version>${testcontainers-keycloak.version}</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.graphql</groupId>
-            <artifactId>spring-graphql-test</artifactId>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jacoco</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
 
     <build>
-        <testResources>
-            <testResource>
-                <directory>src/test/resources</directory>
-            </testResource>
-            <!-- O realm do Keycloak entra no classpath de teste a partir de docker/, e não de uma cópia:
-                 o container dos testes importa exatamente o mesmo arquivo que o docker compose monta.
-                 Duas cópias divergiriam, e a divergência só apareceria quando um deles quebrasse. -->
-            <testResource>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <!-- O realm entra no classpath a partir de docker/, e não de uma cópia: o Dev Services do
+                 Keycloak importa exatamente o mesmo arquivo que o docker compose monta. Duas cópias
+                 divergiriam, e a divergência só apareceria quando uma delas quebrasse. -->
+            <resource>
                 <directory>docker/keycloak</directory>
                 <includes>
                     <include>realm-*.json</include>
                 </includes>
-            </testResource>
-        </testResources>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <extensions>true</extensions>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>build</goal>
+                            <goal>generate-code</goal>
+                            <goal>generate-code-tests</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <artifactId>maven-compiler-plugin</artifactId>
+                <version>${compiler-plugin.version}</version>
                 <configuration>
-                    <!-- -parameters (herdado do parent do Boot) é o que permite ao Spring GraphQL
-                         casar @Argument com o nome do parâmetro. -->
+                    <!-- -parameters: o SmallRye GraphQL casa o nome do argumento do schema com o nome
+                         do parâmetro do método quando não há @Name. -->
                     <parameters>true</parameters>
                     <annotationProcessorPaths>
                         <path>
@@ -228,37 +250,21 @@
                                      É o que faz um campo novo no command quebrar o build em vez de
                                      chegar null do outro lado. -->
                                 <arg>-Amapstruct.unmappedTargetPolicy=ERROR</arg>
+                                <arg>-Amapstruct.defaultComponentModel=jakarta-cdi</arg>
                             </compilerArgs>
                         </configuration>
                     </execution>
                 </executions>
             </plugin>
             <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-            </plugin>
-            <!-- JaCoCo: o agente entra no surefire por prepare-agent e o relatório sai em
-                 target/site/jacoco (HTML, XML e CSV) ao fim da fase test. Nenhum `check` com mínimo por
-                 enquanto: cobertura aqui é instrumento de leitura, não portão de build. -->
-            <plugin>
-                <groupId>org.jacoco</groupId>
-                <artifactId>jacoco-maven-plugin</artifactId>
-                <version>${jacoco.version}</version>
-                <executions>
-                    <execution>
-                        <id>prepare-agent</id>
-                        <goals>
-                            <goal>prepare-agent</goal>
-                        </goals>
-                    </execution>
-                    <execution>
-                        <id>report</id>
-                        <phase>test</phase>
-                        <goals>
-                            <goal>report</goal>
-                        </goals>
-                    </execution>
-                </executions>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${surefire-plugin.version}</version>
+                <configuration>
+                    <systemPropertyVariables>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                        <maven.home>${maven.home}</maven.home>
+                    </systemPropertyVariables>
+                </configuration>
             </plugin>
         </plugins>
     </build>

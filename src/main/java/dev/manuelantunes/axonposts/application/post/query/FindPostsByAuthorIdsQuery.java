@@ -3,11 +3,11 @@ package dev.manuelantunes.axonposts.application.post.query;
 import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.PostRepository;
 import dev.manuelantunes.axonposts.domain.user.vo.UserId;
-import dev.manuelantunes.axonposts.dto.controller.PostView;
-import dev.manuelantunes.axonposts.mapper.PostViewMapper;
+import dev.manuelantunes.axonposts.application.post.view.PostView;
+import dev.manuelantunes.axonposts.application.post.view.PostViewMapper;
 import org.axonframework.messaging.queryhandling.annotation.Query;
 import org.axonframework.messaging.queryhandling.annotation.QueryHandler;
-import org.springframework.stereotype.Component;
+import jakarta.enterprise.context.ApplicationScoped;
 
 import java.util.List;
 import java.util.Map;
@@ -20,7 +20,7 @@ import java.util.stream.Collectors;
  * resposta com N autores não pode virar N consultas, e o acesso a dados pertence à aplicação e não ao
  * controller.
  */
-@Component
+@ApplicationScoped
 public class FindPostsByAuthorIdsQuery {
 
     @Query(namespace = "posts", name = "FindPostsByAuthorIds", version = "1.0.0")

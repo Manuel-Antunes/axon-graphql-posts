@@ -1,12 +1,12 @@
 package dev.manuelantunes.axonposts.application.post.query;
 
 import dev.manuelantunes.axonposts.application.post.query.FindAllPostsQuery.FindAllPosts;
-import dev.manuelantunes.axonposts.application.post.PostPage;
+import dev.manuelantunes.axonposts.application.post.view.PostPage;
 import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
-import dev.manuelantunes.axonposts.dto.controller.PostView;
-import dev.manuelantunes.axonposts.mapper.PostViewMapperImpl;
+import dev.manuelantunes.axonposts.application.post.view.PostView;
+import dev.manuelantunes.axonposts.application.post.view.PostViewMapperImpl;
 import dev.manuelantunes.axonposts.support.InMemoryPostRepository;
 import dev.manuelantunes.axonposts.support.UserFixtures;
 import org.junit.jupiter.api.BeforeEach;

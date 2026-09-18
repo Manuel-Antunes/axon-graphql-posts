@@ -1,9 +1,10 @@
 package dev.manuelantunes.axonposts.e2e;
 
-import dev.manuelantunes.axonposts.support.AbstractGraphQlE2ETest;
 import org.junit.jupiter.api.Test;
-import org.springframework.graphql.test.tester.GraphQlTester;
-import org.springframework.graphql.test.tester.HttpGraphQlTester;
+
+import dev.manuelantunes.axonposts.support.AbstractGraphQlE2ETest;
+import io.quarkus.test.junit.QuarkusTest;
+import dev.manuelantunes.axonposts.support.GraphQl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -12,17 +13,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <h2>O que só aparece aqui</h2>
  * A orquestração do {@code AssignDefaultTagOnPostCreated} — dois commands encadeados no
- * {@code AFTER_COMMIT} do primeiro — não tem como ser testada com o {@code AxonTestFixture}, que monta um
+ * <i>after-commit</i> do primeiro — não tem como ser testada com o {@code AxonTestFixture}, que monta um
  * command por vez. O que ela tem de interessante é justamente a <b>ordem</b>: a mutation só responde
  * depois de a tag estar atribuída, e por isso um post recém-criado já chega na versão 2.
  * <p>
  * O mesmo vale para o par apagar/restaurar: o {@code @SQLRestriction} some com a linha para o JPA, e é o
- * event sourcing que torna o restore possível. Nada disso é observável sem o banco e o Axon reais.
+ * event sourcing que torna o restore possível. Nada disso é observável sem o banco e o Axon reais — e, na
+ * conversão, foi este teste que pegou o event processor registrado sem {@code build()}, que deixava a
+ * projeção muda sem erro nenhum na partida.
  */
+@QuarkusTest
 class PostLifecycleE2ETest extends AbstractGraphQlE2ETest {
 
-    // um selection set, não um documento: o prefix/suffix dá ao IDE o contexto que falta
-    //language=GraphQL prefix={posts{edges{node{ suffix=}}}}
     private static final String POST_FIELDS = """
             id title content version
             author { __typename name }
@@ -31,167 +33,151 @@ class PostLifecycleE2ETest extends AbstractGraphQlE2ETest {
 
     @Test
     void aNewPostArrivesAlreadyTaggedAtVersionTwo() {
-        asAuthor().document(
-                //language=GraphQL
-                "mutation { createPost(input: {title: \"Nasce\", content: \"c\"}) { " + POST_FIELDS + " } }")
-                .execute()
-                .path("createPost.title").entity(String.class).isEqualTo("Nasce")
-                // 1 = criado, 2 = tag padrão atribuída. A mutation espera o AFTER_COMMIT completar
-                .path("createPost.version").entity(Integer.class).isEqualTo(2)
-                .path("createPost.author.__typename").entity(String.class).isEqualTo("Author")
-                .path("createPost.tags.edges").entityList(Object.class).hasSize(1)
-                .path("createPost.tags.edges[0].node.name").entity(String.class).isEqualTo("Untagged");
+        var response = asAuthor().execute(
+                "mutation { createPost(input: {title: \"Nasce\", content: \"c\"}) { " + POST_FIELDS + " } }");
+
+        assertThat(response.string("createPost.title")).isEqualTo("Nasce");
+        // 1 = criado, 2 = tag padrão atribuída. A mutation espera o after-commit completar
+        assertThat(response.integer("createPost.version")).isEqualTo(2);
+        assertThat(response.string("createPost.author.__typename")).isEqualTo("Author");
+        assertThat(response.list("createPost.tags.edges")).hasSize(1);
+        assertThat(response.string("createPost.tags.edges[0].node.name")).isEqualTo("Untagged");
     }
 
     @Test
     void twoPostsShareTheSameDefaultTag() {
-        HttpGraphQlTester author = asAuthor();
-        createPost(author, "Primeiro", "c");
-        createPost(author, "Segundo", "c");
+        GraphQl author = asAuthor();
+        author.createPost("Primeiro", "c");
+        author.createPost("Segundo", "c");
 
         // a tag padrão é criada uma vez e reusada: o handler procura por nome antes de despachar CreateTag
-        assertThat(jdbc.queryForObject("select count(*) from tags", Integer.class)).isEqualTo(1);
-        assertThat(jdbc.queryForObject("select count(*) from post_tags", Integer.class)).isEqualTo(2);
+        assertThat(count("select count(*) from tags")).isEqualTo(1);
+        assertThat(count("select count(*) from post_tags")).isEqualTo(2);
     }
 
     @Test
     void updatingKeepsTheTagsAndBumpsTheVersion() {
-        HttpGraphQlTester author = asAuthor();
-        String id = createPost(author, "Título original", "conteúdo");
+        GraphQl author = asAuthor();
+        String id = author.createPost("Título original", "conteúdo");
 
-        author.document(
-                //language=GraphQL
-                """
-                        mutation Editar($id: ID!) {
-                          updatePost(input: {id: $id, title: "Título editado"}) { title content version
-                            tags(first: 5) { edges { node { name } } } }
-                        }""")
-                .variable("id", id)
-                .execute()
-                .path("updatePost.title").entity(String.class).isEqualTo("Título editado")
-                // content veio null no input: "não mexer", não "apagar"
-                .path("updatePost.content").entity(String.class).isEqualTo("conteúdo")
-                .path("updatePost.version").entity(Integer.class).isEqualTo(3)
-                .path("updatePost.tags.edges").entityList(Object.class).hasSize(1);
+        var response = author.execute("""
+                mutation Editar($id: ID!) {
+                  updatePost(input: {id: $id, title: "Título editado"}) { title content version
+                    tags(first: 5) { edges { node { name } } } }
+                }""", "id", id);
+
+        assertThat(response.string("updatePost.title")).isEqualTo("Título editado");
+        // content veio null no input: "não mexer", não "apagar"
+        assertThat(response.string("updatePost.content")).isEqualTo("conteúdo");
+        assertThat(response.integer("updatePost.version")).isEqualTo(3);
+        assertThat(response.list("updatePost.tags.edges")).hasSize(1);
     }
 
     @Test
     void anUpdateWithoutChangesIsRefused() {
-        HttpGraphQlTester author = asAuthor();
-        String id = createPost(author, "Igual", "conteúdo");
+        GraphQl author = asAuthor();
+        String id = author.createPost("Igual", "conteúdo");
 
-        author.document(
-                //language=GraphQL
-                """
-                        mutation Editar($id: ID!) {
-                          updatePost(input: {id: $id, title: "Igual"}) { version }
-                        }""")
-                .variable("id", id)
-                .execute()
-                .errors()
-                .expect(error -> "BAD_REQUEST".equals(String.valueOf(error.getExtensions().get("classification"))))
-                .verify();
+        assertThat(author.attempt("""
+                mutation Editar($id: ID!) {
+                  updatePost(input: {id: $id, title: "Igual"}) { version }
+                }""", "id", id).errorCode()).isEqualTo("BAD_REQUEST");
     }
 
     @Test
     void deleteHidesThePostAndRestoreBringsItBackWhole() {
-        HttpGraphQlTester author = asAuthor();
-        String id = createPost(author, "Vai e volta", "conteúdo");
+        GraphQl author = asAuthor();
+        String id = author.createPost("Vai e volta", "conteúdo");
 
         assertThat(postCount()).isEqualTo(1);
 
-        author.document(
-                //language=GraphQL
-                "mutation Apagar($id: ID!) { deletePost(id: $id) }")
-                .variable("id", id).execute()
-                .path("deletePost").entity(Boolean.class).isEqualTo(true);
+        assertThat(author.execute("mutation Apagar($id: ID!) { deletePost(id: $id) }", "id", id)
+                .bool("deletePost")).isTrue();
 
         // some das consultas...
         assertThat(postCount()).isZero();
-        anonymous.document(
-                //language=GraphQL
-                "query Um($id: ID!) { post(id: $id) { id } }")
-                .variable("id", id).execute()
-                .path("post").valueIsNull();
+        assertThat(anonymous.execute("query Um($id: ID!) { post(id: $id) { id } }", "id", id)
+                .isNull("post")).isTrue();
 
         // ...mas a linha continua no banco, marcada
-        assertThat(jdbc.queryForObject(
-                "select count(*) from posts where id = ? and deleted_at is not null", Integer.class, id))
-                .isEqualTo(1);
+        assertThat(count("select count(*) from posts where id = ? and deleted_at is not null", id)).isEqualTo(1);
 
-        author.document(
-                //language=GraphQL
-                "mutation Restaurar($id: ID!) { restorePost(id: $id) { " + POST_FIELDS + " } }")
-                .variable("id", id).execute()
-                // 2 = criado+tag, 3 = apagado, 4 = restaurado. Apagar e restaurar são fatos, e versionam
-                .path("restorePost.version").entity(Integer.class).isEqualTo(4)
-                .path("restorePost.title").entity(String.class).isEqualTo("Vai e volta")
-                // o que importa do restore: o resto do agregado voltou junto
-                .path("restorePost.tags.edges[0].node.name").entity(String.class).isEqualTo("Untagged")
-                .path("restorePost.author.name").entity(String.class).isEqualTo("Manuel Antunes");
+        var restored = author.execute(
+                "mutation Restaurar($id: ID!) { restorePost(id: $id) { " + POST_FIELDS + " } }", "id", id);
+
+        // 2 = criado+tag, 3 = apagado, 4 = restaurado. Apagar e restaurar são fatos, e versionam
+        assertThat(restored.integer("restorePost.version")).isEqualTo(4);
+        assertThat(restored.string("restorePost.title")).isEqualTo("Vai e volta");
+        // o que importa do restore: o resto do agregado voltou junto
+        assertThat(restored.string("restorePost.tags.edges[0].node.name")).isEqualTo("Untagged");
+        assertThat(restored.string("restorePost.author.name")).isEqualTo("Manuel Antunes");
 
         assertThat(postCount()).isEqualTo(1);
     }
 
     @Test
     void theSoftDeleteGuardsAreEnforcedThroughTheApi() {
-        HttpGraphQlTester author = asAuthor();
-        String id = createPost(author, "Guardas", "c");
+        GraphQl author = asAuthor();
+        String id = author.createPost("Guardas", "c");
 
         // restaurar o que está vivo
-        expectBadRequest(author.document(
-                //language=GraphQL
-                "mutation R($id: ID!) { restorePost(id: $id) { id } }")
-                .variable("id", id).execute());
+        assertThat(author.attempt("mutation R($id: ID!) { restorePost(id: $id) { id } }", "id", id)
+                .errorCode()).isEqualTo("BAD_REQUEST");
 
-        author.document(
-                //language=GraphQL
-                "mutation D($id: ID!) { deletePost(id: $id) }").variable("id", id).execute();
+        author.execute("mutation D($id: ID!) { deletePost(id: $id) }", "id", id);
 
         // apagar o que já está apagado
-        expectBadRequest(author.document(
-                //language=GraphQL
-                "mutation D($id: ID!) { deletePost(id: $id) }")
-                .variable("id", id).execute());
+        assertThat(author.attempt("mutation D($id: ID!) { deletePost(id: $id) }", "id", id)
+                .errorCode()).isEqualTo("BAD_REQUEST");
     }
 
     @Test
     void cursorPaginationWalksTheWholeList() {
-        HttpGraphQlTester author = asAuthor();
-        createPost(author, "A", "c");
-        createPost(author, "B", "c");
-        createPost(author, "C", "c");
+        GraphQl author = asAuthor();
+        author.createPost("A", "c");
+        author.createPost("B", "c");
+        author.createPost("C", "c");
 
-        String cursor = anonymous.document(
-                //language=GraphQL
-                "{ posts(first: 2) { edges { cursor node { title } } pageInfo { hasNextPage endCursor } } }")
-                .execute()
-                .path("posts.edges").entityList(Object.class).hasSize(2)
-                .path("posts.edges[0].node.title").entity(String.class).isEqualTo("A")
-                .path("posts.pageInfo.hasNextPage").entity(Boolean.class).isEqualTo(true)
-                .path("posts.pageInfo.endCursor").entity(String.class).get();
+        var first = anonymous.execute(
+                "{ posts(first: 2) { edges { cursor node { title } } pageInfo { hasNextPage endCursor } } }");
 
-        anonymous.document(
-                //language=GraphQL
-                "query P($after: String!) { posts(first: 2, after: $after) { edges { node { title } } pageInfo { hasNextPage } } }")
-                .variable("after", cursor)
-                .execute()
-                .path("posts.edges").entityList(Object.class).hasSize(1)
-                .path("posts.edges[0].node.title").entity(String.class).isEqualTo("C")
-                .path("posts.pageInfo.hasNextPage").entity(Boolean.class).isEqualTo(false);
+        assertThat(first.list("posts.edges")).hasSize(2);
+        assertThat(first.string("posts.edges[0].node.title")).isEqualTo("A");
+        assertThat(first.bool("posts.pageInfo.hasNextPage")).isTrue();
+        String cursor = first.string("posts.pageInfo.endCursor");
+
+        var second = anonymous.execute("""
+                query P($after: String!) {
+                  posts(first: 2, after: $after) { edges { node { title } }
+                    pageInfo { hasNextPage hasPreviousPage } }
+                }""", "after", cursor);
+
+        assertThat(second.list("posts.edges")).hasSize(1);
+        assertThat(second.string("posts.edges[0].node.title")).isEqualTo("C");
+        assertThat(second.bool("posts.pageInfo.hasNextPage")).isFalse();
+        assertThat(second.bool("posts.pageInfo.hasPreviousPage")).isTrue();
     }
 
-    private void expectBadRequest(GraphQlTester.Response response) {
-        response.errors()
-                .expect(error -> "BAD_REQUEST".equals(String.valueOf(error.getExtensions().get("classification"))))
-                .verify();
+    /**
+     * O teto de página e o cursor opaco, que a camada {@code relay} acrescentou nesta conversão: o
+     * {@code ScrollSubrange} do Spring não tinha limite, e o cursor dele não dizia de que conexão era.
+     */
+    @Test
+    void theConnectionRefusesAnOversizedPageAndAForeignCursor() {
+        assertThat(anonymous.attempt("{ posts(first: 5000) { edges { cursor } } }").errorCode())
+                .isEqualTo("BAD_REQUEST");
+
+        String tagCursor = asAuthor().execute("""
+                mutation { createPost(input: {title: "Com tag", content: "c"}) {
+                  tags(first: 1) { edges { cursor } } } }""")
+                .string("createPost.tags.edges[0].cursor");
+
+        // o cursor é de `tags`; usá-lo em `posts` é recusado pelo prefixo de tipo
+        assertThat(anonymous.attempt("query P($c: String!) { posts(first: 2, after: $c) { edges { cursor } } }",
+                "c", tagCursor).errorCode()).isEqualTo("BAD_REQUEST");
     }
 
     private int postCount() {
-        return anonymous.document(
-                //language=GraphQL
-                "{ posts(first: 50) { edges { node { id } } } }")
-                .execute()
-                .path("posts.edges").entityList(Object.class).get().size();
+        return anonymous.execute("{ posts(first: 50) { edges { node { id } } } }").list("posts.edges").size();
     }
 }
