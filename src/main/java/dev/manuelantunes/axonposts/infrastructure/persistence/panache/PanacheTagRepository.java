@@ -9,23 +9,27 @@ import dev.manuelantunes.axonposts.domain.tag.TagRepository;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagName;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.persistence.EntityManager;
 import jakarta.transaction.Transactional;
 
-/** Adapter: implementa a porta {@link TagRepository} com Hibernate ORM + Panache sobre PostgreSQL. */
+/**
+ * Adapter: implementa a porta {@link TagRepository} com Hibernate ORM sobre PostgreSQL.
+ * Ver {@link PanachePostRepository} sobre por que o {@code EntityManager} vem pelo construtor.
+ */
 @ApplicationScoped
 public class PanacheTagRepository implements TagRepository {
 
-    private final TagPanache tags;
+    private final EntityManager em;
 
-    PanacheTagRepository(TagPanache tags) {
-        this.tags = tags;
+    PanacheTagRepository(EntityManager em) {
+        this.em = em;
     }
 
     /** {@code merge} pelo mesmo motivo do {@link PanachePostRepository}: a Tag vem do stream, detached. */
     @Override
     @Transactional
     public void save(Tag tag) {
-        tags.getEntityManager().merge(tag);
+        em.merge(tag);
     }
 
     /**
@@ -36,7 +40,7 @@ public class PanacheTagRepository implements TagRepository {
     @Override
     @Transactional
     public Optional<Tag> findById(TagId tagId) {
-        return tags.findByIdOptional(tagId);
+        return Optional.ofNullable(em.find(Tag.class, tagId));
     }
 
     @Override
@@ -45,18 +49,29 @@ public class PanacheTagRepository implements TagRepository {
         if (tagIds.isEmpty()) {
             return List.of();
         }
-        return tags.byIds(tagIds);
+        return em.createQuery("select t from Tag t where t.id in :ids", Tag.class)
+                .setParameter("ids", tagIds)
+                .getResultList();
     }
 
+    /**
+     * O {@code name} é um {@code @Embedded TagName}, então a consulta navega até o campo do embeddable.
+     * Sem diferenciar caixa, pelo mesmo motivo que {@code TagName.sameAs} não diferencia: "Untagged" e
+     * "untagged" são a mesma tag.
+     */
     @Override
     @Transactional
     public Optional<Tag> findByName(TagName name) {
-        return tags.byName(name.value());
+        return em.createQuery("select t from Tag t where lower(t.name.value) = lower(:name)", Tag.class)
+                .setParameter("name", name.value())
+                .setMaxResults(1)
+                .getResultStream()
+                .findFirst();
     }
 
     @Override
     @Transactional
     public boolean isEmpty() {
-        return tags.count() == 0;
+        return em.createQuery("select count(t) from Tag t", Long.class).getSingleResult() == 0;
     }
 }
