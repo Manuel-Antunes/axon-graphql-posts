@@ -11,7 +11,7 @@ vez de imitar a outra.
 
 ```bash
 ./mvnw quarkus:dev     # http://localhost:8080/q/graphql-ui/  — só precisa de Docker ligado
-./mvnw test            # 131 testes, incluindo ponta a ponta com Postgres e Keycloak de verdade
+./mvnw test            # 144 testes, incluindo ponta a ponta com Postgres e Keycloak de verdade
 ```
 
 ---
@@ -31,6 +31,7 @@ vez de imitar a outra.
 | Mappers | `@Mapper(componentModel = "spring")` | `-Amapstruct.defaultComponentModel=jakarta-cdi` |
 | Infra de teste | Testcontainers à mão (3 classes) | **Dev Services** (zero classes) |
 | Subscriptions | GraphQL over SSE | WebSocket (`graphql-transport-ws`, de fábrica) **+ SSE** (`interfaces/graphql/sse`, escrito aqui) |
+| Federação | — | **subgraph Apollo Federation 2** (`@key`/`@shareable`/`@Resolver` do SmallRye) |
 
 O domínio (`domain/`) atravessou **quase intacto**: mudou uma anotação (`@EventSourced` do módulo Spring
 virou `@EventSourcedEntity` do núcleo do Axon) e o `Role`, que perdeu o prefixo `ROLE_` porque o Quarkus
@@ -511,6 +512,240 @@ Duas coisas o code-first cobra, e as duas estão anotadas nas classes:
 Ganhos de contrato que vieram de graça: `createdAt` é `DateTime!` em vez de `String!`, e `provider` é o
 enum `AuthProvider!` — no SDL escrito à mão o campo era `AuthProvider!` enquanto o DTO carregava `String`,
 e ninguém era obrigado a notar.
+
+---
+
+## Federação: este schema como subgraph do Apollo
+
+O schema deixou de ser um grafo inteiro e passou a ser **um subgraph de um supergraph**. Nada do que
+existia mudou de comportamento — `posts`, `me`, `createPost`, as subscriptions e a porta de SSE
+continuam idênticas para quem fala direto com esta aplicação. O que se acrescentou foi o contrato que o
+roteador lê, e os dois campos que ele chama.
+
+```graphql
+schema @link(import: ["@key", "@shareable"], url: "https://specs.apollo.dev/federation/v2.7")
+
+type  Post   @key(fields: "id")                    { id: ID! ... }
+type  Tag    @key(fields: "id")                    { id: ID! ... }
+interface User @key(fields: "id")                  { id: ID! ... }
+type  Author implements User @key(fields: "id")    { id: ID! ... }
+type  Reader implements User @key(fields: "id")    { id: ID! ... }
+type  PageInfo @shareable                          { ... }
+```
+
+Ligar isso foi **uma linha de configuração e um punhado de anotações** — o SmallRye já traz a Federação 2
+inteira, incluindo `_service`, `_entities` e as diretivas até a 2.7. O trabalho real não foi habilitar; foi
+decidir o que este serviço **é dono de** e escrever os resolvedores que pagam essa promessa.
+
+### Chave não é id: é id mais um jeito de resolvê-lo sozinho
+
+Um `@key` diz ao roteador "pode me mandar de volta `{__typename, id}` que eu reconstruo o objeto". Isso é
+uma promessa que a **composição aceita sem nunca testar** — se não houver quem a cumpra, o supergraph
+compõe, sobe, e quebra na primeira query que pular de subgraph.
+
+Quem a cumpre são os `*EntityApi` em `interfaces/graphql/api/`, com `@Resolver`. O caso da `Tag` é o que
+deixa a diferença visível: dentro deste schema ela **nunca teve** consulta por id — só se chega a uma tag
+a partir de um post, por `Post.tags`. Isso bastava enquanto o schema era um só. Um vizinho que guarde
+estatísticas por tag referencia `Tag` pela chave sem nunca ter visto um post, e o roteador volta aqui
+pedindo `_entities` — não `posts`. Ter id não fazia dela uma entidade; ter como resolvê-la isolada, faz.
+
+O `Post` é o oposto instrutivo: `Query.post(id:)` já existia e o SmallRye o encontraria sozinho — ele
+procura o resolvedor primeiro entre os `@Resolver` e **depois entre as queries**, casando por tipo de
+retorno e nome de argumento. O `@Resolver` do `Post` existe pela outra razão, a de lote.
+
+### `@Resolver` não é `@Query`, e o casamento é por assinatura
+
+Um `@Resolver` **não aparece no schema**: ele entra num tipo sintético que o SmallRye monta à parte e
+serve só ao `_entities`. É o que evita publicar uma query por entidade só para o protocolo funcionar —
+`Query.post(id:)` continua sendo o que é, uma operação de cliente.
+
+A escolha do método não é pelo nome. Cada representação vira o par *(tipo, conjunto de nomes de
+argumento)* — `("Post", {"id"})` — e o SmallRye procura um campo que devolva `Post` e cujos argumentos
+sejam **exatamente** esse conjunto. Trocar `id` por `postId` compila, passa no `FederationSchemaTest` e
+só quebra quando alguém consulta `_entities`.
+
+É também por isso que o agregado de usuário tem **três** resolvedores para uma consulta só. O casamento é
+pelo tipo de retorno, e `List<UserView>`, `List<AuthorView>` e `List<ReaderView>` são o mesmo apagamento
+em Java e três tipos GraphQL diferentes — que é justamente o que o casamento usa.
+
+### `@Id` no argumento em lote é a armadilha cara
+
+O argumento de um resolvedor em lote é `List<String>` **sem `@Id`**, e a ausência custou uma sessão de
+depuração. O `ReferenceCreator` do SmallRye testa `@Id` **antes** de desembrulhar a coleção: com a
+anotação ele pede um scalar `ID` para `java.util.List`, o tipo esperado do argumento deixa de ser
+`String`, e cada id vira "um String onde se esperava um objeto" — que o SmallRye tenta ler como JSON.
+
+O que chega ao cliente não diz nada disso. O erro de transformação vira um `DataFetcherResult` sem dados,
+que o `FederationDataFetcher` descarta, e a resposta é um `NullPointerException: resultList is null` sem
+menção a argumento nenhum. O tipo do argumento no schema é indiferente — o tipo `Resolver` não é
+publicado e o `_entities` entrega valores crus, sem coerção. Só o `FederationEntitiesE2ETest` pega isso.
+
+### Lote: o mesmo N+1, agora atravessando o roteador
+
+```properties
+quarkus.smallrye-graphql.federation.batch-resolving-enabled=true
+```
+
+**Desligado por padrão**, e é a linha que separa uma chamada de `_entities` com N chaves de N idas ao
+banco. Ligada, o SmallRye procura primeiro um `@Resolver` que devolva **lista** do tipo e entrega o lote
+inteiro de uma vez; desligada, chama um método por representação. É o irmão, através do roteador, do que
+o `@Source List<T>` já fazia dentro do schema — e `FederationEntitiesE2ETest` o afere do mesmo jeito que
+o `BatchLoadingE2ETest`: cinco representações precisam custar o mesmo número de statements que uma.
+
+O contrato do lote é rígido e conferido em runtime: **uma posição por representação, na ordem em que
+chegaram**. Um id que não existe mais vira `null` *naquela* posição — devolver uma lista menor deslocaria
+tudo o que o roteador anexa depois. Por isso os resolvedores projetam a lista de ids pedida sobre um mapa,
+em vez de devolver o que veio do banco.
+
+E o elemento da lista **não** pode levar `@NonNull`: com `[Post!]` o casamento por tipo de retorno falha —
+o `FederationDataFetcher` desembrulha a lista e espera um tipo *nomeado*, não um `NonNull` — e o lote
+deixa de ser usado sem uma linha de log.
+
+### `interface User @key`: por que a interface também é entidade
+
+`User` é interface porque a hierarquia do domínio é polimórfica, e isso não mudou. O que o `@key` na
+interface acrescenta é a **interface de entidade** da Federação 2.3: um subgraph vizinho declara
+
+```graphql
+type User @key(fields: "id") @interfaceObject {
+  id: ID!
+  commentCount: Int!
+}
+```
+
+e ganha `commentCount` em **toda** implementação — hoje `Author` e `Reader`, amanhã o que houver — sem
+saber que elas existem. Ele enxerga um tipo só. Sem isso, um campo novo para todo usuário exigiria
+declarar cada tipo concreto lá, e de novo a cada tipo novo aqui.
+
+O `docker/federation/comments-example.graphql` é esse subgraph, escrito só como SDL, e
+`supergraph-example.yaml` o compõe junto: é a prova, feita por composição e não por prosa, de que as
+chaves publicadas aqui bastam para alguém estender o grafo.
+
+Pedir o tipo errado responde `null`, e não o outro tipo: o id de um leitor pedido como `Author` não vira
+um `Author`. Responder o `Reader` seria pior do que não responder — o roteador anexaria campos de
+`Author` a um objeto que não é um.
+
+### `PageInfo` é o único tipo compartilhado
+
+Na Federação 2 um campo pertence a **um** subgraph e a composição recusa dois donos. `PageInfo` é a
+exceção estrutural: não é entidade, não tem dono, é a forma de uma página — e todo subgraph que pagina
+escreve a sua. `@shareable` é o que diz que essas definições são a mesma coisa.
+
+`PostConnection`, `PostEdge` e as irmãs **não** levam a anotação, e a omissão é a decisão: elas carregam
+`Post` e `Tag`, que são entidades daqui. Se outro subgraph as definisse, seria conflito de verdade — e
+recusar é o certo.
+
+### O `@link`, e o que acontece sem os `import`
+
+A versão da especificação está **fixada literalmente** em `FederatedSchemaApi`, e não vem da constante
+`Link.FEDERATION_SPEC_LATEST_URL` que a biblioteca oferece. A versão do `@link` determina quais diretivas
+o roteador aceita deste subgraph: é contrato, e contrato não muda por efeito colateral de um bump de
+dependência.
+
+Os `import` não são decoração. Sem nenhum `@Link`, o SmallRye emite as diretivas com nome curto. Com um
+`@Link` que **não** importe a diretiva usada, ela sai prefixada — `@federation__key`. As duas formas
+compõem; só a segunda obriga quem lê o SDL a saber o que é. É por isso que o `FederationSchemaTest` afirma
+as duas coisas: que `@key` sai curto, e que uma não-importada (`@federation__external`) continua
+prefixada — a segunda asserção é o que prova que a primeira não é coincidência.
+
+O `@Link` mora sozinho numa classe `@GraphQLApi` sem operação nenhuma. É diretiva de `SCHEMA`, e o
+SmallRye só as recolhe em classes de API; ou ela mora numa das APIs existentes, sem relação com os
+resolvers ao lado, ou mora sozinha. E **só pode haver uma**: repetir o `@link` da Federação em outra
+classe derruba a aplicação na partida.
+
+### Os dois SDL, e qual deles compõe
+
+| | `/graphql/schema.graphql` | `{ _service { sdl } }` |
+|---|---|---|
+| quem serve | o Quarkus, como arquivo | o campo da especificação de subgraph |
+| quem consome | gerador de cliente, IDE, o diff da revisão | o `rover`, o roteador |
+| contém | o schema + `@link` + `@key` | o mesmo, mais `_entities`/`_service`/`_Any` |
+
+São o mesmo contrato por duas portas, e o `schema.graphql` da raiz continua sendo a cópia versionada do
+primeiro. Para que ele continuasse **compondo**, duas linhas precisaram entrar:
+
+```properties
+quarkus.smallrye-graphql.schema-include-directives=true
+quarkus.smallrye-graphql.schema-include-schema-definition=true
+```
+
+A primeira porque `@key` e `@shareable` deixaram de ser enfeite e passaram a ser o contrato. A segunda
+porque o bloco `schema { ... }` é o que carrega o `@link` — e **um subgraph sem `@link` é lido como
+Federação 1 na composição**. O preço é o arquivo dobrar de tamanho com definições de diretiva que nunca
+mudam; o que se compra é um SDL que o `rover` aceita direto do repositório, sem subir nada. O
+`FederationSchemaTest` confere que as duas linhas continuam lá.
+
+### Rodando federado
+
+```bash
+# 1. o subgraph. O 0.0.0.0 NÃO é detalhe: em dev o Quarkus escuta só em 127.0.0.1, e o roteador roda
+#    em container — sem isto ele não alcança a aplicação.
+./mvnw quarkus:dev -Dquarkus.http.host=0.0.0.0
+
+# 2. compor. O rover faz a introspecção de federação (`{ _service { sdl } }`) na aplicação de pé
+rover supergraph compose --config docker/federation/supergraph.yaml > docker/federation/supergraph.graphql
+
+# 3. o supergraph
+docker compose --profile federation up -d router     # http://localhost:4000
+```
+
+```bash
+# a mutation atravessa o roteador com o token propagado, e o post nasce na versão 2 como sempre
+curl -s localhost:4000/ -H 'content-type: application/json' -H "Authorization: Bearer $TOKEN" \
+  -d '{"query":"mutation { createPost(input:{title:\"Via supergraph\",content:\"c\"}) { id version } }"}'
+```
+
+Três coisas que custam tempo se ninguém as escrever:
+
+- **o roteador não repassa cabeçalho nenhum por padrão.** Sem o bloco `headers` do `router.yaml`, `me` e
+  `createPost` respondem `UNAUTHORIZED` atrás do supergraph e funcionam direto — quem autoriza continua
+  sendo o `@RolesAllowed`, o que muda é que agora existe um salto que pode comer o token em silêncio;
+- **a versão do roteador não é o `federation_version`.** Uma é o binário, a outra é o algoritmo de
+  composição. `v2.9.3` existe como composição e não existe como imagem: `manifest unknown` no pull;
+- **`subgraph_url` vai aninhado em `schema:`** no `supergraph.yaml`. Solto um nível acima, o rover não
+  reclama — descarta o subgraph e falha com `No subgraphs were found in the supergraph config`.
+
+### Subscriptions atrás do roteador: licenciadas
+
+`subscription.enabled: true` é feature do GraphOS. Sem `APOLLO_KEY`/`APOLLO_GRAPH_REF` o roteador não sobe
+degradado — ele **recusa a partida**:
+
+```
+license violation, the router is using features not available for your license: ["Federated subscriptions"]
+```
+
+Por isso o bloco está comentado no `router.yaml`: deixá-lo ligado tornaria
+`docker compose --profile federation up` quebrado para quem só quer ver a POC federada.
+
+Com licença, o roteador falaria `graphql-transport-ws` com este subgraph, no mesmo `/graphql` que o
+SmallRye já serve — e vale registrar o que isso implica do outro lado: o cliente do supergraph **não abre
+WebSocket**; ele recebe a subscription por HTTP multipart, e o WebSocket existe só entre roteador e
+subgraph. A porta de SSE escrita em `interfaces/graphql/sse` continua sendo o que sempre foi, a forma de
+assinar **falando direto** com este serviço. O roteador não a usa, e isso não é defeito de nenhum dos dois.
+
+### O subgraph não é a fronteira
+
+`_entities` é público e resolve **qualquer** entidade pela chave, sem token. Isso não é descuido do
+SmallRye nem deste projeto: é a premissa de operação da Federação — o subgraph fica na rede interna e
+quem fica exposto é o roteador. Vale dizer o que isso muda aqui, porque muda:
+
+- `Post`, `Tag` e `Author` já eram alcançáveis anonimamente por `post`/`posts` e `Post.author`;
+- **`Reader` não era.** Agora `_entities` devolve o e-mail e as contas de um leitor a quem souber o id.
+
+Publicar esta aplicação direto na internet, portanto, expõe mais do que antes. Atrás do roteador, não —
+e a autorização de campo continua valendo igual nas três portas, porque o `@RolesAllowed` roda no método.
+
+O caminho oficial para autorização no próprio roteador são as diretivas `@authenticated`,
+`@requiresScopes` e `@policy`, que o SmallRye também expõe como anotações. Elas **não** foram usadas aqui
+por dois motivos: são avaliadas por features licenciadas do GraphOS, e duplicariam no schema uma decisão
+que já está no método — que é onde este projeto insiste em mantê-la.
+
+### O que não foi feito, e por quê
+
+`@external`, `@requires`, `@provides` e `@override` existem no SmallRye e **não** aparecem em lugar
+nenhum. Elas servem a um subgraph que estende tipo alheio; este não estende nenhum — ele é dono de tudo
+o que declara. Anotação de federação escrita "para demonstrar" viraria ficção no SDL que o roteador lê.
+Quando houver um vizinho de verdade para estender, o `comments-example.graphql` mostra a forma.
 
 ---
 

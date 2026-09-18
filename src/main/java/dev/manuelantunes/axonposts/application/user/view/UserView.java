@@ -7,6 +7,9 @@ import org.eclipse.microprofile.graphql.Id;
 import org.eclipse.microprofile.graphql.Name;
 import org.eclipse.microprofile.graphql.NonNull;
 
+import io.smallrye.graphql.api.federation.FieldSet;
+import io.smallrye.graphql.api.federation.Key;
+
 /**
  * DTO de saída de um usuário: a {@code interface User} do schema.
  * <p>
@@ -41,8 +44,18 @@ import org.eclipse.microprofile.graphql.NonNull;
  * cada um voltando ao banco para preencher um campo — inclusive quando quem montou a view já tinha o
  * usuário inteiro carregado. A view completa é montada de uma vez, a partir do que o Hibernate já
  * hidratou (a herança {@code JOINED} traz a bio no mesmo join; o {@code join fetch} traz as contas).
+ *
+ * <h2>{@code @Key} na interface, e não só nas implementações</h2>
+ * É o que faz dela uma <b>interface de entidade</b> (Federação 2.3): um subgraph vizinho declara
+ * {@code type User @key @interfaceObject} e ganha um campo em <b>toda</b> implementação — hoje
+ * {@code Author} e {@code Reader}, amanhã o que houver — sem saber que elas existem.
+ * <p>
+ * Isso exige que as duas implementações levem a <b>mesma</b> chave, e que exista um resolvedor para o
+ * {@code __typename: "User"} além dos concretos; os três estão no {@code UserEntityApi}. Tipo novo
+ * permitido aqui = {@code @Key(fields = @FieldSet("id"))} nele também.
  */
 @Name("User")
+@Key(fields = @FieldSet("id"))
 @Description("Quem tem conta. Interface porque a hierarquia do domínio é polimórfica")
 public sealed interface UserView permits ReaderView, AuthorView {
 

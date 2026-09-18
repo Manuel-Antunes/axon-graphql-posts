@@ -1,23 +1,28 @@
 package dev.manuelantunes.axonposts.interfaces.graphql.relay;
 
+import io.smallrye.graphql.api.federation.Shareable;
+
 /**
- * Exatamente o {@code PageInfo} da GraphQL Cursor Connections Specification.
+ * As pontas de uma página, na forma que a especificação Relay pede.
+ *
+ * <h2>{@code @Shareable}: o único tipo deste schema que outro subgraph também vai definir</h2>
+ * Na Federação 2 um campo pertence a <b>um</b> subgraph, e a composição falha quando dois definem o
+ * mesmo. {@code PageInfo} é a exceção estrutural: ele não é entidade nem tem dono — é a forma de uma
+ * página, e todo subgraph que pagine escreve a sua. O {@code @shareable} é o que diz ao roteador que
+ * essas definições são a mesma coisa e podem coexistir.
  * <p>
- * Os booleanos são primitivos de propósito: o SmallRye expõe primitivo como {@code Boolean!} sem
- * precisar de anotação. {@code startCursor}/{@code endCursor} ficam {@code null} numa página vazia, e por
- * isso são os únicos campos anuláveis da spec.
- * <p>
- * Não é genérico, então o nome no schema é o da classe: {@code PageInfo}, um só para todas as
- * connections. É o mesmo tipo compartilhado que o {@code ConnectionTypeDefinitionConfigurer} do Spring
- * gerava uma vez e reusava.
+ * {@code PostConnection}, {@code PostEdge} e as irmãs <b>não</b> levam a anotação de propósito: elas
+ * carregam {@code Post} e {@code Tag}, que são entidades daqui, então nenhum outro subgraph tem como
+ * defini-las sem primeiro ter os tipos — e se tivesse, seria um conflito de verdade, que é justamente o
+ * que a composição deve recusar.
  */
+@Shareable
 public record PageInfo(
         boolean hasNextPage,
         boolean hasPreviousPage,
         String startCursor,
         String endCursor) {
 
-    /** A página vazia: não há cursor de início nem de fim porque não há item nenhum. */
     static PageInfo empty(boolean hasPreviousPage) {
         return new PageInfo(false, hasPreviousPage, null, null);
     }

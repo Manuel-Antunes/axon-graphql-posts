@@ -75,6 +75,15 @@ public class PanachePostRepository implements PostRepository {
      */
     @Override
     @Transactional
+    public List<Post> findAllById(Collection<PostId> postIds) {
+        if (postIds.isEmpty()) {
+            return List.of();
+        }
+        return posts.byIds(postIds);
+    }
+
+    @Override
+    @Transactional
     public Map<UserId, List<Post>> findByAuthorIds(Collection<UserId> authorIds) {
         if (authorIds.isEmpty()) {
             return Map.of();

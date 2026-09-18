@@ -17,6 +17,16 @@ Em dev e em teste **não é preciso subir nada**: o Dev Services do Quarkus leva
 open target/jacoco-report/index.html   # cobertura — o quarkus-jacoco roda junto com `test`
 ```
 
+Federado (Apollo Router na frente). O `-Dquarkus.http.host=0.0.0.0` **não** é detalhe: em dev o Quarkus
+escuta só em `127.0.0.1` e o router roda em container — sem isso ele não alcança a aplicação.
+
+```bash
+./mvnw quarkus:dev -Dquarkus.http.host=0.0.0.0
+rover supergraph compose --config docker/federation/supergraph.yaml > docker/federation/supergraph.graphql
+docker compose --profile federation up -d router          # http://localhost:4000
+rover supergraph compose --config docker/federation/supergraph-example.yaml   # compõe com um vizinho fictício
+```
+
 O `docker-compose.yml` serve para **dois** casos, e só: rodar o JAR empacotado (perfil `prod`) e ter o
 console de administração do Keycloak. Os containers levam prefixo `quarkus-` para não colidirem com os do
 projeto Spring original, e as portas do host são variáveis (`POSTGRES_PORT`, `KEYCLOAK_PORT`).
@@ -113,6 +123,7 @@ interfaces/graphql/mapper/       PostInputMapper (input → command)
 interfaces/graphql/relay/        Connection/Edge/PageInfo/Connections/Cursors + Post/TagConnection/Edge
 interfaces/graphql/error/        GraphQlErrors, @TranslatesErrors, as 4 exceções com @ErrorCode
 interfaces/graphql/sse/          GraphQL over SSE: a rota, o handler e o formato do fio
+docker/federation/               supergraph.yaml, router.yaml e o subgraph de exemplo (SDL só)
 ```
 
 A regra que decide: **quem atravessa o bus é da aplicação; quem só existe no schema é da apresentação.**
@@ -123,8 +134,8 @@ A regra que decide: **quem atravessa o bus é da aplicação; quem só existe no
 - Os `*Input` nunca saem da borda: o `PostInputMapper` os transforma em command antes de qualquer coisa.
   Por isso são de `interfaces`, e o mapper deles também.
 - **O que ficou como dívida consciente**: os `*View` carregam anotações do MicroProfile GraphQL
-  (`@Name("Post")`, `@Id`, `@Description`) — é o que dá o nome do tipo no schema, e é a aplicação sabendo
-  de protocolo. Tirar isso seria duplicar cada view (uma da aplicação, uma do schema) e dobrar os mappers;
+  (`@Name("Post")`, `@Id`, `@Description`) e, desde a federação, o `@Key` — é o que dá o nome do tipo no
+  schema e o papel dele na topologia, e é a aplicação sabendo de protocolo. Tirar isso seria duplicar cada view (uma da aplicação, uma do schema) e dobrar os mappers;
   não vale para o tamanho desta POC. Se um dia valer, a fronteira a mexer é o `*ViewMapper`.
 - `DataIntegrityTranslator` fica em `error/` apesar de conhecer o Hibernate: ele é parte do mecanismo de
   **classificação**, e quem o chama é o `GraphQlErrors`. Movê-lo para `infrastructure` criaria a única
@@ -214,7 +225,10 @@ domínio na mesma classe. Não existe entidade de infraestrutura espelho; os val
 
 - **Schema code-first.** Não há `.graphqls`; o SDL é gerado e servido em `/graphql/schema.graphql`. O
   `schema.graphql` da raiz é uma cópia versionada dele (nada o lê em runtime); atualizar com
-  `curl -s http://localhost:8080/graphql/schema.graphql > schema.graphql` ao mexer no contrato. Por
+  `curl -s http://localhost:8080/graphql/schema.graphql > schema.graphql` ao mexer no contrato. Ele traz
+  `@link`/`@key`/`@shareable` porque `schema-include-directives` e `schema-include-schema-definition` estão
+  ligados — as duas linhas existem para que esse arquivo **componha** sem a aplicação de pé, e tirar
+  qualquer uma delas faz o `rover` ler o subgraph como Federação 1. `FederationSchemaTest` trava isso. Por
   isso os DTOs levam `@Name`/`@Input`: `PostView` → `Post`, `CreatePostInput` → `CreatePostInput` (sem a
   anotação viraria `CreatePostInputInput`).
 - **Os acessores de `UserView` levam `@Name`, e isso não é redundância.** O `InterfaceCreator` do SmallRye
@@ -281,6 +295,81 @@ domínio na mesma classe. Não existe entidade de infraestrutura espelho; os val
   SmallRye é **10**, e 10 quebra a introspecção da GraphiQL (profundidade 15) e a query Relay mais funda
   do schema (11). Falha de um jeito enganoso — a aplicação sobe, o SDL é servido, query rasa responde, e
   só a UI abre em branco. `SchemaIntrospectionTest` trava os dois casos; baixar o número derruba ele.
+
+### Federação (Apollo Federation 2)
+
+A aplicação é um **subgraph**. O SmallRye serve `_service { sdl }` e `_entities(representations:)`;
+o que é daqui são as anotações nas views, os `*EntityApi` e duas linhas de `application.properties`
+(`federation.enabled`, `federation.batch-resolving-enabled`). `docker/federation/` tem o
+`supergraph.yaml`, o `router.yaml` e um subgraph vizinho escrito só como SDL.
+
+Entidades e chaves: `Post`, `Tag`, `Author`, `Reader` e a **interface** `User`, todas por `id`.
+`PageInfo` leva `@Shareable` — é o único tipo que outro subgraph também define.
+
+**ENTIDADE NOVA = QUATRO COISAS, e faltar qualquer uma quebra em runtime, não na compilação:**
+
+1. `@Key(fields = @FieldSet("id"))` na *view* (é ela que vira o `type` do schema);
+2. um `<X>EntityApi` em `interfaces/graphql/api/` com um `@Resolver` em lote;
+3. uma query `Find<X>sByIds` em `application/<agregado>/query/`, devolvendo **mapa** por id;
+4. `findAllById` na porta do repositório + o método no `*Panache` + o duplo em memória de `support/`.
+
+As quatro armadilhas do `@Resolver`, todas silenciosas:
+
+- **o argumento precisa se chamar `id`** (ou o que estiver no `@Key`). O casamento é por *tipo de retorno
+  + conjunto de nomes de argumento*, não por nome de método. `postId` compila e o `_entities` fica sem
+  resolvedor;
+- **o argumento em lote NÃO leva `@Id`.** O `ReferenceCreator` testa `@Id` antes de desembrulhar a
+  coleção: com ele, o tipo esperado vira `ID` de `java.util.List` e cada id é lido como JSON. O que chega
+  ao cliente é `NullPointerException: resultList is null`, sem menção a argumento;
+- **o elemento da lista NÃO leva `@NonNull`.** Com `[Post!]` o casamento por tipo de retorno falha — o
+  `FederationDataFetcher` espera um tipo *nomeado* depois de desembrulhar a lista — e o lote deixa de ser
+  usado sem um log;
+- **uma posição por representação, na ordem recebida**, com `null` onde não existe. Por isso o resolvedor
+  projeta a lista de ids sobre o mapa da query, em vez de devolver o que veio do banco.
+
+Tipo polimórfico precisa de **um `@Resolver` por tipo concreto mais um para a interface** (`UserEntityApi`
+tem três): `List<UserView>` e `List<AuthorView>` são o mesmo apagamento em Java e três tipos GraphQL
+diferentes, e é o tipo GraphQL que o casamento usa. Pedir o tipo errado responde `null`, nunca o outro
+tipo.
+
+O `@Link` mora sozinho em `FederatedSchemaApi`, e **só pode haver um** — repetir o `@link` da Federação
+em outra classe `@GraphQLApi` derruba a aplicação na partida. Diretiva usada e não importada sai
+prefixada (`@federation__key`): ao usar uma nova, acrescentar o `@Import` junto. A versão é literal de
+propósito; não trocar por `Link.FEDERATION_SPEC_LATEST_URL`.
+
+**Dois erros VERMELHOS no editor são falso positivo, e não se conserta no código.** O plugin Quarkus Tools
+(Red Hat) acusa, via LSP4IJ:
+
+```
+Directive 'io.smallrye.graphql.api.federation.Key' is not allowed on element type 'INTERFACE'   UserView
+Directive 'io.smallrye.graphql.api.federation.link.Link' is not allowed on element type 'SCHEMA' FederatedSchemaApi
+```
+
+As duas anotações declaram exatamente essas posições (`@Directive(on = {OBJECT, INTERFACE})` e
+`on = {SCHEMA}`), e o SDL gerado prova que funcionam. O bug está no
+`MicroProfileGraphQLASTValidator`, que lê os valores do `on` assim:
+
+```java
+name = init.getText().substring(init.getText().indexOf(".") + 1);   // indexOf, não lastIndexOf
+```
+
+Lido de um .class de biblioteca, o texto vem qualificado
+(`io.smallrye.graphql.api.DirectiveLocation.INTERFACE`); o `indexOf(".")` para no ponto de `io.` e sobra
+`smallrye.graphql.api.DirectiveLocation.INTERFACE`, que não casa com nada. Só aparece nessas duas porque
+o validador **não checa `OBJECT`** — por isso `@Key` nos records (`PostView`, `TagView`…) passa calado.
+
+Não há conserto pelo código: as duas posições são as únicas que o SmallRye aceita, e `@SuppressWarnings`
+não pega (é diagnóstico de language server, não inspeção — nem `"ALL"` silencia). Quem incomodar,
+desliga em **Settings → Languages & Frameworks → MicroProfile → Validation** (guardado em
+`.idea/microProfileSettings.xml`, que não é versionado). **Não remover o `@Key` da interface nem mudar o
+`@Link` de lugar para calar a IDE** — seria trocar uma capacidade real por um aviso errado.
+
+`@Blocking`/`@NonBlocking`/`@RunOnVirtualThread` **não** podem ser combinadas com `@Resolver`. Não é
+problema aqui: o offload é escrito no corpo do método (`runSubscriptionOn`), como em todo resolver.
+
+**`_entities` é público e resolve qualquer entidade pela chave, sem token** — é a premissa da Federação
+(o subgraph fica interno, o roteador é a fronteira). Consequência concreta: `Reader`, que não era
+alcançável anonimamente, agora é. Não publicar esta aplicação direto na internet.
 
 ### Configuração de infraestrutura
 
@@ -350,6 +439,11 @@ Surefire roda tudo em `./mvnw test`, inclusive os `*E2ETest` — **Docker precis
   `subscribingprocessor.namespaces`. As duas primeiras valem por **ausência** de `@DefaultBean` (sumir não
   quebra compilação); a terceira varre o `BeanManager` atrás de `@EventHandler` e falha se algum pacote
   ficou de fora da propriedade.
+- **Federação** (`FederationSchemaTest`, `FederationEntitiesE2ETest`): o primeiro lê o `_service { sdl }`
+  — que é o que o `rover` leria, e onde `@key`/`@shareable` aparecem, coisa que a introspecção não mostra.
+  O segundo chama o `_entities` de verdade: é o único lugar onde um argumento renomeado, um `@Id` a mais
+  ou um `@NonNull` no elemento da lista falham. Inclui o custo, pela mesma propriedade do
+  `BatchLoadingE2ETest`: N representações precisam custar os mesmos statements que 1.
 - **Ponta a ponta** (`e2e/*`): Dev Services sobem Postgres e Keycloak; uma única aplicação é compartilhada
   por todas as classes. Cada método começa com `truncate ... cascade` (o event store em memória fica; todo
   id é UUID novo). Uma subclasse que acrescente `@TestProfile` ganha aplicação própria e a suíte paga

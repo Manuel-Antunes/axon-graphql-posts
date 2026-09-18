@@ -1,0 +1,54 @@
+# Configuração do Apollo Router para pôr este subgraph atrás de um supergraph.
+#
+#   rover supergraph compose --config docker/federation/supergraph.yaml > docker/federation/supergraph.graphql
+#   docker compose --profile federation up -d router     # http://localhost:4000
+#
+# O router NÃO compõe: ele lê um supergraph já composto. Por isso o compose acima vem antes, e por isso
+# o `supergraph.graphql` é artefato de build, não de fonte (está no .gitignore).
+
+supergraph:
+  listen: 0.0.0.0:4000
+  path: /
+
+# Sem esta seção, `me` e `createPost` respondem UNAUTHORIZED atrás do router.
+#
+# O router não repassa cabeçalho nenhum por padrão: cada requisição ao subgraph é montada do zero. Quem
+# autoriza aqui é o método (@RolesAllowed), e para isso o token precisa chegar — a decisão de segurança
+# continua sendo do subgraph, o que muda é que agora existe um salto no meio que pode comê-la em
+# silêncio. É o custo de ter o router como fronteira, e é uma linha de configuração.
+headers:
+  all:
+    request:
+      - propagate:
+          named: "authorization"
+
+# Erros do subgraph aparecem na resposta do router. DEV APENAS: em produção isto vaza mensagem interna
+# para o cliente — que é exatamente o cuidado que o `show-runtime-exception-message` toma do outro lado.
+include_subgraph_errors:
+  all: true
+
+# ==== Subscriptions: DESLIGADAS de propósito, e não por esquecimento ==========================
+#
+# `subscription.enabled: true` é feature LICENCIADA do GraphOS. Sem APOLLO_KEY/APOLLO_GRAPH_REF o router
+# não sobe degradado: ele RECUSA A PARTIDA, com
+#
+#   license violation, the router is using features not available for your license:
+#   ["Federated subscriptions"]
+#
+# Deixar o bloco ligado aqui tornaria `docker compose --profile federation up` quebrado para quem não tem
+# conta no GraphOS — que é o caso de quem só quer ver esta POC federada. Ligue as duas coisas juntas.
+#
+# O que ele faria: o router falaria `graphql-transport-ws` com este subgraph, no mesmo /graphql que o
+# SmallRye já serve. Vale registrar o que isso implica do outro lado: o cliente do supergraph NÃO abre
+# WebSocket — ele recebe a subscription por HTTP multipart, e o WebSocket existe só entre router e
+# subgraph.
+#
+# E a porta de SSE escrita em interfaces/graphql/sse continua sendo o que sempre foi: a forma de assinar
+# FALANDO DIRETO com este serviço. O router não a usa, e isso não é defeito de nenhum dos dois.
+#
+# subscription:
+#   enabled: true
+#   mode:
+#     passthrough:
+#       all:
+#         path: /graphql

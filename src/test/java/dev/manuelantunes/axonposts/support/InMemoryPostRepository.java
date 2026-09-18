@@ -49,6 +49,11 @@ public final class InMemoryPostRepository implements PostRepository {
     }
 
     @Override
+    public List<Post> findAllById(Collection<PostId> postIds) {
+        return postIds.stream().map(byId::get).filter(java.util.Objects::nonNull).toList();
+    }
+
+    @Override
     public Map<PostId, List<Tag>> findTagsByPostIds(Collection<PostId> postIds) {
         return postIds.stream()
                 .map(byId::get)

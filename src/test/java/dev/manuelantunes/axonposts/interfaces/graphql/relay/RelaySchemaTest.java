@@ -49,7 +49,9 @@ class RelaySchemaTest {
                 .contains("type PostEdge {")
                 .contains("type TagConnection {")
                 .contains("type TagEdge {")
-                .contains("type PageInfo {")
+                // sem a chave: PageInfo ganhou @shareable ao virar tipo de subgraph, e o assunto deste
+                // teste é o NOME. Quem cuida da diretiva é o FederationSchemaTest
+                .contains("type PageInfo ")
                 .doesNotContain("Connection_")
                 .doesNotContain("Edge_");
     }
@@ -93,9 +95,11 @@ class RelaySchemaTest {
      */
     @Test
     void theUserInterfaceIsInTheSchemaWithBothImplementations() {
+        // pelo mesmo motivo do PageInfo, sem a chave: os três levam @key desde que o schema virou
+        // subgraph. O que se afirma aqui é que a interface e as duas implementações continuam no SDL
         assertThat(schema())
-                .contains("interface User {")
-                .contains("type Author implements User {")
-                .contains("type Reader implements User {");
+                .contains("interface User ")
+                .contains("type Author implements User ")
+                .contains("type Reader implements User ");
     }
 }

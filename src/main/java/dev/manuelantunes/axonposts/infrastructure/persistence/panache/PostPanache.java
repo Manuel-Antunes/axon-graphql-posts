@@ -63,6 +63,13 @@ class PostPanache implements PanacheRepositoryBase<Post, PostId> {
      * O {@code join fetch} devolve uma linha por tag; o Hibernate 6 deduplica os roots sozinho, sem
      * precisar de {@code distinct} (que, se escrito, iria parar no SQL e mudaria o plano à toa).
      */
+    List<Post> byIds(Collection<PostId> ids) {
+        return getEntityManager()
+                .createQuery("select p from Post p join fetch p.author where p.id in :ids", Post.class)
+                .setParameter("ids", ids)
+                .getResultList();
+    }
+
     List<Post> withTagsByIds(Collection<PostId> ids) {
         return getEntityManager()
                 .createQuery("select p from Post p join fetch p.author left join fetch p.tags "

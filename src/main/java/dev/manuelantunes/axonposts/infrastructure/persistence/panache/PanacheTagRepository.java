@@ -1,5 +1,7 @@
 package dev.manuelantunes.axonposts.infrastructure.persistence.panache;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 import dev.manuelantunes.axonposts.domain.tag.Tag;
@@ -35,6 +37,15 @@ public class PanacheTagRepository implements TagRepository {
     @Transactional
     public Optional<Tag> findById(TagId tagId) {
         return tags.findByIdOptional(tagId);
+    }
+
+    @Override
+    @Transactional
+    public List<Tag> findAllById(Collection<TagId> tagIds) {
+        if (tagIds.isEmpty()) {
+            return List.of();
+        }
+        return tags.byIds(tagIds);
     }
 
     @Override

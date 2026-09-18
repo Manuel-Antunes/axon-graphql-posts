@@ -6,6 +6,7 @@ import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagName;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -22,6 +23,11 @@ public final class InMemoryTagRepository implements TagRepository {
     @Override
     public Optional<Tag> findById(TagId tagId) {
         return tags.stream().filter(tag -> tag.id().equals(tagId)).findFirst();
+    }
+
+    @Override
+    public List<Tag> findAllById(Collection<TagId> tagIds) {
+        return tags.stream().filter(tag -> tagIds.contains(tag.id())).toList();
     }
 
     @Override

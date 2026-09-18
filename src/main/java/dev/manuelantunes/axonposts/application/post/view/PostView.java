@@ -8,6 +8,9 @@ import org.eclipse.microprofile.graphql.Ignore;
 import org.eclipse.microprofile.graphql.Name;
 import org.eclipse.microprofile.graphql.NonNull;
 
+import io.smallrye.graphql.api.federation.FieldSet;
+import io.smallrye.graphql.api.federation.Key;
+
 /**
  * DTO de <b>saída</b> do GraphQL: os campos escalares do {@code type Post}, e nada além disso.
  * <p>
@@ -43,8 +46,18 @@ import org.eclipse.microprofile.graphql.NonNull;
  * @param version quantidade de eventos aplicados a esse Post (1 = só criado). {@code int} e não
  *                {@code long} por causa do schema: a especificação MicroProfile GraphQL mapeia
  *                {@code long} para o scalar {@code BigInteger}, e um contador de versão é {@code Int!}
+ *
+ * <h2>{@code @Key(fields = "id")}: o que ele promete</h2>
+ * Faz do {@code Post} uma <b>entidade</b> da Federação: um subgraph vizinho pode referenciá-lo tendo só
+ * o id, e o roteador volta aqui pelo {@code _entities} para preencher o resto. Quem paga a promessa é o
+ * {@code PostEntityApi} — a anotação sozinha compõe e quebra em runtime.
+ * <p>
+ * É a <b>mesma dívida consciente</b> do {@code @Name} logo acima, um passo adiante: a aplicação agora
+ * sabe não só do protocolo, mas do papel deste tipo na topologia. Vale pelo mesmo motivo — separar
+ * custaria uma segunda view por agregado — e some pela mesma fronteira, o {@code *ViewMapper}.
  */
 @Name("Post")
+@Key(fields = @FieldSet("id"))
 @Description("Um post publicado, com o estado resultante de todos os eventos aplicados a ele")
 public record PostView(
         @Id @NonNull String id,

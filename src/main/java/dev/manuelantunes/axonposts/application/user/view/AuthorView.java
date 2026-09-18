@@ -7,6 +7,9 @@ import org.eclipse.microprofile.graphql.Id;
 import org.eclipse.microprofile.graphql.Name;
 import org.eclipse.microprofile.graphql.NonNull;
 
+import io.smallrye.graphql.api.federation.FieldSet;
+import io.smallrye.graphql.api.federation.Key;
+
 /**
  * DTO de saída de um autor: o {@code type Author} do schema.
  * <p>
@@ -16,8 +19,14 @@ import org.eclipse.microprofile.graphql.NonNull;
  * <p>
  * {@code posts} continua sendo campo resolvido à parte — é uma coleção aberta e paginada, e aí a consulta
  * separada é o desenho certo, não desperdício. Ver {@code AuthorFieldsApi}.
+ *
+ * <h2>A chave é a MESMA da interface, e isso é obrigação</h2>
+ * {@code UserView} leva {@code @Key(fields = "id")} — é interface de entidade. A Federação exige que
+ * toda implementação seja entidade pela mesma chave; divergir aqui é erro de composição, não de
+ * runtime. Quem resolve as três formas é o {@code UserEntityApi}.
  */
 @Name("Author")
+@Key(fields = @FieldSet("id"))
 @Description("Usuário que escreve. Subclasse table-per-type de User: linha em `users` + linha em `authors`")
 public record AuthorView(
         @Id @NonNull String id,

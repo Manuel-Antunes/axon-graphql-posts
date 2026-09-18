@@ -29,6 +29,8 @@ public interface PostRepository {
      */
     List<Post> findAll(long offset, int limit);
 
+    List<Post> findAllById(Collection<PostId> postIds);
+
     /**
      * As tags de vários posts de uma vez. É o método que existe para ser chamado <b>em lote</b>: o
      * DataLoader do campo {@code Post.tags} junta os ids de todos os posts de uma mesma resposta GraphQL

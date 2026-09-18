@@ -1,5 +1,7 @@
 package dev.manuelantunes.axonposts.infrastructure.persistence.panache;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 import dev.manuelantunes.axonposts.domain.tag.Tag;
@@ -16,6 +18,10 @@ class TagPanache implements PanacheRepositoryBase<Tag, TagId> {
      * Sem diferenciar caixa, pelo mesmo motivo que {@code TagName.sameAs} não diferencia: "Untagged" e
      * "untagged" são a mesma tag.
      */
+    List<Tag> byIds(Collection<TagId> ids) {
+        return list("id in ?1", ids);
+    }
+
     Optional<Tag> byName(String name) {
         return find("lower(name.value) = lower(?1)", name).firstResultOptional();
     }
