@@ -471,7 +471,7 @@ Aqui o schema **é** gerado, e o Quarkus o serve em `/graphql/schema.graphql`. N
 para manter em dia. O que era um teste que reescrevia um arquivo virou um teste que lê a única definição
 que existe.
 
-O `src/main/resources/schema.graphql` na raiz é uma **cópia** desse SDL, para gerador de cliente e para o diff da revisão
+O `schema.graphql` na raiz é uma **cópia** desse SDL, para gerador de cliente e para o diff da revisão
 mostrar o que uma mudança fez com o contrato. Ele não é lido por nada em runtime; para atualizá-lo:
 
 ```bash
@@ -661,7 +661,7 @@ classe derruba a aplicação na partida.
 | quem consome | gerador de cliente, IDE, o diff da revisão | o `rover`, o roteador |
 | contém | o schema + `@link` + `@key` | o mesmo, mais `_entities`/`_service`/`_Any` |
 
-São o mesmo contrato por duas portas, e o `src/main/resources/schema.graphql` da raiz continua sendo a cópia versionada do
+São o mesmo contrato por duas portas, e o `schema.graphql` da raiz continua sendo a cópia versionada do
 primeiro. Para que ele continuasse **compondo**, duas linhas precisaram entrar:
 
 ```properties

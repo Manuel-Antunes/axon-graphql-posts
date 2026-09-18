@@ -32,10 +32,31 @@
       consome os build items que o `AxonExtensionProcessor` já produz. Enquanto a PR não existir, ele
       vive aqui.
     -->
+    <!--
+      A FORMA DO MONOREPO, E A REGRA QUE A DECIDE
+      ===========================================
+      `libs/` tem DOMÍNIO e INFRAESTRUTURA. `apps/` tem APLICAÇÃO e APRESENTAÇÃO.
+
+      A linha não é entre serviços, é entre camadas — e é isso que torna um módulo reutilizável. Domínio
+      é regra e infraestrutura é como a regra persiste: as duas são do MÓDULO (posts, users), e mais de
+      um app pode importá-las. Aplicação é fluxo — qual command existe, qual query responde o quê, que
+      evento encadeia no próximo passo — e fluxo é de QUEM O EXECUTA.
+
+      O que isso resolve na prática: o serviço de tagueamento importa `libs/posts` e ganha o `Post`, os
+      eventos, as regras e os repositórios. Não ganha o GraphQL, não ganha a projeção e não ganha os
+      command handlers do outro app — que o Axon descobriria em build time e ligaria contra tabelas que
+      ele não tem. Antes desta divisão as duas saídas eram importar tudo ou redeclarar o evento do lado
+      de cá; as duas foram tentadas, e as duas eram erradas.
+    -->
     <modules>
-        <module>axon-native-support/runtime</module>
-        <module>axon-native-support/deployment</module>
-        <module>app</module>
+        <module>libs/platform</module>
+        <module>libs/users</module>
+        <module>libs/posts</module>
+        <module>libs/axon-channels</module>
+        <module>libs/axon-native-support/runtime</module>
+        <module>libs/axon-native-support/deployment</module>
+        <module>apps/posts-api</module>
+        <module>apps/tagging</module>
     </modules>
 
     <properties>
@@ -49,7 +70,11 @@
         <quarkus-axon.version>2.0.0-alpha6</quarkus-axon.version>
         <axon.version>5.3.1</axon.version>
 
+        <mapstruct.version>1.6.3</mapstruct.version>
+        <assertj.version>3.27.6</assertj.version>
+        <surefire-plugin.version>3.5.3</surefire-plugin.version>
         <compiler-plugin.version>3.14.0</compiler-plugin.version>
+        <antrun-plugin.version>3.1.0</antrun-plugin.version>
     </properties>
 
     <dependencyManagement>
@@ -58,6 +83,13 @@
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>${quarkus.platform.artifact-id}</artifactId>
                 <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.axonframework</groupId>
+                <artifactId>axon-framework-bom</artifactId>
+                <version>${axon.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

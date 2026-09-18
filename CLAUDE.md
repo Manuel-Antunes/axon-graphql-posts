@@ -2,15 +2,50 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Forma do repositório
+
+Monorepo de dois apps sobre módulos compartilhados. A regra que decide onde tudo mora:
+
+> **`libs/` tem domínio e infraestrutura. `apps/` tem aplicação e apresentação.**
+
+A linha não é entre serviços, é entre **camadas** — e é isso que torna um módulo reutilizável. Domínio é
+regra e infraestrutura é como a regra persiste: as duas são do módulo (`posts`, `users`), e mais de um
+app as importa. Aplicação é fluxo — qual command existe, qual query responde o quê — e fluxo é de quem o
+executa.
+
+```
+libs/platform          domain/shared + infrastructure/{axon,time}
+libs/users             domain/user/**        + infrastructure/persistence/user
+libs/posts             domain/{post,tag}/**  + infrastructure/persistence/post
+libs/axon-channels     a integração Axon ↔ channels (outbox + ingestão)
+libs/axon-native-support  a extensão de build para GraalVM native
+
+apps/posts-api         application/** + interfaces/{graphql,messaging}/** + infrastructure/security
+apps/tagging           o serviço de tagueamento: application/** + interfaces/messaging/**
+```
+
+O que isso resolve: `apps/tagging` importa `libs/posts` e ganha o `Post`, os eventos, as regras e os
+repositórios. **Não** ganha o GraphQL, a projeção nem os command handlers do outro app — que o Axon
+descobre em build time e ligaria contra tabelas que ele não tem.
+
+`apps/posts-api` é o único com `infrastructure/`: `CurrentUser`/`SecurityProducer` são OIDC e HTTP, que
+só ele tem — e `CurrentUser` depende de `UserProvisioning`, que é aplicação. Na lib, viraria ciclo.
+
 ## Comandos
 
 Em dev e em teste **não é preciso subir nada**: o Dev Services do Quarkus levanta Postgres e Keycloak
 (com o realm importado) sozinho. Basta o Docker ligado.
 
+**`-pl <módulo>` NÃO funciona neste repositório**, com ou sem `-am`: o
+`quarkus-extension-maven-plugin` do `axon-native-support` valida que o artefato de deployment está no
+reator, e um build parcial o deixa de fora — `Deployment artifact ... is missing the following
+dependencies`. Rode da raiz e filtre com `-Dtest=`.
+
 ```bash
-./mvnw quarkus:dev             # http://localhost:8080/q/graphql-ui/
+./mvnw quarkus:dev -pl apps/posts-api   # NÃO — ver acima; use o quarkus:dev da raiz
 ./mvnw test                    # suíte inteira — EXIGE Docker
 ./mvnw package                 # build + testes
+./docker/e2e/run.sh            # a saga entre DOIS processos, com broker de verdade
 ./mvnw test -Dtest=PostTest                                       # uma classe
 ./mvnw test -Dtest=PostLifecycleE2ETest#aNewPostArrivesAlreadyTaggedAtVersionTwo   # um método
 ./mvnw test -Dtest='*E2ETest'                                     # só os ponta a ponta
@@ -38,9 +73,46 @@ curl -s localhost:8080/q/health | jq    # inclui "Axon eventprocessors", da exte
 ```
 
 `quarkus:dev` recarrega sozinho na próxima requisição depois de uma classe mudar.
-**Cada recarga apaga o event store, que é em memória**: as linhas continuam no Postgres, os eventos não.
+O event store é **persistente** desde que a saga passou a ser coreografada: recarga não apaga mais nada.
 Um post criado antes da recarga segue respondendo em `post(id:)` e passa a dar `NOT_FOUND` no
 `updatePost`, que reidrata o agregado do stream.
+
+**O BUILD DO `posts-api` É INTERMITENTE, e a causa não está no projeto.** Em cerca de metade das
+execuções IDÊNTICAS o augmentation do Quarkus não encontra classes que estão em `target/classes`:
+
+```
+Unsatisfied dependency for type ...PostViewMapper
+Producer method return type not found in index: PostInputMapper
+Could not load class with name: ...FindAllPostsQueryTest      (e com ele os 149 testes)
+```
+
+Em todas as vezes os `.class` existem, estão corretos e (quando gerados) devidamente anotados. **Basta
+repetir o comando.** Só apareceu quando a camada de aplicação veio para o app, trazendo o processador de
+anotação do MapStruct com ela — em `libs/` isso nunca aconteceu.
+
+**Onde dói e onde não:** `./mvnw clean test` passa (o `test` não roda `quarkus:build`). Quem falha é o
+`package` — e portanto o `docker/e2e/run.sh`, que empacota antes de subir as aplicações.
+
+Descartados por medição: estado sujo em `target/`, snapshots instalados no `~/.m2`, índice Jandex
+desatualizado nas libs, `quarkus.arc.exclude-types`, teste nomeando classe gerada, opções do processador
+na execução vs no plugin, `<proc>none</proc>` no round de teste, `useIncrementalCompilation=false`,
+índice Jandex no app, `quarkus.builder.parallel=false` (o augmentation sequencial não conserta) e
+produtores de bean escritos à mão em vez do `componentModel` — com eles a falha deixa de ser intermitente
+e passa a ser **determinística** (`Producer method return type not found in index`), o que é pior. Daí a
+configuração atual ser a convencional.
+
+**Suspeita principal: o JDK.** A JVM aqui é a **25**, e o Quarkus 3.39 não a suporta (`release` é 21).
+Não foi possível confirmar nesta máquina — só há JDK 25, 17 e 8 instalados, e 17 não compila `release 21`.
+O próximo passo é rodar num JDK 21.
+
+**Duas regras que ficaram do episódio**, e as duas valem por si:
+
+1. **As opções do processador ficam no nível do PLUGIN**, não numa `<execution>`. Presas ao
+   `default-compile`, o round de teste regerava os impls sem elas — sem `@ApplicationScoped` — e o que
+   sobrava em `target/` dependia de quem escreveu por último.
+2. **Nenhum teste nomeia uma classe gerada** (`*MapperImpl`) nem depende do bean dela. Quem precisar de
+   um mapper num teste de unidade usa um dublo local; quem exercita o mapper de verdade é a suíte ponta a
+   ponta, pela borda GraphQL.
 
 Não há plugin de lint/format configurado. O gate de qualidade que existe é o compilador: MapStruct roda
 com `-Amapstruct.unmappedTargetPolicy=ERROR`, então um campo de destino sem origem **quebra o build**.
@@ -70,31 +142,64 @@ HMAC do realm não vai para o JWKS, então o `kid` é mesmo desconhecido. Usuár
 ## Arquitetura
 
 POC de Axon Framework **5** (entidades anotadas + DCB, sem Axon Server) + SmallRye GraphQL com Mutiny e
-subscriptions sobre WebSocket. Event store **em memória** (some no restart); Postgres guarda só o read
-model; Keycloak é o provedor de identidade e a aplicação é apenas resource server.
+subscriptions sobre WebSocket. Event store **persistente no Postgres**, com token store; Keycloak é o
+provedor de identidade e a aplicação é apenas resource server. **Dois serviços** conversam por RabbitMQ
+numa saga coreografada.
+
+**Uma tag por evento, e isso é do framework.** O Axon 5.3.1 tem exatamente dois `EventStorageEngine`:
+`InMemoryEventStorageEngine`, com DCB completo, e `AggregateBasedJpaEventStorageEngine`, que é o modo de
+compatibilidade com o Axon 4 — uma tag por evento, e a query de sourcing filtra só por
+`aggregateIdentifier` (o `aggregateType` nem entra). DCB de verdade em armazenamento relacional não
+existe fora do Axon Server. Foi a troca: durabilidade custou o segundo `@EventTag` dos eventos de post.
 
 É a conversão de um projeto Spring Boot — o README é o documento dessa conversão, decisão por decisão.
 **Ao mudar uma decisão, atualizá-lo junto.**
 
-### O fluxo de uma escrita
+### O ciclo de vida de um post tem DUAS fases
+
+`PostPreCreated` = o post existe. `PostCreated` = o post está **completo** (tem a primeira tag) e
+visível. Nasce na versão 1, chega à 2.
+
+Existem duas fases porque a primeira tag deixou de ser decidida aqui: quem decide é **outro serviço**, e
+a mensagem atravessa um broker. Fingir que criar e publicar são o mesmo instante exigiria esperar o
+vizinho dentro da transação de escrita.
 
 ```
-@Mutation (@Valid + @RolesAllowed)
-  → PostInputMapper.toCommand(...)                  [MapStruct, compile time]
-  → Uni.createFrom().completionStage(() -> commandGateway.send(CreatePost))
-     → CreatePostCommand.handle(cmd, @InjectEntity Optional<Post>, EventAppender)
-        → Post.create(...)          domínio valida, DISPARA o evento (DomainEventPublisher), devolve o Post
-        → posts.save(post)          o command SALVA; o evento e a linha commitam na mesma transação JTA
-     → processor "post-projection" (subscribing: mesma thread e transação)
-        → PostCreatedEventHandler          emite onPostCreated (o post como nasceu: v1, sem tags)
-        → AssignDefaultTagOnPostCreated    agenda em context.onAfterCommit(...) os commands da tag padrão
-  → o resolver consulta o post pelo query bus e devolve — já com a tag, na versão 2
+@Mutation createPost
+  → commandGateway.send(CreatePost)
+     → Post.create(...)  → PostPreCreated          [v1, sem tag]   → posts.save(post)
+  → a mutation responde v1                          ~~~ RabbitMQ: posts.PostPreCreated.<postId> ~~~
+
+                                            apps/tagging
+                                              → ChannelEventInbox APENDA no event store dele
+                                              → CompleteOnPostPreCreated → CompletePostWithDefaultTag
+                                              → Post.complete(...) → PostCreated  [v2, com a tag]
+  ~~~ RabbitMQ: posts.PostCreated.<postId> ~~~
+
+  → ChannelEventInbox APENDA no event store daqui (lendo o stream antes, pela sequência)
+  → PostCreatedEventHandler materializa a linha e emite onPostCreated no commit da transação
 ```
 
-`onAfterCommit` não é detalhe de estilo: despachar `AssignTagToPost` direto falha com
-`EntityNotFoundException`, porque durante o commit do `CreatePost` o `PostCreatedEvent` ainda não é legível
-de volta do event store. E como o Axon espera o `CompletableFuture` do after-commit, é o que garante que a
-mutation já responda com a tag atribuída — daí **todo post recém-criado nascer na versão 2**.
+Nenhum dos dois serviços nomeia o outro: um publica `posts.PostPreCreated` e escuta `posts.PostCreated`,
+o outro faz o inverso. Trocar o serviço de tagueamento é trocar quem responde àquela routing key.
+
+**Em teste a decisão é dublada em processo** (`InProcessTagAssignment`, removido do build em dev/prod
+pelo `@IfBuildProperty`), porque consistência eventual faz mensagem em voo cruzar a fronteira do
+`truncate` entre testes. O caminho real é coberto por `docker/e2e/run.sh`, fora do Surefire.
+
+### A integração Axon ↔ channels, nas duas direções
+
+- **saída**: todo evento apendado é encaminhado ao channel depois do commit, por um
+  `MessageDispatchInterceptor`. Genérico — nenhum tipo de evento é citado. A routing key sai do
+  `@Event` + `@EventTag`: `namespace.Name.tagDoAgregado`.
+- **entrada**: toda mensagem recebida é **apendada no event store local**, e é o store — não a fila —
+  que alimenta os event processors. O broker é transporte; o Axon funciona como em qualquer aplicação
+  sem mensageria, com token, replay e durabilidade.
+
+Três guardas independentes contra execução duplicada, e cada uma cobre o que a outra não cobre: a
+**marca de origem** na metadata descarta o eco do próprio serviço (e corta o laço de reenvio); o
+**inbox** (`axon_message_inbox`) descarta reentrega, no mesmo commit do append; e o **agregado** descarta
+a decisão repetida (`Post.isComplete()`), que é a única que sobrevive a um inbox limpo.
 
 ### Regras de camada (seguir ao adicionar código)
 
@@ -107,10 +212,20 @@ mutation já responda com a tag atribuída — daí **todo post recém-criado na
    `application.post.event`, um arquivo por responsabilidade.
 3. **O command decide e salva; o evento notifica e orquestra.** Event handlers não escrevem no banco — um
    emite para as subscriptions, o outro despacha os commands que dão sequência.
-4. **A apresentação não alcança `domain` nem `infrastructure`.** Os `@GraphQLApi` falam com o gateway de
+   **Uma exceção, estreita e declarada**: evento que chega de OUTRO serviço não tem command local atrás
+   dele, então quem o recebe materializa a projeção (`PostCreatedEventHandler`). É o papel clássico de
+   uma projeção em CQRS; o que era incomum aqui era o command acumular esse papel, o que só funcionava
+   enquanto tudo era local.
+4. **Porta de entrada é APRESENTAÇÃO, venha de onde vier.** `interfaces/graphql` para HTTP/WebSocket/SSE
+   e `interfaces/messaging` para as filas. O critério não é o transporte, é a DIREÇÃO: adaptador de saída
+   (o outbox, os repositórios, o provedor de identidade) é infraestrutura; o que traz algo de fora para
+   dentro é apresentação. Um `@Incoming` é um endereço, como um `@GraphQLApi` é um caminho.
+   Um listener, portanto, não alcança repositório nem decide regra: entrega a mensagem ao mecanismo de
+   ingestão e sai, como um resolver entrega ao command gateway.
+5. **A apresentação não alcança `domain` nem `infrastructure` da própria aplicação.** Os `@GraphQLApi` falam com o gateway de
    command/query e com a porta `application.auth.AuthenticatedUser` (implementada por
    `infrastructure.security.CurrentUser`). Nada de repositório de domínio num resolver.
-5. **Nada de pacote por papel na raiz.** Não existe mais `dto/`, `mapper/` nem `exceptions/` soltos: cada
+6. **Nada de pacote por papel na raiz.** Não existe mais `dto/`, `mapper/` nem `exceptions/` soltos: cada
    tipo mora na camada que o **possui**, e o pacote diz qual é.
 
 ### Onde cada coisa mora (e por quê)
@@ -158,9 +273,15 @@ domínio na mesma classe. Não existe entidade de infraestrutura espelho; os val
   `theStateReturnedByUpdateIsTheSameAsSourcingTheRaisedEvent`.
 - **Eventos carregam primitivos** — são contrato, ficam gravados. A conversão para value object acontece nas
   fronteiras da entidade.
+- **Os ids são escalares NO FIO**: `PostId`, `TagId` e `UserId` levam `@JsonValue` + `@JsonCreator`. Sem
+  isso um record de um componente sai como objeto (`{"postId":{"value":"abc"}}`) e quem consome do outro
+  lado precisa modelar um invólucro que só existe aqui dentro. Enquanto o event store era em memória nada
+  era serializado e ninguém notou; no primeiro serviço que desserializou o payload, a saga morreu com
+  `MismatchedInputException: Cannot deserialize value of type String from Object value`.
 - O tipo do id da entidade **não** está numa anotação: ele é o primeiro argumento de
   `EventSourcedEntityModule.autodetected(PostId.class, Post.class)`, e quem o fornece é o mapa de
-  `infrastructure/axon/EventSourcedEntities`. No starter do Spring era o `idType` do `@EventSourced`, que
+  `libs/platform`, em `infrastructure/axon/EventSourcedEntities` — na PLATAFORMA e não num app, porque
+  os dois serviços precisam dele. No starter do Spring era o `idType` do `@EventSourced`, que
   só existia para o scan ter onde lê-lo.
 
 ### Identidade e autorização
@@ -206,25 +327,34 @@ domínio na mesma classe. Não existe entidade de infraestrutura espelho; os val
 - **O schema do banco vem do Flyway** (`src/main/resources/db/migration`), e o Hibernate roda em
   `schema-management.strategy=validate`: entidade nova sem migration **não sobe**. Os testes rodam as
   mesmas migrations.
-- `baseline-on-migrate` é `false` de propósito. `clean-at-start` só em `%test` — em dev o banco pode ser o
-  do compose, com dados que alguém quer manter.
+- **`migrate-at-start` é `false`, e não é preferência.** `AxonExtension.init` é um recorder de
+  RUNTIME_INIT que resolve o event storage engine e toca o EntityManager — construindo a persistence
+  unit ANTES de o Flyway ter a vez. Com `validate` contra banco vazio a aplicação morre com
+  `missing table [accounts]`, e adiar dentro do `ComponentBuilder` não resolve (a lambda é chamada de
+  dentro do próprio init). Quem cria o schema: em dev/teste, `db/init/schema.sql`, gerado das migrations
+  pelo `maven-antrun-plugin` e executado pelo Dev Services no `initdb`; no compose e em produção, os
+  serviços `flyway-*`. É o que produção faria de qualquer jeito, e o gate do `validate` continua valendo
+  porque o script é gerado das próprias migrations.
+- `baseline-on-migrate` é `false` de propósito: banco não-vazio sem histórico é banco que alguém criou
+  por fora.
 - Índices que nenhuma anotação JPA expressa vivem só no SQL — o principal é `uk_users_email_active`:
   e-mail único **entre os ativos**, porque um leitor encerrado e o autor que o substituiu convivem com o
   mesmo e-mail.
 - Exclusão lógica por `@SQLDelete` + `@SQLRestriction`. Efeito colateral com teste próprio: apagar a conta
   **esconde os posts do autor**, porque `Post.author` é `@ManyToOne(optional = false)` contra uma linha
   filtrada.
-- **Dois arquivos por agregado na persistência**: o adapter da porta (`PanachePostRepository`) e o
-  repositório Panache pacote-visível (`PostPanache`). A separação não é estilo: `PanacheRepositoryBase`
-  declara `findById(Id)` devolvendo a entidade e a porta do domínio devolve `Optional` — mesma assinatura,
-  retornos incompatíveis. É o mesmo par adapter + driver que o projeto Spring tinha por escolha.
+- **Um arquivo por agregado na persistência**, em `infrastructure/persistence/<agregado>/`. Eram dois
+  (adapter + repositório Panache) porque `PanacheRepositoryBase.findById(Id)` devolve a entidade e a porta
+  do domínio devolve `Optional` — mesma assinatura, retornos incompatíveis. Recebendo o `EntityManager`
+  por construtor, o conflito desaparece e sobra um arquivo. O pacote é escopado por agregado
+  (`.../post`, `.../user`) porque um `.../panache` comum seria **split package** entre os dois módulos.
 - **`merge`, nunca `persist`.** A entidade vem reconstituída dos eventos pelo Axon: é sempre *detached*,
   exista a linha ou não.
 
 ### GraphQL
 
 - **Schema code-first.** Não há `.graphqls`; o SDL é gerado e servido em `/graphql/schema.graphql`. O
-  `src/main/resources/schema.graphql` da raiz é uma cópia versionada dele (nada o lê em runtime); atualizar com
+  `schema.graphql` da raiz é uma cópia versionada dele (nada o lê em runtime); atualizar com
   `curl -s http://localhost:8080/graphql/schema.graphql > schema.graphql` ao mexer no contrato. Ele traz
   `@link`/`@key`/`@shareable` porque `schema-include-directives` e `schema-include-schema-definition` estão
   ligados — as duas linhas existem para que esse arquivo **componha** sem a aplicação de pé, e tirar
@@ -311,7 +441,8 @@ Entidades e chaves: `Post`, `Tag`, `Author`, `Reader` e a **interface** `User`, 
 1. `@Key(fields = @FieldSet("id"))` na *view* (é ela que vira o `type` do schema);
 2. um `<X>EntityApi` em `interfaces/graphql/api/` com um `@Resolver` em lote;
 3. uma query `Find<X>sByIds` em `application/<agregado>/query/`, devolvendo **mapa** por id;
-4. `findAllById` na porta do repositório + o método no `*Panache` + o duplo em memória de `support/`.
+4. `findAllById` na porta do repositório + o método no adapter de `infrastructure/persistence/` + o
+   duplo em memória de `support/`.
 
 As quatro armadilhas do `@Resolver`, todas silenciosas:
 
@@ -399,8 +530,13 @@ Duas linhas de `application.properties` valem tanto quanto código, e as duas fa
    **A ordem é handler primeiro, propriedade depois**: namespace listado sem nenhum handler faz a
    aplicação não subir, com `NullPointerException` na partida (`getEventhandlers` faz
    `map(mapa::get).flatMap(...)` sobre um `null`).
-2. Nenhuma linha de event store — o **default da extensão é o em memória**, que é a escolha do projeto.
-   Trocar por Postgres é acrescentar `quarkus-axon-jpa-eventstore`.
+2. Nenhuma linha de event store — quem escolhe é o POM. Com `quarkus-axon-jpa-eventstore` e
+   `quarkus-axon-tokenstore-jpa` no classpath a extensão troca os defaults em memória pelos de JPA, e as
+   tabelas vêm da V2.
+   **Os dois módulos declaram cada um uma classe `QuarkusAxonEntityManagerProvider`**, as duas
+   `@ApplicationScoped` e nenhuma `@DefaultBean` — ter os dois sem excluir uma derruba a partida com
+   `AmbiguousResolutionException`. Daí a linha de `quarkus.arc.exclude-types` no `posts-api`; o
+   `apps/tagging` não precisa dela porque não tem token store (não tem processor streaming).
 
 **As substituições funcionam por ausência**, e é isso que `AxonWiringTest` trava: a extensão declara
 `@DefaultBean`s e cede a vez a quem existir. Apagar `EventSourcedEntities` ou tirar o
@@ -420,6 +556,28 @@ silêncio após um reload: post nasce na versão 1, sem tag, e o log não reclam
 `quarkus:dev`. O botão que a extensão documenta para o sintoma vizinho ("no command handler available") é
 `quarkus.axon.live-reload.shutdown.wait-duration.amount`; ele **não** é usado aqui porque não se provou
 que resolve este caso.
+
+## O segundo serviço (`apps/tagging`)
+
+Um microserviço Axon completo, **sem uma linha de HTTP**: reage a `posts.PostPreCreated`, decide a
+primeira tag e publica `posts.PostCreated`. Tem event store próprio (banco próprio), fila própria e
+agregado nenhum — ele trabalha com o `Post` de verdade, importado de `libs/posts`.
+
+- **não tem agregado próprio.** Houve um `TagAssignment`, e era invenção: a pergunta que importa é "este
+  post já está completo?", e o `Post` responde. Entidade para guardar o que outra entidade já sabe é
+  estado duplicado, e estado duplicado diverge;
+- **não redeclara eventos.** Importar `libs/posts` é o ponto de o domínio ser uma lib. Um evento de
+  domínio escrito duas vezes é a mesma regra em dois lugares, e o primeiro campo novo as separa em
+  silêncio;
+- **não tem read model**, e é por isso que `quarkus.hibernate-orm.packages=org.axonframework`: as
+  entidades JPA vêm no classpath com o domínio, e sem essa restrição o `validate` exigiria `posts`,
+  `tags`, `users` e `authors` num serviço que não usa nenhuma. Ele reidrata o `Post` do EVENT STORE e
+  aplica regra; nada disso passa por JPA;
+- **não decide qual é a tag padrão.** Nome e identidade são do domínio (`Tag.DEFAULT_NAME` e
+  `Tag.DEFAULT_ID`, este derivado daquele por `UUID.nameUUIDFromBytes`). É função pura: o mesmo id em
+  todo nó, toda reinicialização e todo serviço. Importa porque **dois** lugares atribuem a tag padrão —
+  este serviço em produção e o dublê em processo na suíte do outro app — e os dois têm de chegar ao mesmo
+  id; com a regra no domínio isso é consequência, não coincidência mantida à mão.
 
 ## Testes
 
@@ -444,9 +602,16 @@ Surefire roda tudo em `./mvnw test`, inclusive os `*E2ETest` — **Docker precis
   O segundo chama o `_entities` de verdade: é o único lugar onde um argumento renomeado, um `@Id` a mais
   ou um `@NonNull` no elemento da lista falham. Inclui o custo, pela mesma propriedade do
   `BatchLoadingE2ETest`: N representações precisam custar os mesmos statements que 1.
+- **Entre PROCESSOS** (`docker/e2e/run.sh`): sobe a infraestrutura, roda as migrations fora do processo,
+  empacota, sobe as DUAS aplicações e afirma a saga inteira — inclusive que o event store de cada serviço
+  tem exatamente os eventos esperados (é o que pegaria um laço de reenvio, como contagem crescendo) e que
+  reentregar a mesma mensagem não produz uma segunda decisão. Fica fora do Surefire de propósito: o que
+  ele prova é o que um `@QuarkusTest` não consegue montar — dois processos, dois event stores, um broker.
 - **Ponta a ponta** (`e2e/*`): Dev Services sobem Postgres e Keycloak; uma única aplicação é compartilhada
-  por todas as classes. Cada método começa com `truncate ... cascade` (o event store em memória fica; todo
-  id é UUID novo). Uma subclasse que acrescente `@TestProfile` ganha aplicação própria e a suíte paga
+  por todas as classes. Cada método começa com `truncate ... cascade` **incluindo as tabelas do
+  Axon**: com o event store persistente, limpar só o read model deixa estado incoerente — a linha da tag
+  some, o stream do agregado Tag continua lá, e o `CreateTag` seguinte falha contra um agregado que existe
+  no store e não na projeção. Uma subclasse que acrescente `@TestProfile` ganha aplicação própria e a suíte paga
   outra subida.
 - **`@QuarkusTest` vai em cada classe concreta**, não na base `AbstractGraphQlE2ETest`: é a anotação que
   registra a classe de teste como bean para os `@Inject` dela. Só na base, cada subclasse falha com

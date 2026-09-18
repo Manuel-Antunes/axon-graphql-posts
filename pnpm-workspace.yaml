@@ -1,0 +1,8 @@
+# O monorepo é Java; o pnpm existe aqui só para instalar o Nx e seus plugins, que são pacotes npm.
+# Nenhum pacote JavaScript é publicado deste repositório, por isso a lista de workspaces está vazia.
+packages: []
+
+# Sem isto o pnpm 10 pede aprovação interativa para os scripts de build do nx (que compila binários
+# nativos por plataforma), e a instalação fica pendurada em CI.
+onlyBuiltDependencies:
+  - nx

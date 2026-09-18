@@ -7,7 +7,7 @@
 # explícita: estes dois arquivos, e mais nenhum.
 schema:
   # o schema inteiro, tipos de connection inclusos (bloco gerado no fim do arquivo)
-  - src/main/resources/schema.graphql
+  - apps/posts-api/src/main/resources/schema.graphql
 
 extensions:
   endpoints:

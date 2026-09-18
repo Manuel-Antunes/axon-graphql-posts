@@ -1,0 +1,9 @@
+{
+  "name": "axon-graphql-posts",
+  "private": true,
+  "packageManager": "pnpm@10.30.3",
+  "devDependencies": {
+    "@nx/maven": "23.2.1",
+    "nx": "23.2.1"
+  }
+}
