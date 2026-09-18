@@ -119,7 +119,7 @@ if (post.version === 1 && post.tags.edges.length === 0) {
 console.log('=== 2. a subscription recebe o post COMPLETO depois da volta da saga ===');
 /*
  * 60s, e não 20s: a PRIMEIRA entrega de cada canal paga a conexão do emitter de saída, que é lazy de
- * propósito (ver ChannelEventDispatcher — resolver o Emitter na partida dá SRMSG00019). Medido: a
+ * propósito (ver AxonOutbox — resolver o Emitter na partida dá SRMSG00019). Medido: a
  * primeira mensagem foi nacked e só a reentrega fechou a saga, ~20s depois.
  */
 let complete = null;

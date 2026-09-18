@@ -22,9 +22,18 @@
 
       SAÍDA
         * `AxonEventEnvelope`, o formato de fio;
-        * `ChannelEventDispatchInterceptor` + `ChannelEventForwarder`, o outbox — genéricos sobre
-          `EventMessage`, sem um único tipo de evento citado;
-        * `ChannelAddressing` e `RabbitMqAddressing`, o único ponto ciente de broker.
+        * `ChannelEventDispatchInterceptor` + `ChannelEventForwarder`, o encaminhamento — genéricos
+          sobre `EventMessage`, sem um único tipo de evento citado;
+        * `EventAddress`, o evento lido UMA vez: nome qualificado, id e chave de ordenação;
+        * `OutboxRouting`, a tabela de "qual destino recebe qual evento", por NAMESPACE do `@Event`;
+        * `ChannelAddressing` (+ `RabbitMqAddressing`, `InMemoryAddressing`), o único ponto ciente de
+          broker — um por conector, escolhido POR CANAL.
+
+      O QUE A LIB NÃO TEM, DE PROPÓSITO: destino nenhum. `@AxonOutbox` é o qualifier, e quem o usa é a
+      aplicação (`infrastructure/outbox`): um produtor de Emitter por destino, declarando na mesma
+      anotação o canal e os namespaces que saem por ele. Havia um canal único aqui dentro (`axon-events`), e ele obrigava todo evento de todo
+      serviço a sair pelo mesmo lugar e no mesmo protocolo — um ponto central numa saga que se diz
+      coreografada. Ver o Javadoc de `OutboxRouting`.
 
       ENTRADA
         * `ChannelEventInbox`, que apenda a mensagem recebida NO EVENT STORE LOCAL;

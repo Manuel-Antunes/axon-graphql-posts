@@ -60,7 +60,7 @@ public class ChannelEventDispatchInterceptor implements EventDispatchInterceptor
             log.info("integração com channels desligada (axonposts.messaging.publish-events=false)");
             return List.of();
         }
-        log.info("todo evento despachado será encaminhado ao channel axon-events depois do commit");
+        log.info("todo evento despachado será oferecido aos outboxes deste serviço depois do commit");
         return List.of((event, context, chain) -> {
             if (context != null) {
                 context.onAfterCommit(committed -> forwarder.forward(event));

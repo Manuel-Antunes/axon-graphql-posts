@@ -257,12 +257,95 @@ pelo `@IfBuildProperty`), porque consistência eventual faz mensagem em voo cruz
 
 ### A integração Axon ↔ channels, nas duas direções
 
-- **saída**: todo evento apendado é encaminhado ao channel depois do commit, por um
-  `MessageDispatchInterceptor`. Genérico — nenhum tipo de evento é citado. A routing key sai do
+- **saída**: todo evento apendado é oferecido, depois do commit, aos **outboxes deste serviço**, por um
+  `MessageDispatchInterceptor`. Genérico — nenhum tipo de evento é citado em código. A routing key sai do
   `@Event` + `@EventTag`: `namespace.Name.tagDoAgregado`.
 - **entrada**: toda mensagem recebida é **apendada no event store local**, e é o store — não a fila —
   que alimenta os event processors. O broker é transporte; o Axon funciona como em qualquer aplicação
   sem mensageria, com token, replay e durabilidade.
+
+**UM CANAL POR DESTINO, e a saída deixou de ter um hub.** Era um canal só, `axon-events`, por onde todo
+evento passava — um ponto central numa saga que se diz coreografada, e a razão pela qual "parte em Kafka,
+parte em RabbitMQ" não era exprimível: conector é atributo do canal, e só havia um canal.
+
+#### A regra que decide onde cada coisa é declarada
+
+> **O código diz O QUÊ sai. A configuração diz PARA ONDE.**
+
+Houve uma versão intermediária com o seletor no `application.properties`
+(`axonposts.messaging.outbox.<canal>.events=posts.*`), escrita para espelhar o `routing-keys` da entrada.
+A simetria era aparente: na **entrada** o seletor é mesmo configuração, porque anda junto com nome de
+fila e binding, que mudam por ambiente; na **saída** não muda por ambiente nunca — o que um serviço
+publica é contrato dele, e contrato em `.properties` se altera sem passar por revisão de código.
+
+E houve uma versão com uma `interface AxonOutbox` de três métodos, implementada por um bean em cada
+serviço. Ela dizia os mesmos dois fatos em uma classe, com o nome do canal escrito duas vezes e sem nada
+conferindo. O qualifier diz o mesmo em duas linhas, e a conferência passou a existir.
+
+#### A saída, peça por peça
+
+| peça | onde | o que decide |
+|---|---|---|
+| `EventAddress` | lib | lê o evento UMA vez: nome qualificado, namespace, id e chave de ordenação |
+| `OutboxRouting` | lib | qual outbox recebe qual evento, por namespace; valida a fiação |
+| `@AxonOutbox` | **qualifier da lib, usado na aplicação** | o canal e os **namespaces** que saem por ele |
+| `ChannelAddressing` | lib, uma por conector | como aquele broker endereça (routing key, record key) |
+
+**OUTBOX NOVO = DUAS COISAS:**
+
+1. um produtor de `Emitter` em `infrastructure/outbox/` da aplicação — uma declaração, os dois fatos:
+
+```java
+static final String CHANNEL = "post-events-out";
+
+@Produces @Singleton
+@AxonOutbox(channel = CHANNEL, namespaces = "posts")
+Emitter<AxonEventEnvelope> postEvents(@Channel(CHANNEL) Emitter<AxonEventEnvelope> channel) {
+    return channel;
+}
+```
+
+2. o bloco `mp.messaging.outgoing.<canal>.*`: conector, exchange/tópico. Nada sobre *o que* sai.
+
+**Três coisas do CDI que decidiram essa forma, e as três foram medidas:**
+
+- **`@AxonOutbox` não pode ir no campo injetado**, ao lado do `@Channel`. Qualifier num ponto de injeção
+  exige um bean com *todos* os qualifiers dali, e o emitter de `@Channel` é um bean sintético do Quarkus
+  que só tem o `@Channel`. A lib também não pode oferecer esse bean: um produtor que casasse com qualquer
+  canal precisaria de `@Channel` com `value()` `@Nonbinding`, e ele é **binding** — é o que distingue um
+  canal do outro. Num produtor a colisão some.
+- **O nome do canal aparece duas vezes** porque não há de onde lê-lo uma vez só: o ArC devolve
+  `Bean#getInjectionPoints()` **vazio** para produtores (medido: `injectionPoints=[]`), então o `@Channel`
+  do parâmetro é invisível em runtime. O que impede a divergência é `OutboxRouting`, que confere o emitter
+  produzido contra o que o `ChannelRegistry` tem sob aquele nome.
+- **A lib coleta com `@AxonOutbox Instance<Object>`**, e não `Instance<Emitter<…>>`: o Quarkus valida todo
+  ponto de injeção cujo tipo requerido seja `Emitter` e exige `@Channel` nele —
+  `Invalid emitter injection - @Channel is required for parameter 'outboxes'`. `Object` escapa da
+  validação; o elenco é conferido na coleta.
+
+Produtor declarando canal que o SmallRye não ligou **derruba a resolução da tabela**, com o nome do canal
+no erro. O inverso — bloco de canal sem produtor — não é detectável, porque nem todo canal outgoing
+precisa ser um outbox do Axon; o sinal dele é o `has no downstream` do SmallRye na partida.
+
+Evento que casa com vários outboxes sai em todos — é o que mantém "tudo num barramento de auditoria e só
+os posts no broker" exprimível com dois beans. Evento que não casa com nenhum não sai, e isso é o desenho:
+o event store continua sendo o log durável, e o que não foi publicado pode ser republicado.
+
+**O limite conhecido:** a granularidade é o namespace, então não dá para mandar `posts.PostCreated` a um
+destino e `posts.PostUpdated` a outro. O dia em que for preciso, o lugar de resolver é a porta
+`AxonOutbox` — um método a mais —, não um arquivo de propriedades.
+
+**Protocolo novo = uma `ChannelAddressing` a mais**, declarando o `connector()` que ela atende
+(`smallrye-kafka`, `smallrye-pulsar`…). Ela **não** substitui a de RabbitMQ: as duas convivem, e quem
+escolhe entre elas é o `mp.messaging.outgoing.<canal>.connector` daquele canal. Conector sem
+`ChannelAddressing` derruba a resolução — sem endereçamento a mensagem sairia sem routing key e o
+exchange a descartaria sem uma linha no log.
+
+**A chave de ordenação NÃO é mais configurada.** Havia `axonposts.messaging.ordering-tag-keys=postId,…`
+nos dois serviços, e os dois `application.properties` já admitiam por escrito que a lista não desempatava
+nada: o `AggregateBasedJpaEventStorageEngine` aceita **uma tag por evento**. Hoje a chave é a tag do
+evento, lida do evento (`EventAddress`), e duas tags produzem `WARN` em vez de escolha alfabética calada.
+Quem trava as três regras é `OutboxRoutingTest`.
 
 Três guardas independentes contra execução duplicada, e cada uma cobre o que a outra não cobre: a
 **marca de origem** na metadata descarta o eco do próprio serviço (e corta o laço de reenvio); o
@@ -447,6 +530,37 @@ domínio na mesma classe. Não existe entidade de infraestrutura espelho; os val
   Reactive Streams, adaptado para `Multi` com `FlowAdapters.toFlowPublisher`. O `@QueryHandler` da
   subscription **precisa existir** (devolve `Optional.empty()`). O filtro por tópico é avaliado no `emit`:
   o payload da subscription carrega o próprio predicado.
+- **O update chega ao assinante depois do commit, e quem faz isso é o Axon.** O
+  `SimpleQueryBus.emitUpdate` chama `runAfterCommitOrImmediately`: bufferiza os updates num recurso do
+  `ProcessingContext`, registra **um** `runOnAfterCommit` e entrega o lote junto; sem contexto, ou com ele
+  já commitado, entrega na hora. Um `@EventHandler` escreve `emitter.emit(...)` e mais nada.
+
+  **A condição para isso funcionar é a unidade de trabalho do Axon ser DONA da transação.** O
+  `quarkus-axon-transaction` faz *begin-or-join*: se já houver transação JTA aberta, ela junta — e aí o
+  after-commit do Axon dispara com a transação ainda aberta, o assinante lê o banco noutra thread dentro
+  dela, e a transação aborta:
+
+  ```
+  ARJUNA012125: TwoPhaseCoordinator.beforeCompletion - failed ... ConcurrentModificationException
+  ARJUNA012108: CheckedAction::check - atomic action ... aborting with 2 threads active!
+  This statement has been closed.
+  ```
+
+  Por isso **`ChannelEventIngestion.ingest` não leva `@Transactional`**: a linha do inbox e o append vão
+  dentro da mesma `unitOfWorkFactory().create("axon-inbox")`, que abre a transação e a commita. A
+  atomicidade é a mesma; o que muda é quem é o dono. Medido nos dois sentidos com `docker/e2e/run.sh`:
+  **11 de 12** com a anotação, **12 de 12** sem ela — e nenhum teste do Surefire pega a diferença, porque
+  em teste o tagueamento é dublado em processo e a ingestão não roda. Quem trava é
+  `AxonWiringTest.theIngestionOwnsItsOwnTransaction`, que confere a ausência da anotação.
+
+  **Houve duas tentativas de resolver isso por fora, e as duas estão registradas porque as duas
+  pareciam certas.** Uma sincronização JTA escrita à mão dentro do `PostCreatedEventHandler` — que punha
+  infraestrutura na aplicação e morria no interceptador de métricas (`isStarted()` ainda `true` em
+  `AFTER_COMMIT` → `ProcessingContext is already in phase AFTER_COMMIT`, levantada **antes** da emissão).
+  E um decorador de `QueryBus` na plataforma, que funcionava e eram 280 linhas para refazer, no eixo do
+  JTA, o que o framework já fazia no eixo dele. As duas sumiram quando a fronteira da transação passou a
+  bater com a da unidade de trabalho. **Não era uma roda faltando: era a nossa roda girando no eixo
+  errado.**
 - **Dois transportes no mesmo `/graphql`, escolhidos por cabeçalho.** `Upgrade: websocket` →
   `graphql-transport-ws`/`graphql-ws`, que vem do SmallRye. `Accept: text/event-stream` → GraphQL over
   SSE, que **não** vem: o SmallRye 2.18.5 e a extensão do Quarkus 3.39 não têm uma linha de
