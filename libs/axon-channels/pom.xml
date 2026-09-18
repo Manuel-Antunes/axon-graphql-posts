@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.manuelantunes</groupId>
+        <artifactId>quarkus-axon-graphql-posts-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>axonposts-axon-channels</artifactId>
+    <name>axon-channels</name>
+    <description>O Axon falando pelos channels do Quarkus: outbox genérico e a base das fontes de evento</description>
+
+    <!--
+      O QUE É LIB E O QUE FICA NA APLICAÇÃO
+      =====================================
+      Aqui mora o maquinário INTEIRO, que não conhece domínio nem broker:
+
+      SAÍDA
+        * `AxonEventEnvelope`, o formato de fio;
+        * `ChannelEventDispatchInterceptor` + `ChannelEventForwarder`, o outbox — genéricos sobre
+          `EventMessage`, sem um único tipo de evento citado;
+        * `ChannelAddressing` e `RabbitMqAddressing`, o único ponto ciente de broker.
+
+      ENTRADA
+        * `ChannelEventInbox`, que apenda a mensagem recebida NO EVENT STORE LOCAL;
+        * `MessageInbox`, a idempotência, no mesmo commit do append;
+        * `ChannelTagResolver` + `ChannelIntegrationConfiguration`, para o evento ingerido ser apendado
+          com as tags que tinha na origem;
+        * `ChannelMetadata`, as duas chaves que atravessam o fio (origem e tags).
+
+      POR QUE A ENTRADA VEIO PARA A LIB (ela não estava aqui)
+      ======================================================
+      Antes cada aplicação tinha a própria classe `@Incoming`, e a justificativa era boa: nome de fila é
+      decisão de deploy, e duas aplicações no mesmo broker precisam de FILAS DIFERENTES — compartilhar
+      fila faz elas competirem em vez de receberem cópias, e a que descarta dá ack e mata a mensagem da
+      outra. Foi medido nesta base: 274 eventos publicados, 1 entregue.
+
+      Essa lei continua valendo. O que mudou é a percepção de onde ela se expressa: no nome da FILA, que
+      é configuração (`mp.messaging.incoming.axon-inbox.queue.name`), não no nome da CLASSE. O channel é
+      uma constante e cada serviço o aponta para a fila dele — duas classes idênticas em dois módulos
+      eram duplicação sem ganho.
+
+      O que também saiu: `ChannelBackedEventSource`. A fila deixou de alimentar um event processor
+      diretamente, porque isso custava token, replay e durabilidade. Ver o Javadoc de `ChannelEventInbox`.
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <!-- EventSink, EventMessage, TagResolver, EventConverter e a Configuration do Axon -->
+        <dependency>
+            <groupId>org.axonframework</groupId>
+            <artifactId>axon-eventsourcing</artifactId>
+        </dependency>
+        <!-- EventDispatchInterceptorsProducer: a porta pela qual o outbox se liga -->
+        <dependency>
+            <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
+            <artifactId>quarkus-axon</artifactId>
+            <version>${quarkus-axon.version}</version>
+        </dependency>
+        <!-- O conector e o OutgoingRabbitMQMetadata usado por RabbitMqAddressing -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-messaging-rabbitmq</artifactId>
+        </dependency>
+        <!-- ObjectMapper: o envelope viaja como JSON -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <!-- O EntityManager do MessageInbox e o @Transactional que faz a linha do inbox e o append no
+             event store commitarem juntos. É a dependência que transformou esta lib de "encaminha
+             eventos" em "integra o event store ao broker": sem transação compartilhada, uma reentrega
+             duplicaria o evento no stream. -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <id>make-index</id>
+                        <goals>
+                            <goal>jandex</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

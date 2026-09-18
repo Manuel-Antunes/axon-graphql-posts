@@ -5,10 +5,59 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>dev.manuelantunes</groupId>
-    <artifactId>quarkus-axon-graphql-posts</artifactId>
+    <artifactId>quarkus-axon-graphql-posts-parent</artifactId>
     <version>0.1.0-SNAPSHOT</version>
-    <name>quarkus-axon-graphql-posts</name>
-    <description>Axon Framework 5 (entidades anotadas, DCB) + SmallRye GraphQL com Mutiny, em Quarkus</description>
+    <packaging>pom</packaging>
+    <name>quarkus-axon-graphql-posts-parent</name>
+    <description>Agregador: a aplicação e a extensão de suporte a native</description>
+
+    <!--
+      POR QUE ESTE PROJETO É MULTI-MÓDULO
+      ===================================
+      Por uma razão só: `@BuildStep` não pode morar na aplicação. O Quarkus só carrega build steps de um
+      artefato de *deployment*, declarado no `META-INF/quarkus-extension.properties` do artefato de
+      runtime (`deployment-artifact=`) e catalogado no `META-INF/quarkus-build-steps.list` que o
+      quarkus-extension-processor gera. Não há anotação, propriedade ou caminho de classpath que faça o
+      augmentation olhar para `app/src/main/java`.
+
+      E a aplicação precisa de build steps porque a extensão do Axon (`at.meks...:2.0.0-alpha6`) não
+      registra NADA para native: nem reflexão, nem provedores de serviço. Sem isso o binário compila e
+      morre na partida — ou pior, sobe e responde `no-handler-for-command`.
+
+      A alternativa era um `reachability-metadata.json` escrito à mão. Foi o que provou que native
+      funciona, mas é uma LISTA NOMINAL: ela envelhece em silêncio a cada handler novo, e a falha
+      aparece só em runtime. O build step troca a lista por uma regra sobre o índice Jandex.
+
+      O código de `axon-native-support/` está escrito para ser copiado para a extensão upstream: ele
+      consome os build items que o `AxonExtensionProcessor` já produz. Enquanto a PR não existir, ele
+      vive aqui.
+    -->
+    <!--
+      A FORMA DO MONOREPO, E A REGRA QUE A DECIDE
+      ===========================================
+      `libs/` tem DOMÍNIO e INFRAESTRUTURA. `apps/` tem APLICAÇÃO e APRESENTAÇÃO.
+
+      A linha não é entre serviços, é entre camadas — e é isso que torna um módulo reutilizável. Domínio
+      é regra e infraestrutura é como a regra persiste: as duas são do MÓDULO (posts, users), e mais de
+      um app pode importá-las. Aplicação é fluxo — qual command existe, qual query responde o quê, que
+      evento encadeia no próximo passo — e fluxo é de QUEM O EXECUTA.
+
+      O que isso resolve na prática: o serviço de tagueamento importa `libs/posts` e ganha o `Post`, os
+      eventos, as regras e os repositórios. Não ganha o GraphQL, não ganha a projeção e não ganha os
+      command handlers do outro app — que o Axon descobriria em build time e ligaria contra tabelas que
+      ele não tem. Antes desta divisão as duas saídas eram importar tudo ou redeclarar o evento do lado
+      de cá; as duas foram tentadas, e as duas eram erradas.
+    -->
+    <modules>
+        <module>libs/platform</module>
+        <module>libs/users</module>
+        <module>libs/posts</module>
+        <module>libs/axon-channels</module>
+        <module>libs/axon-native-support/runtime</module>
+        <module>libs/axon-native-support/deployment</module>
+        <module>apps/posts-api</module>
+        <module>apps/tagging</module>
+    </modules>
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
@@ -19,30 +68,17 @@
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.version>3.39.2</quarkus.platform.version>
         <quarkus-axon.version>2.0.0-alpha6</quarkus-axon.version>
-
-        <!-- Axon Framework 5.3.x: entidades anotadas (@EventSourcedEntity/@EntityCreator), command
-             handlers como classes (@InjectEntity). Sem a extensão Spring e sem a extensão Reactor: o
-             núcleo do Axon 5 tem API de configuração própria (ApplicationConfigurer) e os gateways já
-             devolvem CompletableFuture / Publisher, que o Mutiny consome direto. -->
         <axon.version>5.3.1</axon.version>
-        <!-- Reactor é `optional` nos módulos do Axon, mas subscriptionQuery usa Sinks por dentro:
-             sem esta dependência explícita, a primeira subscription falha com NoClassDefFoundError. -->
-        <reactor.version>3.7.10</reactor.version>
-        <!-- MapStruct: input GraphQL -> command e entidade -> view, gerados em tempo de compilação -->
+
         <mapstruct.version>1.6.3</mapstruct.version>
         <assertj.version>3.27.6</assertj.version>
-
-        <compiler-plugin.version>3.14.0</compiler-plugin.version>
         <surefire-plugin.version>3.5.3</surefire-plugin.version>
-        <skipITs>true</skipITs>
+        <compiler-plugin.version>3.14.0</compiler-plugin.version>
+        <antrun-plugin.version>3.1.0</antrun-plugin.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
-            <!-- O BOM do Quarkus vem PRIMEIRO de propósito: ele é quem fixa Jackson 2, Reactive Streams,
-                 SLF4J e companhia para a plataforma inteira. O BOM do Axon entra depois e gerencia só os
-                 artefatos org.axonframework — o converter do Axon usa Jackson 3 (tools.jackson), que é
-                 coordenada distinta e não disputa versão com o Quarkus. -->
             <dependency>
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>${quarkus.platform.artifact-id}</artifactId>
@@ -60,211 +96,12 @@
         </dependencies>
     </dependencyManagement>
 
-    <dependencies>
-        <!-- ==== GraphQL ======================================== -->
-        <!-- SmallRye GraphQL code-first: schema a partir das classes, Uni/Multi nativos, DataLoader
-             embutido no @Source em lote. De transporte de subscription vem só o WebSocket
-             (graphql-transport-ws e graphql-ws); SSE NÃO vem, e é o que interfaces/graphql/sse
-             acrescenta. -->
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-smallrye-graphql</artifactId>
-        </dependency>
-        <!-- Já vinha transitivo pelo GraphQL; declarado porque agora é compilado contra: a rota de SSE
-             é registrada observando o Router do Vert.x, e o handler herda o da extensão de GraphQL. -->
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-vertx-http</artifactId>
-        </dependency>
-
-        <!-- ==== Persistência: read model em PostgreSQL ======================================== -->
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-hibernate-orm-panache</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-jdbc-postgresql</artifactId>
-        </dependency>
-        <!-- O schema é versionado em SQL e o Hibernate roda em `validate`: entidade nova sem migration
-             não sobe. O módulo do Postgres é obrigatório desde o Flyway 10. -->
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-flyway</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-database-postgresql</artifactId>
-        </dependency>
-
-        <!-- ==== Segurança: resource server do realm do Keycloak ======================================== -->
-        <!-- quarkus-oidc lê o issuer, descobre o JWKS e valida assinatura/exp/iss sozinho; as roles de
-             realm do Keycloak (realm_access.roles) já viram roles do SecurityIdentity sem conversor. -->
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-oidc</artifactId>
-        </dependency>
-        <!-- BcryptUtil: a coluna accounts.password_hash existe para as contas CREDENTIAL do modelo de
-             account linking. Quem valida a senha de quem entra pelo Keycloak é o Keycloak. -->
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-elytron-security-common</artifactId>
-        </dependency>
-
-        <!-- ==== Validação e mapeamento ======================================== -->
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-hibernate-validator</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.mapstruct</groupId>
-            <artifactId>mapstruct</artifactId>
-            <version>${mapstruct.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-arc</artifactId>
-        </dependency>
-
-        <!-- ==== Axon Framework 5, pela extensão de Quarkus ======================================== -->
-        <!-- Descobre entidades e handlers em BUILD TIME e publica os gateways como beans. Não é oficial
-             da AxonIQ nem do Quarkiverse: é de terceiros e está em alpha. A avaliação da troca, com o
-             que ela apagou daqui, está no README. A versão é fixada à mão porque a extensão não entra
-             no quarkus-bom. -->
-        <dependency>
-            <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
-            <artifactId>quarkus-axon</artifactId>
-            <version>${quarkus-axon.version}</version>
-        </dependency>
-        <!-- A ponte para o JTA do Quarkus. Substituiu um JtaTransactionManager escrito à mão: além do
-             mesmo begin-or-join, ele ativa o request context do CDI e implementa
-             attachToProcessingLifecycle, que publica o EntityManager/Connection da transação no
-             ProcessingContext — o que um event store JPA/JDBC precisa para compartilhar a conexão. -->
-        <dependency>
-            <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
-            <artifactId>quarkus-axon-transaction</artifactId>
-            <version>${quarkus-axon.version}</version>
-        </dependency>
-        <!-- O health check dos event processors é da extensão, mas só aparece se houver quem sirva
-             /q/health. Uma linha para ganhar a checagem de que a projeção está de pé. -->
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-smallrye-health</artifactId>
-        </dependency>
-        <!-- axon-eventsourcing arrasta modelling -> messaging -> common/conversion. Declarado mesmo
-             vindo pela extensão: é o BOM daqui que fixa a versão do Axon, não o dela. -->
-        <dependency>
-            <groupId>org.axonframework</groupId>
-            <artifactId>axon-eventsourcing</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.projectreactor</groupId>
-            <artifactId>reactor-core</artifactId>
-            <version>${reactor.version}</version>
-        </dependency>
-        <!-- ==== Testes ======================================== -->
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-junit</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.rest-assured</groupId>
-            <artifactId>rest-assured</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.assertj</groupId>
-            <artifactId>assertj-core</artifactId>
-            <version>${assertj.version}</version>
-            <scope>test</scope>
-        </dependency>
-        <!-- AxonTestFixture: given-when-then por command, com repositório em memória -->
-        <dependency>
-            <groupId>org.axonframework</groupId>
-            <artifactId>axon-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-jacoco</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
-
     <build>
-        <resources>
-            <resource>
-                <directory>src/main/resources</directory>
-            </resource>
-            <!-- O realm entra no classpath a partir de docker/, e não de uma cópia: o Dev Services do
-                 Keycloak importa exatamente o mesmo arquivo que o docker compose monta. Duas cópias
-                 divergiriam, e a divergência só apareceria quando uma delas quebrasse. -->
-            <resource>
-                <directory>docker/keycloak</directory>
-                <includes>
-                    <include>realm-*.json</include>
-                </includes>
-            </resource>
-        </resources>
         <plugins>
             <plugin>
-                <groupId>${quarkus.platform.group-id}</groupId>
-                <artifactId>quarkus-maven-plugin</artifactId>
-                <version>${quarkus.platform.version}</version>
-                <extensions>true</extensions>
-                <executions>
-                    <execution>
-                        <goals>
-                            <goal>build</goal>
-                            <goal>generate-code</goal>
-                            <goal>generate-code-tests</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>${compiler-plugin.version}</version>
-                <configuration>
-                    <!-- -parameters: o SmallRye GraphQL casa o nome do argumento do schema com o nome
-                         do parâmetro do método quando não há @Name. -->
-                    <parameters>true</parameters>
-                    <annotationProcessorPaths>
-                        <path>
-                            <groupId>org.mapstruct</groupId>
-                            <artifactId>mapstruct-processor</artifactId>
-                            <version>${mapstruct.version}</version>
-                        </path>
-                    </annotationProcessorPaths>
-                </configuration>
-                <executions>
-                    <execution>
-                        <!-- Só no compile das fontes principais: os testes não têm mapper, e passar as
-                             opções lá só rende um "options were not recognized by any processor". -->
-                        <id>default-compile</id>
-                        <configuration>
-                            <compilerArgs>
-                                <!-- Propriedade do destino sem origem = erro de compilação, não aviso.
-                                     É o que faz um campo novo no command quebrar o build em vez de
-                                     chegar null do outro lado. -->
-                                <arg>-Amapstruct.unmappedTargetPolicy=ERROR</arg>
-                                <arg>-Amapstruct.defaultComponentModel=jakarta-cdi</arg>
-                            </compilerArgs>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>${surefire-plugin.version}</version>
-                <configuration>
-                    <systemPropertyVariables>
-                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
-                        <maven.home>${maven.home}</maven.home>
-                    </systemPropertyVariables>
-                </configuration>
             </plugin>
         </plugins>
     </build>

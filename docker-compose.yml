@@ -1,4 +1,5 @@
-# Ambiente de desenvolvimento: Postgres (dois bancos) + Keycloak com o realm já importado.
+# Ambiente de desenvolvimento: Postgres (três bancos), Keycloak com o realm importado, RabbitMQ e as
+# migrations rodando FORA das aplicações.
 #
 # ATENÇÃO: em dev e em teste você NÃO precisa disto. O Dev Services do Quarkus sobe um Postgres e um
 # Keycloak (com este mesmo realm) sozinho — `./mvnw quarkus:dev` e `./mvnw test` funcionam com o Docker
@@ -31,6 +32,11 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       # O init roda só quando o volume está vazio. Para reexecutar: docker compose down -v
+      #
+      # ATENÇÃO, e isto morde: num volume que JÁ EXISTE o script novo nunca roda. Quem tinha o compose
+      # de pé antes de `02-tagging-database.sql` existir fica sem o banco `axonposts_tagging`, e o
+      # sintoma é o Flyway girando em `connectRetries` contra um banco inexistente, sem dizer por quê.
+      # O `docker/e2e/run.sh` garante o banco por conta própria; à mão, é `docker compose down -v`.
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -39,6 +45,57 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  # ==== As migrations, FORA do processo das aplicações =======================================
+  # Serviço de uma tacada: roda as migrations e sai. As aplicações dependem de ele ter terminado
+  # (`service_completed_successfully`), não de ele estar de pé.
+  #
+  # POR QUE NÃO `migrate-at-start` NAS APLICAÇÕES
+  # ============================================
+  # Porque ele perdeu a corrida da partida. `AxonExtension.init` é um recorder de RUNTIME_INIT que
+  # resolve o event storage engine e, ao fazê-lo, toca o EntityManager — construindo a persistence unit
+  # ANTES de o Flyway ter a vez. Com `schema-management.strategy=validate` contra um banco vazio a
+  # aplicação morre com `Schema validation: missing table [accounts]`, e adiar dentro do
+  # ComponentBuilder não resolve: a lambda é chamada de dentro do próprio init.
+  #
+  # É também o que produção faria de qualquer jeito: migration é passo de deploy (ou init container),
+  # não trabalho da aplicação subindo. Em dev e teste quem cria o schema é o `initdb` do container do
+  # Dev Services, com o mesmo SQL concatenado das mesmas migrations.
+  flyway-posts:
+    image: flyway/flyway:11-alpine
+    container_name: quarkus-axonposts-flyway-posts
+    command:
+      - -url=jdbc:postgresql://postgres:5432/axonposts
+      - -user=axonposts
+      - -password=axonposts
+      - -locations=filesystem:/flyway/sql
+      - -baselineOnMigrate=false
+      - -connectRetries=20
+      - migrate
+    volumes:
+      - ./apps/posts-api/src/main/resources/db/migration:/flyway/sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # O serviço de tagueamento tem banco PRÓPRIO e migrations próprias — três tabelas, todas de
+  # infraestrutura. Ver o comentário na V1 dele.
+  flyway-tagging:
+    image: flyway/flyway:11-alpine
+    container_name: quarkus-axonposts-flyway-tagging
+    command:
+      - -url=jdbc:postgresql://postgres:5432/axonposts_tagging
+      - -user=axonposts
+      - -password=axonposts
+      - -locations=filesystem:/flyway/sql
+      - -baselineOnMigrate=false
+      - -connectRetries=20
+      - migrate
+    volumes:
+      - ./apps/tagging/src/main/resources/db/migration:/flyway/sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
@@ -85,6 +142,24 @@ services:
   # atrás do router, com live reload, e não uma imagem empacotada a cada mudança. E é por isso que o
   # `quarkus.http.host=0.0.0.0` está na linha acima: em dev o Quarkus escuta só em 127.0.0.1, e sem
   # trocar isso o router recebe um 400 sem corpo de quem não é a aplicação.
+  # O broker que as DUAS aplicações compartilham. Porta de management exposta para inspecionar
+  # exchanges, filas e bindings à mão — é onde se vê que cada app tem a própria fila vinculada ao
+  # mesmo exchange, que é a diferença entre receber cópia e competir por mensagem.
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: quarkus-axonposts-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   router:
     # A versão do ROUTER não é a mesma coisa que o `federation_version` do supergraph.yaml: uma é o
     # binário, a outra é o algoritmo de composição. `v2.9.3` existe como composição e NÃO existe como

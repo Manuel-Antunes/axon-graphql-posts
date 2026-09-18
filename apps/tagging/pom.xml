@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.manuelantunes</groupId>
+        <artifactId>quarkus-axon-graphql-posts-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>axonposts-tagging</artifactId>
+    <name>tagging</name>
+    <description>O serviço de tagueamento: decide a primeira tag de um post, pela coreografia</description>
+
+    <!--
+      O QUE ESTA APP IMPORTA, E ONDE A LINHA FOI DESENHADA
+      ====================================================
+      Ela importa o DOMÍNIO de posts (`libs/posts-domain`) e trabalha com o `Post` de verdade, os
+      eventos de verdade e as regras de verdade — `Post.complete(...)` é a MESMA classe que o serviço de
+      posts usa.
+
+      Uma versão anterior deste módulo redeclarava `PostPreCreatedEvent` como record próprio, com o
+      argumento de que "o contrato entre serviços é o envelope no fio, não a classe Java". O argumento
+      não é falso, e é a saída errada num monorepo que já separa domínio em biblioteca: evento de
+      domínio escrito duas vezes é a mesma regra em dois lugares, e o primeiro campo novo faz as duas
+      divergirem em silêncio. Se compartilhar classe é um risco de acoplamento, a resposta é versionar o
+      módulo de domínio — não copiar o arquivo.
+
+      O QUE ELA NÃO IMPORTA: `libs/posts`, a camada de APLICAÇÃO.
+      ==========================================================
+      Ela traria o GraphQL, a projeção, as views e todo command handler de lá — e o Axon descobre
+      handlers em build time, então este serviço subiria com a projeção de posts ligada contra um banco
+      que não tem as tabelas dela. A fronteira útil é domínio/aplicação, não serviço/serviço: domínio é
+      regra, e regra se compartilha; aplicação é fluxo, e fluxo é de quem o executa.
+
+      Daí o `quarkus.hibernate-orm.packages` no application.properties: as entidades vêm no classpath
+      com o domínio, e este serviço não tem (nem quer) as tabelas delas.
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+
+        <!-- ==== Axon: este serviço tem agregado, event store e token store próprios ============ -->
+        <dependency>
+            <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
+            <artifactId>quarkus-axon</artifactId>
+            <version>${quarkus-axon.version}</version>
+        </dependency>
+        <!-- O begin-or-join no JTA do Quarkus. Sem ele o `NoTransactionManager` não commitaria a linha
+             do inbox junto com o append — e uma reentrega duplicaria o evento no stream. -->
+        <dependency>
+            <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
+            <artifactId>quarkus-axon-transaction</artifactId>
+            <version>${quarkus-axon.version}</version>
+        </dependency>
+        <!-- SEM `quarkus-axon-tokenstore-jpa`, ao contrário do outro serviço, e a ausência é a
+             configuração: os dois módulos JPA do Axon declaram CADA UM uma classe
+             `QuarkusAxonEntityManagerProvider`, e ter os dois derruba a partida com
+             `AmbiguousResolutionException`. Lá isso é resolvido por `quarkus.arc.exclude-types`; aqui
+             não precisa ser resolvido, porque token store é para processor STREAMING — e este serviço
+             tem um subscribing só, que lê da publicação e não de uma posição.
+             A tabela `tokenentry` fica na migration de propósito: o dia em que um processor daqui virar
+             streaming, o que falta é a dependência, não o schema. -->
+        <dependency>
+            <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
+            <artifactId>quarkus-axon-jpa-eventstore</artifactId>
+            <version>${quarkus-axon.version}</version>
+        </dependency>
+        <!-- @EventSourcedEntity, @EntityCreator, @EventTag -->
+        <dependency>
+            <groupId>org.axonframework</groupId>
+            <artifactId>axon-eventsourcing</artifactId>
+        </dependency>
+
+        <!-- ==== Persistência: SÓ o que o Axon precisa ========================================== -->
+        <!-- Nenhuma entidade JPA é deste serviço. O Hibernate está aqui porque o event store e o token
+             store são JPA, e o Flyway porque as tabelas deles precisam existir. Não há read model. -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
+        <!-- ==== A integração ==================================================================== -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-messaging-rabbitmq</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.manuelantunes</groupId>
+            <artifactId>axonposts-axon-channels</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.manuelantunes</groupId>
+            <artifactId>axonposts-platform</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- O DOMÍNIO e a INFRAESTRUTURA de posts: o `Post`, os eventos, a regra de como um post se
+             completa, e os repositórios. Traz `axonposts-users` com ele, porque um Post tem autor.
+             O que ela NÃO traz é a camada de APLICAÇÃO — commands, queries, views e projeção moram nos
+             apps. É isso que faz este serviço importar o módulo sem herdar o outro app. -->
+        <dependency>
+            <groupId>dev.manuelantunes</groupId>
+            <artifactId>axonposts-posts</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- O mesmo script de inicialização do serviço de posts, pela mesma razão: `migrate-at-start`
+                 perdeu a corrida contra o init do Axon, então em dev e teste quem cria o schema é o
+                 `initdb` do container do Dev Services. Ver o comentário no pom do outro serviço. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>${antrun-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>db-init-script</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <concat destfile="${project.build.outputDirectory}/db/init/schema.sql"
+                                        fixlastline="true">
+                                    <sort>
+                                        <fileset dir="${project.build.outputDirectory}/db/migration"
+                                                 includes="V*.sql"/>
+                                    </sort>
+                                </concat>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <extensions>true</extensions>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>build</goal>
+                            <goal>generate-code</goal>
+                            <goal>generate-code-tests</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

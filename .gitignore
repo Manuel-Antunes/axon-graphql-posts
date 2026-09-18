@@ -16,3 +16,8 @@ data/
 
 # OS
 .DS_Store
+
+# Nx e pnpm: o monorepo é Java, mas as ferramentas do Nx são pacotes npm
+node_modules/
+.nx/
+.pnpm-store/
