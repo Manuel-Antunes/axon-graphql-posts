@@ -42,11 +42,35 @@
             <groupId>org.axonframework</groupId>
             <artifactId>axon-eventsourcing</artifactId>
         </dependency>
-        <!-- EventSourcedEntityConfigurer, a porta da extensão que EventSourcedEntities implementa -->
+        <!-- EventSourcedEntityConfigurer e AxonMetricsConfigurer, as portas da extensão que
+             EventSourcedEntities e AxonMetrics implementam -->
         <dependency>
             <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
             <artifactId>quarkus-axon</artifactId>
             <version>${quarkus-axon.version}</version>
+        </dependency>
+        <!-- ==== As métricas do Axon (ver AxonMetrics) =================================== -->
+        <!-- Os MessageMonitor do Axon e o MetricsConfigurationEnhancer que os registra. A versão vem do
+             axon-framework-bom, que a raiz já importa. -->
+        <dependency>
+            <groupId>org.axonframework.extensions.metrics</groupId>
+            <artifactId>axon-metrics-micrometer</artifactId>
+        </dependency>
+        <!-- O MeterRegistro de Micrometer que escreve na API do OpenTelemetry. É um JAR, não uma
+             extensão — e é justamente isso que permite pôr as métricas AQUI: o `quarkus-micrometer`
+             depende de `quarkus-vertx-http`, e a plataforma é importada por um serviço que não tem nem
+             quer porta HTTP. Versão do quarkus-bom. -->
+        <dependency>
+            <groupId>io.opentelemetry.instrumentation</groupId>
+            <artifactId>opentelemetry-micrometer-1.5</artifactId>
+        </dependency>
+        <!-- O bean `OpenTelemetry` que AxonMetrics recebe. `provided` porque quem o PRODUZ é a extensão
+             na aplicação: a plataforma só o consome, e declarar compile o arrastaria para o runner sem
+             necessidade. Toda aplicação deste repositório tem OpenTelemetry — é regra, não coincidência. -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-opentelemetry</artifactId>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 

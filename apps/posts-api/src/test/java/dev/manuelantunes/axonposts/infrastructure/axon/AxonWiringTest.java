@@ -14,6 +14,7 @@ import org.axonframework.messaging.core.unitofwork.transaction.TransactionManage
 import org.axonframework.modelling.StateManager;
 import org.junit.jupiter.api.Test;
 
+import at.meks.quarkiverse.axon.runtime.customizations.AxonMetricsConfigurer;
 import at.meks.quarkiverse.axon.transaction.runtime.QuarkusTransactionManager;
 import dev.manuelantunes.axonposts.domain.post.Post;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
@@ -68,6 +69,25 @@ class AxonWiringTest {
         assertThat(axon.getComponent(TransactionManager.class))
                 .as("o default da extensão é NoTransactionManager, e ele não commita nada junto")
                 .isInstanceOf(QuarkusTransactionManager.class);
+    }
+
+    /**
+     * <b>As métricas do Axon existem.</b> Terceira substituição por ausência desta classe, e a mais
+     * silenciosa das três: o {@code NoMetricsConfigurer} da extensão é {@code @DefaultBean}, então apagar
+     * {@code AxonMetrics} de {@code libs/platform} — ou trocar a anotação de escopo dela — não quebra
+     * compilação, não derruba a partida e não falha nenhum outro teste. A aplicação sobe idêntica e
+     * simplesmente para de emitir métrica, nos DOIS serviços.
+     * <p>
+     * O que se perde é o único sinal do que acontece dentro do command/event bus, porque span ali não
+     * existe: o Axon 5 ainda não tem tracing.
+     */
+    @Test
+    void theAxonMetricsAreWiredToOpenTelemetry() {
+        assertThat(beans.resolve(beans.getBeans(AxonMetricsConfigurer.class, Any.Literal.INSTANCE)))
+                .as("o default da extensão é NoMetricsConfigurer, e com ele nenhuma métrica do Axon sai")
+                .isNotNull()
+                .extracting(Bean::getBeanClass)
+                .isEqualTo(AxonMetrics.class);
     }
 
     @Test

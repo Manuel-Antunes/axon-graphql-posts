@@ -47,7 +47,7 @@ o Maven percorreria os oito módulos em série para subir duas aplicações. É 
 
 ```bash
 pnpm dev                       # as DUAS aplicações em dev mode, em paralelo — ver a seção abaixo
-pnpm libs                      # só instala as libs no ~/.m2; é o que `pnpm dev` faz antes
+./mvnw install -DskipTests -pl '!apps/posts-api,!apps/tagging'   # as libs no ~/.m2 (ver abaixo)
 ./mvnw quarkus:dev -pl apps/posts-api   # uma aplicação só
 ./mvnw test                    # suíte inteira — EXIGE Docker
 ./mvnw package                 # build + testes
@@ -81,16 +81,43 @@ curl -s localhost:8080/q/health | jq    # inclui "Axon eventprocessors", da exte
 
 ### `pnpm dev`: o nx roda os processos, o Maven resolve os módulos
 
-`pnpm dev` = `pnpm libs && nx run-many --target dev`. O target `dev` de cada app é um
-`nx:run-commands` declarado em `apps/*/project.json`, e tudo que ele faz é
-`./mvnw quarkus:dev -pl apps/<app>`. O nx aqui é **só o executor paralelo de dois processos contínuos**;
-quem resolve dependência entre módulos continua sendo o reator do Maven.
+`pnpm dev` = `nx run-many --target serve`. O target `serve` de cada app é um `nx:run-commands`
+declarado em `apps/*/project.json`, e tudo que ele faz é `./mvnw quarkus:dev -pl apps/<app> -Ddebug=<porta>`.
+O nx aqui é **só o executor paralelo de dois processos contínuos**; quem resolve dependência entre módulos
+continua sendo o reator do Maven.
+
+**As libs precisam estar instaladas no `~/.m2`, e o `pnpm dev` não as instala.** Com `-pl` e sem `-am`, o
+Maven resolve `axonposts-platform` e companhia do repositório local — então código novo numa lib (e agora
+há código lá: `AxonMetrics`) só chega às aplicações depois de um
+`./mvnw install -DskipTests -pl '!apps/posts-api,!apps/tagging'`. O filtro é por exclusão e não por
+enumeração: mantém os DOIS módulos do `axon-native-support` no reator, que é o que a validação da extensão
+exige, não precisa ser editado quando uma lib nova entra, e pular as aplicações evita o `quarkus:build`
+delas — que é justamente o passo intermitente documentado mais abaixo.
 
 Provado de ponta a ponta: as duas aplicações sobem juntas, o Dev Services dá **um Postgres para cada uma**
 (event store próprio, como o desenho exige) e **um RabbitMQ, um Keycloak e um LGTM para as duas**, e a
 saga atravessa — o post nasce na versão 1 sem tag e chega à 2 com a `Untagged` decidida pelo outro
 processo, num único trace com os dois `service.name` dentro (`http://localhost:3001`, ver
 *Observabilidade* mais abaixo).
+
+Duas colisões entre os dois processos, e as duas foram observadas de verdade:
+
+1. **A porta do debugger.** O `quarkus:dev` abre JDWP na 5005 por default, e os dois disputam. Daí o
+   `-Ddebug=5005` e `-Ddebug=5006` nos `project.json`. Sem isso o segundo a subir morre com
+   `transport error 202: bind failed: Address already in use` — e é INTERMITENTE, porque depende de quem
+   chegou primeiro: três execuções passaram antes de a quarta falhar.
+2. **A descoberta dos Dev Services COMPARTILHADOS é uma corrida, e esta ainda está aberta.** Container
+   compartilhado (RabbitMQ, LGTM, Keycloak) é achado por LABEL: quem sobe primeiro cria, quem chega
+   depois reusa. Partindo juntos, os dois podem criar antes de o outro estar rotulado — e foi o que
+   aconteceu numa execução: **dois** RabbitMQ (cada serviço num broker, a saga MUDA), e o `posts-api`
+   morrendo em
+   `Bind for 0.0.0.0:3001 failed: port is already allocated` ao tentar criar um segundo LGTM.
+   O `grafana-port` fixo transforma a falha silenciosa (duas stacks, telemetria partida) numa falha
+   alta — o que é melhor, mas não é conserto.
+   **Contorno que funciona, medido:** subir em série, `apps/tagging` primeiro e o `posts-api` depois de
+   ele estar no ar. Aí a topologia sai certa toda vez. Consertar de verdade é fazer os serviços
+   compartilhados existirem ANTES das aplicações — o candidato é o Dev Services de Compose, que este
+   projeto já tem no classpath (`compose` aparece nas *Installed features* dos dois apps) e não usa.
 
 **NÃO usar o target `quarkus:dev` que o `@nx/maven` infere.** Ele não funciona, por duas razões
 independentes, as duas medidas na versão 23.2.1 (a mais recente) e nenhuma delas configurável:
@@ -106,12 +133,6 @@ independentes, as duas medidas na versão 23.2.1 (a mais recente) e nenhuma dela
 2. **Os goals rodam num Maven RESIDENTE, em processo**, e o `quarkus:dev` precisa de um CLI de verdade:
    ali ele morre com `Cannot invoke "String.toLowerCase(java.util.Locale)" because "version" is null`.
    O mesmo goal pelo `./mvnw` sobe normalmente.
-
-Daí `pnpm libs` instalar as libs com um `./mvnw install` de verdade em vez de pedir `^install` ao nx. O
-filtro é por exclusão (`-pl '!apps/posts-api,!apps/tagging'`) e não por enumeração: mantém os DOIS
-módulos do `axon-native-support` no reator, que é o que a validação da extensão exige, e não precisa ser
-editado quando uma lib nova entra. Pular as aplicações também evita o `quarkus:build` delas — que é
-justamente o passo intermitente documentado logo abaixo.
 
 Duas linhas saíram do `nx.json` junto, e as duas eram armadilha: o `targetDefaults.build` apontava para
 um target que **não existe** neste workspace (o `@nx/maven` infere fases, não `build`), e o
@@ -651,11 +672,46 @@ teste paga tentativa de exportação e enche o log de falha de conexão. `sdk.di
 instrumentação inteira, não só o exportador. O `provided` do devservice não o tira do classpath de
 teste — por isso as linhas, e não a ausência da dependência, é que o desligam.
 
-**O ponto cego que sobrou, e ele é grande:** o que o Axon faz por dentro do command/event bus não é
-instrumentado — a extensão não publica spans. O trabalho aparece DENTRO do span do `receive`, sem
-sub-spans: o append no event store, o `@EventSourcingHandler` e a decisão de domínio são um bloco
-opaco de 2 ms. Enquanto for 2 ms não incomoda; no dia em que um `receive` ficar lento, o trace diz
-"foi aqui dentro" e não mais que isso.
+**O ponto cego em SPANS, e por que ele não se fecha hoje:** o que o Axon faz por dentro do
+command/event bus não gera span — nem a extensão de Quarkus os publica, nem o Axon 5 tem tracing. A
+documentação de tracing do Axon é explícita: *"The Distributed Tracing feature is not yet available in
+Axon Framework 5.0. It will be reintroduced in Axon Framework soon."* O `SpanFactory`, o
+`OpenTelemetrySpanFactory` e o artefato `axon-tracing-opentelemetry` são do Axon 4, e o
+`axon-framework-bom` 5.3.1 — o que este projeto importa — **não tem artefato de tracing nenhum**. A
+extensão de Quarkus até declara o gancho (`AxonTracingConfigurer`), e não há o que plugar nele. Então o
+append no event store, o `@EventSourcingHandler` e a decisão de domínio ficam DENTRO do span do
+`receive`, como um bloco opaco. Fechar isso hoje é escrever os spans à mão, num interceptador de
+mensagem; não foi feito.
+
+**É por isso que as MÉTRICAS do Axon não são enfeite** — elas são o único sinal do que acontece ali
+dentro, e vêm de `libs/platform`, em `infrastructure/axon/AxonMetrics`. Está na PLATAFORMA pela mesma
+razão que o `EventSourcedEntities`: os dois serviços precisam, e nenhum tem nada de próprio a dizer.
+Medido, com as duas aplicações no ar:
+
+```
+post_projection_latency{processorName="post-projection", service_name="quarkus-axon-graphql-posts"}  58
+tag_decision_latency   {processorName="tag-decision",    service_name="axonposts-tagging"}          391
+```
+
+Isso é o ATRASO de cada processor, e é a pergunta que trace nenhum responde: um trace conta uma
+requisição que já passou, e aqui o que importa é o que ainda não passou. Junto vêm contador, timer com
+buckets, percentil e capacidade de `CommandBus`, `QueryBus` e `EventStore`, com o nome do processor como
+TAG (`use-dimensions`), o que permite comparar os dois lados no mesmo gráfico.
+
+**Por que escrito à mão, e NÃO com o `quarkus-axon-metrics`.** A extensão existe, na versão exata da
+nossa (`2.0.0-alpha6`), e faz exatamente as duas linhas de `AxonMetrics.configure`. Mas arrasta
+`quarkus-micrometer`, que depende de **`quarkus-vertx-http`, e não em escopo opcional** — o que daria
+porta HTTP a quem importasse a plataforma, inclusive ao `apps/tagging`, que não tem nem quer uma (ele
+disputaria o 8080 com o outro app no `pnpm dev`). O que a extensão precisa de verdade é um
+`MeterRegistry`, e o `OpenTelemetryMeterRegistry` é um sobre o bean `OpenTelemetry` que já existe — num
+JAR, não numa extensão. Dois JARs (`axon-metrics-micrometer`, `opentelemetry-micrometer-1.5`) e uma
+classe, e a métrica sai pelo **mesmo OTLP** que o trace e o log.
+Isto também é o que dispensou o `quarkus-micrometer-opentelemetry` no `posts-api` — extensão em
+**Preview** no Quarkus 3.39 que chegou a entrar aqui e saiu quando a configuração subiu para a
+plataforma. Os dois serviços usam agora exatamente o mesmo mecanismo.
+
+`AxonMetrics` também **funciona por ausência**: substitui o `NoMetricsConfigurer` da extensão, que é
+`@DefaultBean`. Apagá-la não quebra compilação — as métricas somem dos DOIS serviços, em silêncio.
 
 ## O segundo serviço (`apps/tagging`)
 

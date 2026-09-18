@@ -6,7 +6,7 @@
       "cache": false,
       "continuous": true,
       "options": {
-        "command": "./mvnw quarkus:dev -pl apps/tagging"
+        "command": "./mvnw quarkus:dev -pl apps/tagging -Ddebug=5006"
       }
     }
   }

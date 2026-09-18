@@ -6,7 +6,7 @@
       "cache": false,
       "continuous": true,
       "options": {
-        "command": "./mvnw quarkus:dev -pl apps/posts-api"
+        "command": "./mvnw quarkus:dev -pl apps/posts-api -Ddebug=5005"
       }
     }
   }
