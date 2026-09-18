@@ -36,13 +36,19 @@ só ele tem — e `CurrentUser` depende de `UserProvisioning`, que é aplicaçã
 Em dev e em teste **não é preciso subir nada**: o Dev Services do Quarkus levanta Postgres e Keycloak
 (com o realm importado) sozinho. Basta o Docker ligado.
 
-**`-pl <módulo>` NÃO funciona neste repositório**, com ou sem `-am`: o
+**`-pl <módulo>` NÃO funciona para os goals de BUILD**, com ou sem `-am`: o
 `quarkus-extension-maven-plugin` do `axon-native-support` valida que o artefato de deployment está no
 reator, e um build parcial o deixa de fora — `Deployment artifact ... is missing the following
-dependencies`. Rode da raiz e filtre com `-Dtest=`.
+dependencies`. Para compilar, empacotar ou testar, rode da raiz e filtre com `-Dtest=`.
+
+**Para `quarkus:dev` o `-pl` funciona, e é o jeito certo.** O goal não constrói a extensão — ele a
+resolve do `~/.m2` e descobre as libs pelo workspace do reator —, então a validação nem roda. Sem `-pl`
+o Maven percorreria os oito módulos em série para subir duas aplicações. É o que `pnpm dev` usa.
 
 ```bash
-./mvnw quarkus:dev -pl apps/posts-api   # NÃO — ver acima; use o quarkus:dev da raiz
+pnpm dev                       # as DUAS aplicações em dev mode, em paralelo — ver a seção abaixo
+./mvnw install -DskipTests -pl '!apps/posts-api,!apps/tagging'   # as libs no ~/.m2 (ver abaixo)
+./mvnw quarkus:dev -pl apps/posts-api   # uma aplicação só
 ./mvnw test                    # suíte inteira — EXIGE Docker
 ./mvnw package                 # build + testes
 ./docker/e2e/run.sh            # a saga entre DOIS processos, com broker de verdade
@@ -50,6 +56,7 @@ dependencies`. Rode da raiz e filtre com `-Dtest=`.
 ./mvnw test -Dtest=PostLifecycleE2ETest#aNewPostArrivesAlreadyTaggedAtVersionTwo   # um método
 ./mvnw test -Dtest='*E2ETest'                                     # só os ponta a ponta
 open target/jacoco-report/index.html   # cobertura — o quarkus-jacoco roda junto com `test`
+open http://localhost:3001     # Grafana do Dev Services: traces, logs e métricas DOS DOIS serviços
 ```
 
 Federado (Apollo Router na frente). O `-Dquarkus.http.host=0.0.0.0` **não** é detalhe: em dev o Quarkus
@@ -71,6 +78,67 @@ docker compose up -d && ./mvnw package && java -jar target/quarkus-app/quarkus-r
 docker compose down -v         # reset total
 curl -s localhost:8080/q/health | jq    # inclui "Axon eventprocessors", da extensão
 ```
+
+### `pnpm dev`: o nx roda os processos, o Maven resolve os módulos
+
+`pnpm dev` = `nx run-many --target serve`. O target `serve` de cada app é um `nx:run-commands`
+declarado em `apps/*/project.json`, e tudo que ele faz é `./mvnw quarkus:dev -pl apps/<app> -Ddebug=<porta>`.
+O nx aqui é **só o executor paralelo de dois processos contínuos**; quem resolve dependência entre módulos
+continua sendo o reator do Maven.
+
+**As libs precisam estar instaladas no `~/.m2`, e o `pnpm dev` não as instala.** Com `-pl` e sem `-am`, o
+Maven resolve `axonposts-platform` e companhia do repositório local — então código novo numa lib (e agora
+há código lá: `AxonMetrics`) só chega às aplicações depois de um
+`./mvnw install -DskipTests -pl '!apps/posts-api,!apps/tagging'`. O filtro é por exclusão e não por
+enumeração: mantém os DOIS módulos do `axon-native-support` no reator, que é o que a validação da extensão
+exige, não precisa ser editado quando uma lib nova entra, e pular as aplicações evita o `quarkus:build`
+delas — que é justamente o passo intermitente documentado mais abaixo.
+
+Provado de ponta a ponta: as duas aplicações sobem juntas, o Dev Services dá **um Postgres para cada uma**
+(event store próprio, como o desenho exige) e **um RabbitMQ, um Keycloak e um LGTM para as duas**, e a
+saga atravessa — o post nasce na versão 1 sem tag e chega à 2 com a `Untagged` decidida pelo outro
+processo, num único trace com os dois `service.name` dentro (`http://localhost:3001`, ver
+*Observabilidade* mais abaixo).
+
+Duas colisões entre os dois processos, e as duas foram observadas de verdade:
+
+1. **A porta do debugger.** O `quarkus:dev` abre JDWP na 5005 por default, e os dois disputam. Daí o
+   `-Ddebug=5005` e `-Ddebug=5006` nos `project.json`. Sem isso o segundo a subir morre com
+   `transport error 202: bind failed: Address already in use` — e é INTERMITENTE, porque depende de quem
+   chegou primeiro: três execuções passaram antes de a quarta falhar.
+2. **A descoberta dos Dev Services COMPARTILHADOS é uma corrida, e esta ainda está aberta.** Container
+   compartilhado (RabbitMQ, LGTM, Keycloak) é achado por LABEL: quem sobe primeiro cria, quem chega
+   depois reusa. Partindo juntos, os dois podem criar antes de o outro estar rotulado — e foi o que
+   aconteceu numa execução: **dois** RabbitMQ (cada serviço num broker, a saga MUDA), e o `posts-api`
+   morrendo em
+   `Bind for 0.0.0.0:3001 failed: port is already allocated` ao tentar criar um segundo LGTM.
+   O `grafana-port` fixo transforma a falha silenciosa (duas stacks, telemetria partida) numa falha
+   alta — o que é melhor, mas não é conserto.
+   **Contorno que funciona, medido:** subir em série, `apps/tagging` primeiro e o `posts-api` depois de
+   ele estar no ar. Aí a topologia sai certa toda vez. Consertar de verdade é fazer os serviços
+   compartilhados existirem ANTES das aplicações — o candidato é o Dev Services de Compose, que este
+   projeto já tem no classpath (`compose` aparece nas *Installed features* dos dois apps) e não usa.
+
+**NÃO usar o target `quarkus:dev` que o `@nx/maven` infere.** Ele não funciona, por duas razões
+independentes, as duas medidas na versão 23.2.1 (a mais recente) e nenhuma delas configurável:
+
+1. **O plugin decompõe o ciclo de vida do Maven em um target por execução de mojo**, então `package` roda
+   `jar:jar@default-jar` sozinho. Como o mesmo plugin também restaura `target/nx-build-state.json` — que
+   grava `mainArtifact.file` — o mojo encontra o artefato JÁ anexado ao projeto e aborta com
+   `You have to use a classifier to attach supplemental artifacts to the project instead of replacing
+   them`. Passa uma vez depois de um `clean` e falha em TODAS as seguintes; apagar o
+   `nx-build-state.json` conserta aquela execução e a próxima o regrava. Como todo target inferido
+   depende de `^install`, qualquer target do plugin cai nisso. Os targets `*-ci` rodam o mesmo mojo e
+   têm o mesmo defeito.
+2. **Os goals rodam num Maven RESIDENTE, em processo**, e o `quarkus:dev` precisa de um CLI de verdade:
+   ali ele morre com `Cannot invoke "String.toLowerCase(java.util.Locale)" because "version" is null`.
+   O mesmo goal pelo `./mvnw` sobe normalmente.
+
+Duas linhas saíram do `nx.json` junto, e as duas eram armadilha: o `targetDefaults.build` apontava para
+um target que **não existe** neste workspace (o `@nx/maven` infere fases, não `build`), e o
+`targetDefaults.test` sobrescrevia o `dependsOn` inferido por esse mesmo `build` inexistente —
+`targetDefaults` tem precedência sobre target inferido por plugin, então `nx test` rodava o surefire
+**sem compilar nada antes**, calado. Quem roda a suíte é `./mvnw test`, da raiz, como sempre.
 
 `quarkus:dev` recarrega sozinho na próxima requisição depois de uma classe mudar.
 O event store é **persistente** desde que a saga passou a ser coreografada: recarga não apaga mais nada.
@@ -189,12 +257,95 @@ pelo `@IfBuildProperty`), porque consistência eventual faz mensagem em voo cruz
 
 ### A integração Axon ↔ channels, nas duas direções
 
-- **saída**: todo evento apendado é encaminhado ao channel depois do commit, por um
-  `MessageDispatchInterceptor`. Genérico — nenhum tipo de evento é citado. A routing key sai do
+- **saída**: todo evento apendado é oferecido, depois do commit, aos **outboxes deste serviço**, por um
+  `MessageDispatchInterceptor`. Genérico — nenhum tipo de evento é citado em código. A routing key sai do
   `@Event` + `@EventTag`: `namespace.Name.tagDoAgregado`.
 - **entrada**: toda mensagem recebida é **apendada no event store local**, e é o store — não a fila —
   que alimenta os event processors. O broker é transporte; o Axon funciona como em qualquer aplicação
   sem mensageria, com token, replay e durabilidade.
+
+**UM CANAL POR DESTINO, e a saída deixou de ter um hub.** Era um canal só, `axon-events`, por onde todo
+evento passava — um ponto central numa saga que se diz coreografada, e a razão pela qual "parte em Kafka,
+parte em RabbitMQ" não era exprimível: conector é atributo do canal, e só havia um canal.
+
+#### A regra que decide onde cada coisa é declarada
+
+> **O código diz O QUÊ sai. A configuração diz PARA ONDE.**
+
+Houve uma versão intermediária com o seletor no `application.properties`
+(`axonposts.messaging.outbox.<canal>.events=posts.*`), escrita para espelhar o `routing-keys` da entrada.
+A simetria era aparente: na **entrada** o seletor é mesmo configuração, porque anda junto com nome de
+fila e binding, que mudam por ambiente; na **saída** não muda por ambiente nunca — o que um serviço
+publica é contrato dele, e contrato em `.properties` se altera sem passar por revisão de código.
+
+E houve uma versão com uma `interface AxonOutbox` de três métodos, implementada por um bean em cada
+serviço. Ela dizia os mesmos dois fatos em uma classe, com o nome do canal escrito duas vezes e sem nada
+conferindo. O qualifier diz o mesmo em duas linhas, e a conferência passou a existir.
+
+#### A saída, peça por peça
+
+| peça | onde | o que decide |
+|---|---|---|
+| `EventAddress` | lib | lê o evento UMA vez: nome qualificado, namespace, id e chave de ordenação |
+| `OutboxRouting` | lib | qual outbox recebe qual evento, por namespace; valida a fiação |
+| `@AxonOutbox` | **qualifier da lib, usado na aplicação** | o canal e os **namespaces** que saem por ele |
+| `ChannelAddressing` | lib, uma por conector | como aquele broker endereça (routing key, record key) |
+
+**OUTBOX NOVO = DUAS COISAS:**
+
+1. um produtor de `Emitter` em `infrastructure/outbox/` da aplicação — uma declaração, os dois fatos:
+
+```java
+static final String CHANNEL = "post-events-out";
+
+@Produces @Singleton
+@AxonOutbox(channel = CHANNEL, namespaces = "posts")
+Emitter<AxonEventEnvelope> postEvents(@Channel(CHANNEL) Emitter<AxonEventEnvelope> channel) {
+    return channel;
+}
+```
+
+2. o bloco `mp.messaging.outgoing.<canal>.*`: conector, exchange/tópico. Nada sobre *o que* sai.
+
+**Três coisas do CDI que decidiram essa forma, e as três foram medidas:**
+
+- **`@AxonOutbox` não pode ir no campo injetado**, ao lado do `@Channel`. Qualifier num ponto de injeção
+  exige um bean com *todos* os qualifiers dali, e o emitter de `@Channel` é um bean sintético do Quarkus
+  que só tem o `@Channel`. A lib também não pode oferecer esse bean: um produtor que casasse com qualquer
+  canal precisaria de `@Channel` com `value()` `@Nonbinding`, e ele é **binding** — é o que distingue um
+  canal do outro. Num produtor a colisão some.
+- **O nome do canal aparece duas vezes** porque não há de onde lê-lo uma vez só: o ArC devolve
+  `Bean#getInjectionPoints()` **vazio** para produtores (medido: `injectionPoints=[]`), então o `@Channel`
+  do parâmetro é invisível em runtime. O que impede a divergência é `OutboxRouting`, que confere o emitter
+  produzido contra o que o `ChannelRegistry` tem sob aquele nome.
+- **A lib coleta com `@AxonOutbox Instance<Object>`**, e não `Instance<Emitter<…>>`: o Quarkus valida todo
+  ponto de injeção cujo tipo requerido seja `Emitter` e exige `@Channel` nele —
+  `Invalid emitter injection - @Channel is required for parameter 'outboxes'`. `Object` escapa da
+  validação; o elenco é conferido na coleta.
+
+Produtor declarando canal que o SmallRye não ligou **derruba a resolução da tabela**, com o nome do canal
+no erro. O inverso — bloco de canal sem produtor — não é detectável, porque nem todo canal outgoing
+precisa ser um outbox do Axon; o sinal dele é o `has no downstream` do SmallRye na partida.
+
+Evento que casa com vários outboxes sai em todos — é o que mantém "tudo num barramento de auditoria e só
+os posts no broker" exprimível com dois beans. Evento que não casa com nenhum não sai, e isso é o desenho:
+o event store continua sendo o log durável, e o que não foi publicado pode ser republicado.
+
+**O limite conhecido:** a granularidade é o namespace, então não dá para mandar `posts.PostCreated` a um
+destino e `posts.PostUpdated` a outro. O dia em que for preciso, o lugar de resolver é a porta
+`AxonOutbox` — um método a mais —, não um arquivo de propriedades.
+
+**Protocolo novo = uma `ChannelAddressing` a mais**, declarando o `connector()` que ela atende
+(`smallrye-kafka`, `smallrye-pulsar`…). Ela **não** substitui a de RabbitMQ: as duas convivem, e quem
+escolhe entre elas é o `mp.messaging.outgoing.<canal>.connector` daquele canal. Conector sem
+`ChannelAddressing` derruba a resolução — sem endereçamento a mensagem sairia sem routing key e o
+exchange a descartaria sem uma linha no log.
+
+**A chave de ordenação NÃO é mais configurada.** Havia `axonposts.messaging.ordering-tag-keys=postId,…`
+nos dois serviços, e os dois `application.properties` já admitiam por escrito que a lista não desempatava
+nada: o `AggregateBasedJpaEventStorageEngine` aceita **uma tag por evento**. Hoje a chave é a tag do
+evento, lida do evento (`EventAddress`), e duas tags produzem `WARN` em vez de escolha alfabética calada.
+Quem trava as três regras é `OutboxRoutingTest`.
 
 Três guardas independentes contra execução duplicada, e cada uma cobre o que a outra não cobre: a
 **marca de origem** na metadata descarta o eco do próprio serviço (e corta o laço de reenvio); o
@@ -379,6 +530,37 @@ domínio na mesma classe. Não existe entidade de infraestrutura espelho; os val
   Reactive Streams, adaptado para `Multi` com `FlowAdapters.toFlowPublisher`. O `@QueryHandler` da
   subscription **precisa existir** (devolve `Optional.empty()`). O filtro por tópico é avaliado no `emit`:
   o payload da subscription carrega o próprio predicado.
+- **O update chega ao assinante depois do commit, e quem faz isso é o Axon.** O
+  `SimpleQueryBus.emitUpdate` chama `runAfterCommitOrImmediately`: bufferiza os updates num recurso do
+  `ProcessingContext`, registra **um** `runOnAfterCommit` e entrega o lote junto; sem contexto, ou com ele
+  já commitado, entrega na hora. Um `@EventHandler` escreve `emitter.emit(...)` e mais nada.
+
+  **A condição para isso funcionar é a unidade de trabalho do Axon ser DONA da transação.** O
+  `quarkus-axon-transaction` faz *begin-or-join*: se já houver transação JTA aberta, ela junta — e aí o
+  after-commit do Axon dispara com a transação ainda aberta, o assinante lê o banco noutra thread dentro
+  dela, e a transação aborta:
+
+  ```
+  ARJUNA012125: TwoPhaseCoordinator.beforeCompletion - failed ... ConcurrentModificationException
+  ARJUNA012108: CheckedAction::check - atomic action ... aborting with 2 threads active!
+  This statement has been closed.
+  ```
+
+  Por isso **`ChannelEventIngestion.ingest` não leva `@Transactional`**: a linha do inbox e o append vão
+  dentro da mesma `unitOfWorkFactory().create("axon-inbox")`, que abre a transação e a commita. A
+  atomicidade é a mesma; o que muda é quem é o dono. Medido nos dois sentidos com `docker/e2e/run.sh`:
+  **11 de 12** com a anotação, **12 de 12** sem ela — e nenhum teste do Surefire pega a diferença, porque
+  em teste o tagueamento é dublado em processo e a ingestão não roda. Quem trava é
+  `AxonWiringTest.theIngestionOwnsItsOwnTransaction`, que confere a ausência da anotação.
+
+  **Houve duas tentativas de resolver isso por fora, e as duas estão registradas porque as duas
+  pareciam certas.** Uma sincronização JTA escrita à mão dentro do `PostCreatedEventHandler` — que punha
+  infraestrutura na aplicação e morria no interceptador de métricas (`isStarted()` ainda `true` em
+  `AFTER_COMMIT` → `ProcessingContext is already in phase AFTER_COMMIT`, levantada **antes** da emissão).
+  E um decorador de `QueryBus` na plataforma, que funcionava e eram 280 linhas para refazer, no eixo do
+  JTA, o que o framework já fazia no eixo dele. As duas sumiram quando a fronteira da transação passou a
+  bater com a da unidade de trabalho. **Não era uma roda faltando: era a nossa roda girando no eixo
+  errado.**
 - **Dois transportes no mesmo `/graphql`, escolhidos por cabeçalho.** `Upgrade: websocket` →
   `graphql-transport-ws`/`graphql-ws`, que vem do SmallRye. `Accept: text/event-stream` → GraphQL over
   SSE, que **não** vem: o SmallRye 2.18.5 e a extensão do Quarkus 3.39 não têm uma linha de
@@ -556,6 +738,94 @@ silêncio após um reload: post nasce na versão 1, sem tag, e o log não reclam
 `quarkus:dev`. O botão que a extensão documenta para o sintoma vizinho ("no command handler available") é
 `quarkus.axon.live-reload.shutdown.wait-duration.amount`; ele **não** é usado aqui porque não se provou
 que resolve este caso.
+
+### Observabilidade: OpenTelemetry em TODA aplicação
+
+**REGRA: aplicação nova nasce instrumentada.** `quarkus-opentelemetry` mais o
+`quarkus-observability-devservices-lgtm` em `provided`, e as mesmas linhas de `quarkus.otel` que os
+dois apps já têm. Sinal que existe num serviço e não no outro dá um trace pela metade, e um trace pela
+metade é pior que nenhum: **a lacuna parece latência**. Foi exatamente o que aconteceu enquanto só o
+`posts-api` exportava — o publish aparecia e depois vinha um silêncio de duração desconhecida, que era
+o `tagging` decidindo a tag sem nada registrar.
+
+O que a instrumentação custa em código: **nada**. Traces de HTTP, JDBC e do conector de mensageria são
+automáticos, e o elo entre os processos sai de graça porque `tracing.enabled` já é `true` por default
+nos dois lados do conector do RabbitMQ. A saga inteira é **um trace só**, medido:
+
+```
+quarkus-axon-graphql-posts   POST /graphql                                SERVER     322 ms
+quarkus-axon-graphql-posts     GraphQL                                    INTERNAL   309 ms
+quarkus-axon-graphql-posts     axonposts.events publish                   PRODUCER   (×3)
+axonposts-tagging              axonposts.tagging.post-precreated receive  CONSUMER     2 ms
+axonposts-tagging                axonposts.events publish                 PRODUCER
+quarkus-axon-graphql-posts     axonposts.posts-api.post-completed receive CONSUMER
+```
+
+Quatro coisas que valem por si, e as três primeiras falham em silêncio:
+
+1. **`quarkus.application.name` é o `service.name` do Grafana.** Sem ele todo trace chega como
+   `unknown_service` — e com dois serviços no mesmo trace isso apaga justamente a informação que o
+   trace distribuído tem para dar: em qual lado o tempo foi gasto.
+2. **Logs e métricas são `false` por default no Quarkus.** Só traces vêm ligados, então
+   `quarkus.otel.logs.enabled` e `quarkus.otel.metrics.enabled` são o que faz o sinal EXISTIR. Não são
+   afinamento.
+3. **O container do LGTM é COMPARTILHADO** (`quarkus.observability.lgtm.shared` é `true` por default,
+   `service-name` é `lgtm`): uma stack, um Grafana, os dois `service.name` dentro. Quem o SOBE é quem
+   partir primeiro — e no `pnpm dev` os dois partem juntos. Daí
+   `quarkus.observability.lgtm.grafana-port=3001` estar declarada nos DOIS apps: **a duplicação é
+   necessária**, porque sem ela a URL da Grafana passaria a depender de quem ganhou a corrida.
+   Verificado com as duas no ar: um container só, e a corrida não produz um segundo.
+4. **`quarkus-opentelemetry` NÃO traz porta HTTP** — depende de `quarkus-vertx`, não de
+   `quarkus-vertx-http`. É o que permite instrumentar o `tagging` sem lhe dar um endpoint nem fazê-lo
+   disputar o 8080 com o outro app no `pnpm dev`.
+
+Em **teste** a observabilidade está desligada nos dois (`%test.quarkus.observability.enabled=false` +
+`%test.quarkus.otel.sdk.disabled=true`), e as duas razões são medidas: subir Loki+Grafana+Tempo+Mimir
+por suíte custa memória de Docker que esta máquina não tem sobrando, e com o SDK ligado sem coletor todo
+teste paga tentativa de exportação e enche o log de falha de conexão. `sdk.disabled` desliga a
+instrumentação inteira, não só o exportador. O `provided` do devservice não o tira do classpath de
+teste — por isso as linhas, e não a ausência da dependência, é que o desligam.
+
+**O ponto cego em SPANS, e por que ele não se fecha hoje:** o que o Axon faz por dentro do
+command/event bus não gera span — nem a extensão de Quarkus os publica, nem o Axon 5 tem tracing. A
+documentação de tracing do Axon é explícita: *"The Distributed Tracing feature is not yet available in
+Axon Framework 5.0. It will be reintroduced in Axon Framework soon."* O `SpanFactory`, o
+`OpenTelemetrySpanFactory` e o artefato `axon-tracing-opentelemetry` são do Axon 4, e o
+`axon-framework-bom` 5.3.1 — o que este projeto importa — **não tem artefato de tracing nenhum**. A
+extensão de Quarkus até declara o gancho (`AxonTracingConfigurer`), e não há o que plugar nele. Então o
+append no event store, o `@EventSourcingHandler` e a decisão de domínio ficam DENTRO do span do
+`receive`, como um bloco opaco. Fechar isso hoje é escrever os spans à mão, num interceptador de
+mensagem; não foi feito.
+
+**É por isso que as MÉTRICAS do Axon não são enfeite** — elas são o único sinal do que acontece ali
+dentro, e vêm de `libs/platform`, em `infrastructure/axon/AxonMetrics`. Está na PLATAFORMA pela mesma
+razão que o `EventSourcedEntities`: os dois serviços precisam, e nenhum tem nada de próprio a dizer.
+Medido, com as duas aplicações no ar:
+
+```
+post_projection_latency{processorName="post-projection", service_name="quarkus-axon-graphql-posts"}  58
+tag_decision_latency   {processorName="tag-decision",    service_name="axonposts-tagging"}          391
+```
+
+Isso é o ATRASO de cada processor, e é a pergunta que trace nenhum responde: um trace conta uma
+requisição que já passou, e aqui o que importa é o que ainda não passou. Junto vêm contador, timer com
+buckets, percentil e capacidade de `CommandBus`, `QueryBus` e `EventStore`, com o nome do processor como
+TAG (`use-dimensions`), o que permite comparar os dois lados no mesmo gráfico.
+
+**Por que escrito à mão, e NÃO com o `quarkus-axon-metrics`.** A extensão existe, na versão exata da
+nossa (`2.0.0-alpha6`), e faz exatamente as duas linhas de `AxonMetrics.configure`. Mas arrasta
+`quarkus-micrometer`, que depende de **`quarkus-vertx-http`, e não em escopo opcional** — o que daria
+porta HTTP a quem importasse a plataforma, inclusive ao `apps/tagging`, que não tem nem quer uma (ele
+disputaria o 8080 com o outro app no `pnpm dev`). O que a extensão precisa de verdade é um
+`MeterRegistry`, e o `OpenTelemetryMeterRegistry` é um sobre o bean `OpenTelemetry` que já existe — num
+JAR, não numa extensão. Dois JARs (`axon-metrics-micrometer`, `opentelemetry-micrometer-1.5`) e uma
+classe, e a métrica sai pelo **mesmo OTLP** que o trace e o log.
+Isto também é o que dispensou o `quarkus-micrometer-opentelemetry` no `posts-api` — extensão em
+**Preview** no Quarkus 3.39 que chegou a entrar aqui e saiu quando a configuração subiu para a
+plataforma. Os dois serviços usam agora exatamente o mesmo mecanismo.
+
+`AxonMetrics` também **funciona por ausência**: substitui o `NoMetricsConfigurer` da extensão, que é
+`@DefaultBean`. Apagá-la não quebra compilação — as métricas somem dos DOIS serviços, em silêncio.
 
 ## O segundo serviço (`apps/tagging`)
 

@@ -19,9 +19,6 @@ import java.util.List;
 import java.util.Optional;
 
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.transaction.Status;
-import jakarta.transaction.Synchronization;
-import jakarta.transaction.TransactionSynchronizationRegistry;
 
 /**
  * Emite para {@code onPostCreated} quando um post fica <b>completo</b> — e materializa o read model
@@ -54,6 +51,13 @@ import jakarta.transaction.TransactionSynchronizationRegistry;
  * <p>
  * É também por isso que a reconciliação não vai num {@code onAfterCommit} nem num command despachado
  * daqui: as duas coisas aconteceriam depois da emissão.
+ *
+ * <h2>Este handler NÃO espera o commit, e não é descuido</h2>
+ * Ele emite a linha que lhe cabe e acabou. <b>Quando</b> aquele update chega ao assinante — depois do
+ * commit, e fora da thread que commitou — é decisão do {@code QueryBus} decorado em
+ * {@code libs/platform}: {@code SubscriptionUpdatesAfterCommit}. Havia aqui uma sincronização JTA
+ * fazendo isso à mão, e ela era infraestrutura na camada de aplicação, repetida em cada handler que
+ * emitisse — com dois defeitos silenciosos que só o caminho entre processos revelava. Estão descritos lá.
  */
 @ApplicationScoped
 public class PostCreatedEventHandler {
@@ -63,14 +67,11 @@ public class PostCreatedEventHandler {
     private final PostRepository posts;
     private final TagRepository tags;
     private final PostViewMapper viewMapper;
-    private final TransactionSynchronizationRegistry transactions;
 
-    public PostCreatedEventHandler(PostRepository posts, TagRepository tags, PostViewMapper viewMapper,
-            TransactionSynchronizationRegistry transactions) {
+    public PostCreatedEventHandler(PostRepository posts, TagRepository tags, PostViewMapper viewMapper) {
         this.posts = posts;
         this.tags = tags;
         this.viewMapper = viewMapper;
-        this.transactions = transactions;
     }
 
     @EventHandler
@@ -84,61 +85,9 @@ public class PostCreatedEventHandler {
             materialize(post, event);
         }
 
-        emitAfterCommit(emitter, viewMapper.toView(post));
-    }
-
-    /**
-     * Emite para a subscription <b>depois do commit</b>, por sincronização JTA.
-     *
-     * <h3>Por que não emitir aqui mesmo</h3>
-     * Porque {@code PostView} não carrega as tags: o campo {@code tags} do GraphQL é resolvido por um
-     * resolvedor de lote que <b>lê o banco</b> ao serializar a resposta, e o assinante faz isso na
-     * thread dele assim que recebe a emissão. Emitindo dentro da transação, essa segunda thread toca a
-     * sessão do Hibernate enquanto ela ainda está sendo commitada. O que sai, medido:
-     * <pre>
-     * RollbackException: Could not commit transaction / Caused by: ConcurrentModificationException
-     * o stream da subscription falhou: The field at path '/onPostCreated' was declared as a non null
-     * type, but the code involved in retrieving data has wrongly returned a null value
-     * </pre>
-     * O assinante recebe {@code null} e a transação morre no commit — dois sintomas sem relação
-     * aparente, com uma causa só.
-     *
-     * <h3>Por que JTA, e não {@code ProcessingContext.onAfterCommit}</h3>
-     * Porque o gancho do Axon não está disponível aqui: quando um evento é <b>ingerido</b>, o processor
-     * subscribing roda já dentro da fase AFTER_COMMIT do contexto, e registrar outra falha com
-     * {@code ProcessingContext is already in phase AFTER_COMMIT (40000)}. A transação JTA, essa, ainda
-     * está aberta — e é ela que importa para quem vai ler o banco.
-     *
-     * <h3>Fora de transação</h3>
-     * Emite direto. É o caminho de um teste unitário ou de um replay fora de unidade de trabalho; não há
-     * commit a esperar.
-     */
-    private void emitAfterCommit(QueryUpdateEmitter emitter, PostView view) {
-        log.debug("PostCreated {} (v{}) de {} → emitindo para onPostCreated no commit",
-                view.id(), view.version(), view.authorId());
-
-        if (transactions.getTransactionStatus() != Status.STATUS_ACTIVE) {
-            emit(emitter, view);
-            return;
-        }
-        transactions.registerInterposedSynchronization(new Synchronization() {
-            @Override
-            public void beforeCompletion() {
-                // nada: o que interessa é depois
-            }
-
-            @Override
-            public void afterCompletion(int status) {
-                if (status == Status.STATUS_COMMITTED) {
-                    emit(emitter, view);
-                } else {
-                    log.debug("transação de {} não commitou (status {}) — nada emitido", view.id(), status);
-                }
-            }
-        });
-    }
-
-    private void emit(QueryUpdateEmitter emitter, PostView view) {
+        PostView view = viewMapper.toView(post);
+        log.debug("PostCreated {} (v{}) de {} → emitindo para onPostCreated", view.id(), view.version(),
+                view.authorId());
         emitter.emit(OnPostCreated.class, subscription -> subscription.matches(view.authorId()), view);
     }
 

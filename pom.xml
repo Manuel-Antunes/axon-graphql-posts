@@ -5,10 +5,10 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>dev.manuelantunes</groupId>
-    <artifactId>quarkus-axon-graphql-posts-parent</artifactId>
+    <artifactId>quarkus-axon-graphql</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
-    <name>quarkus-axon-graphql-posts-parent</name>
+    <name>quarkus-axon-graphql</name>
     <description>Agregador: a aplicação e a extensão de suporte a native</description>
 
     <!--

@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 import org.axonframework.common.configuration.Configuration;
 import org.axonframework.eventsourcing.eventstore.TagResolver;
@@ -16,23 +18,26 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
-
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 
 /**
- * Traduz um {@code EventMessage} para {@link AxonEventEnvelope} e o entrega ao channel.
+ * Traduz um {@code EventMessage} para {@link AxonEventEnvelope} e o entrega aos outboxes que o
+ * selecionaram.
  *
  * <h2>Genérico sobre {@code EventMessage}</h2>
- * Nenhum tipo de evento é citado. Evento novo no domínio já atravessa, sem código — é a diferença
- * entre integrar o <i>framework</i> e integrar cada evento à mão.
+ * Nenhum tipo de evento é citado. Evento novo no domínio já atravessa, sem código — é a diferença entre
+ * integrar o <i>framework</i> e integrar cada evento à mão.
  *
  * <h2>Serialização é a do Axon</h2>
  * O corpo sai do {@code EventConverter} do framework, o mesmo que o event store usa. Não há um segundo
  * formato para manter, e o {@code @Event(namespace, name, version)} sobrevive ao fio porque
  * {@code MessageType} tem {@code toString()}/{@code fromString()}.
+ *
+ * <h2>Para ONDE vai é de {@link OutboxRouting}, e não daqui</h2>
+ * Esta classe não conhece nome de canal nenhum. Ela lê o evento uma vez ({@link EventAddress}), pergunta
+ * quais outboxes o querem e envia a todos. Era aqui que morava a ligação com o canal único
+ * {@code axon-events}; era ela que obrigava todo evento a sair pelo mesmo lugar, no mesmo protocolo.
  */
 @ApplicationScoped
 public class ChannelEventForwarder {
@@ -40,28 +45,25 @@ public class ChannelEventForwarder {
     private static final Logger log = LoggerFactory.getLogger(ChannelEventForwarder.class);
 
     private final Configuration axon;
-    private final ChannelEventDispatcher dispatcher;
-    private final ChannelAddressing addressing;
+    private final OutboxRouting routing;
     /** Vai na metadata de todo evento que sai daqui, como marca de autoria. Ver {@link ChannelMetadata}. */
     private final String applicationName;
 
     /**
-     * Recebe a {@code Configuration} do Axon, e não o {@code EventConverter} direto, por dois motivos
-     * que só aparecem em runtime:
+     * Recebe a {@code Configuration} do Axon, e não o {@code EventConverter} direto, por dois motivos que
+     * só aparecem em runtime:
      * <ul>
      *   <li>o {@code EventConverter} <b>não é bean CDI</b> — é componente da configuração do Axon.
      *       Injetá-lo dá {@code UnsatisfiedResolutionException} na partida;</li>
-     *   <li>resolvê-lo no construtor tocaria a configuração do Axon durante a inicialização da
-     *       extensão, que é o mesmo poço de ordem de partida que já mordeu o Flyway e o emitter do
-     *       SmallRye nesta integração. Resolvido no primeiro encaminhamento, não há ordem a respeitar.
+     *   <li>resolvê-lo no construtor tocaria a configuração do Axon durante a inicialização da extensão,
+     *       que é o mesmo poço de ordem de partida que já mordeu o Flyway e o emitter do SmallRye nesta
+     *       integração. Resolvido no primeiro encaminhamento, não há ordem a respeitar.</li>
      * </ul>
      */
-    ChannelEventForwarder(Configuration axon, ChannelEventDispatcher dispatcher,
-            ChannelAddressing addressing,
+    ChannelEventForwarder(Configuration axon, OutboxRouting routing,
             @ConfigProperty(name = "quarkus.application.name") String applicationName) {
         this.axon = axon;
-        this.dispatcher = dispatcher;
-        this.addressing = addressing;
+        this.routing = routing;
         this.applicationName = applicationName;
     }
 
@@ -79,12 +81,11 @@ public class ChannelEventForwarder {
      * ser atribuída), e a fila parada em seguida — sem erro, sem nack, sem uma linha no log. Trinta
      * segundos de silêncio e a espera do teste estourando.
      */
-    private final Executor forwarding =
-            Executors.newSingleThreadExecutor(runnable -> {
-                Thread thread = new Thread(runnable, "axon-channel-outbox");
-                thread.setDaemon(true);
-                return thread;
-            });
+    private final Executor forwarding = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "axon-channel-outbox");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     private volatile EventConverter converter;
     private volatile TagResolver tags;
@@ -134,14 +135,19 @@ public class ChannelEventForwarder {
      *
      * <h3>A regra de uma linha que impede um laço infinito</h3>
      * Todo evento publicado localmente é encaminhado, e todo evento que chega do broker é apendado no
-     * store local — o que o publica localmente. As duas regras juntas se alimentam: A publica, B apenda
-     * e republica, A apenda e republica, sem fim. O evento ingerido chega com
-     * {@link ChannelMetadata#ORIGIN} já preenchido (pelo serviço que o produziu), e é essa presença que
-     * responde "eu não sou o autor" sem consultar nada.
+     * store local — o que o publica localmente. As duas regras juntas se alimentam: A publica, B apenda e
+     * republica, A apenda e republica, sem fim. O evento ingerido chega com {@link ChannelMetadata#ORIGIN}
+     * já preenchido (pelo serviço que o produziu), e é essa presença que responde "eu não sou o autor"
+     * sem consultar nada.
      * <p>
-     * A topologia de filas também protegeria hoje — nenhuma binding casa o que o próprio serviço
-     * publica —, e é justamente por isso que a defesa não pode ser só ela: binding é configuração, e um
-     * dia alguém acrescenta {@code posts.*} numa fila para depurar e derruba o cluster.
+     * A topologia de filas também protegeria hoje — nenhuma binding casa o que o próprio serviço publica
+     * —, e é justamente por isso que a defesa não pode ser só ela: binding é configuração, e um dia
+     * alguém acrescenta {@code posts.*} numa fila para depurar e derruba o cluster.
+     *
+     * <h3>Evento que não casa com outbox nenhum</h3>
+     * Não sai, e isso é o desenho funcionando, não uma falha: o seletor de cada canal é a declaração do
+     * que este serviço publica. O evento continua no event store, que é o log durável — o que não foi
+     * publicado pode ser republicado; o que não foi gravado, não.
      */
     public CompletableFuture<Void> forward(EventMessage event) {
         String origin = event.metadata().get(ChannelMetadata.ORIGIN);
@@ -152,24 +158,37 @@ public class ChannelEventForwarder {
         }
 
         List<AxonEventEnvelope.EventTag> eventTags = tagsOf(event);
+        EventAddress address = EventAddress.of(event, eventTags);
+        List<OutboxRouting.Route> routes = routing.routesFor(address);
+        if (routes.isEmpty()) {
+            log.debug("channel ← {} ({}) não casa com nenhum outbox deste serviço",
+                    address.qualifiedName(), address.identifier());
+            return CompletableFuture.completedFuture(null);
+        }
+
         Map<String, String> metadata = new LinkedHashMap<>(event.metadata());
         metadata.put(ChannelMetadata.ORIGIN, applicationName);
         AxonEventEnvelope envelope = new AxonEventEnvelope(
-                event.type().toString(),
-                event.identifier(),
+                address.messageType(),
+                address.identifier(),
                 event.timestamp(),
                 metadata,
                 eventTags,
                 AxonEventEnvelope.encodePayload(converter().convertPayload(event, byte[].class)));
 
-        log.debug("channel ← {} ({})", envelope.messageType(), envelope.identifier());
+        CompletableFuture<?>[] sent = new CompletableFuture<?>[routes.size()];
+        for (int destination = 0; destination < routes.size(); destination++) {
+            OutboxRouting.Route route = routes.get(destination);
+            log.debug("channel ← {} ({}) → {}",
+                    envelope.messageType(), envelope.identifier(), route.channel());
+            sent[destination] = route.send(envelope, address);
+        }
 
-        // O ack do emitter completa numa thread do EVENT-LOOP. Sem trazer a continuação de volta para
-        // um worker, o que o Axon encadeia depois deste after-commit roda lá — e o
+        // O ack do emitter completa numa thread do EVENT-LOOP. Sem trazer a continuação de volta para um
+        // worker, o que o Axon encadeia depois deste after-commit roda lá — e o
         // `AssignDefaultTagOnPostCreated`, que despacha um command @Transactional, estoura com
         // `@Transactional cannot start a JTA transaction within a reactive pipeline`. Foi medido: 35
         // testes falharam antes desta linha existir.
-        return dispatcher.send(envelope, addressing.addressing(event, eventTags))
-                .thenApplyAsync(ignored -> (Void) null, forwarding);
+        return CompletableFuture.allOf(sent).thenApplyAsync(ignored -> (Void) null, forwarding);
     }
 }

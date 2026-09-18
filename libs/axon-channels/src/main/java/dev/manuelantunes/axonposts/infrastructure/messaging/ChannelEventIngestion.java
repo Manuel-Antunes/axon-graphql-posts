@@ -23,7 +23,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
 
 /**
  * A ENTRADA da integração: a mensagem que chega do broker é <b>apendada no event store local</b>.
@@ -118,15 +117,38 @@ public class ChannelEventIngestion {
     /**
      * Ingere o corpo de uma mensagem. É o que os listeners de cada aplicação chamam.
      *
-     * <h3>A transação é a garantia</h3>
-     * {@code @Transactional} envolve a linha do inbox e o append no event store. O Axon abre a unidade de
-     * trabalho dele e o {@code quarkus-axon-transaction} faz begin-or-join na transação JTA que já está
-     * aberta — então os dois commitam juntos ou nenhum commita. É isso que impede o estado intermediário
-     * fatal: evento apendado sem registro de recebimento, que uma reentrega duplicaria.
+     * <h3>A transação é a garantia — e ela é a da UNIDADE DE TRABALHO, não um {@code @Transactional}</h3>
+     * A linha do inbox e o append acontecem <b>dentro do mesmo</b>
+     * {@code unitOfWorkFactory().create("axon-inbox")}. O {@code quarkus-axon-transaction} faz
+     * begin-or-join no JTA: como não há transação aberta quando este método é chamado, ele <b>abre</b> —
+     * e é a unidade de trabalho que commita. Os dois vão juntos ou nenhum vai, que é o que impede o
+     * estado intermediário fatal: evento apendado sem registro de recebimento, que uma reentrega
+     * duplicaria.
+     *
+     * <h3>NÃO PONHA {@code @Transactional} AQUI (nem no listener). O que ele quebra é invisível daqui</h3>
+     * Houve um, e por muito tempo. Com ele existe uma transação JTA <b>antes</b> da unidade de trabalho,
+     * então ela <b>junta</b> em vez de abrir — e o commit dela deixa de ser o commit da transação.
      * <p>
-     * A anotação só funciona porque a chamada vem de OUTRO bean — o listener —, passando pelo proxy do
-     * CDI. Mover a ingestão para dentro do próprio listener e chamá-la por {@code this} a desligaria em
-     * silêncio, e o sintoma seria uma reentrega duplicando eventos no stream.
+     * A atomicidade continua valendo, então nada nesta classe muda de comportamento. O que muda é a
+     * subscription do OUTRO serviço: o {@code SimpleQueryBus} adia os updates para o after-commit do
+     * {@code ProcessingContext}, e com a unidade de trabalho apenas juntando, esse after-commit dispara
+     * com a transação JTA ainda aberta. A entrega executa o assinante, que lê o banco noutra thread,
+     * dentro da transação que está commitando:
+     * <pre>
+     * ARJUNA012125: TwoPhaseCoordinator.beforeCompletion - failed ... ConcurrentModificationException
+     * ARJUNA012108: CheckedAction::check - atomic action ... aborting with 2 threads active!
+     * This statement has been closed.
+     * </pre>
+     * Medido nos dois sentidos com {@code docker/e2e/run.sh}: <b>11 de 12</b> com o {@code @Transactional},
+     * <b>12 de 12</b> sem ele. Nenhum teste do Surefire pega isso — em teste o tagueamento é dublado em
+     * processo e esta classe não roda. Quem trava é
+     * {@code AxonWiringTest.theIngestionOwnsItsOwnTransaction}, que confere a ausência da anotação.
+     *
+     * <h3>O que o LISTENER precisa garantir</h3>
+     * Duas coisas, e as duas estão documentadas em cada um deles: {@code @Blocking(ordered = false)} —
+     * porque aqui dentro há JPA e JTA, que não rodam no event-loop, e porque a ordenação do Vert.x
+     * causa deadlock com a primeira publicação de saída — e retorno {@code void}, para o ack sair depois
+     * do commit.
      *
      * <h3>O que o LISTENER precisa garantir</h3>
      * Duas coisas, e as duas estão documentadas em cada um deles: {@code @Blocking(ordered = false)} —
@@ -134,7 +156,6 @@ public class ChannelEventIngestion {
      * causa deadlock com a primeira publicação de saída — e retorno {@code void}, para o ack sair depois
      * do commit.
      */
-    @Transactional
     public void ingest(byte[] body) throws IOException {
 
         try {
@@ -166,15 +187,20 @@ public class ChannelEventIngestion {
                     envelope.messageType(), envelope.identifier());
             return;
         }
-        if (!inbox.register(envelope.identifier(), envelope.messageType(), origin)) {
-            log.info("inbox ← {} ({}) descartado: já ingerido antes",
-                    envelope.messageType(), envelope.identifier());
-            return;
-        }
 
-        log.debug("inbox ← {} ({}) de '{}' → apendando no event store local",
-                envelope.messageType(), envelope.identifier(), origin);
-        append(reconstitute(envelope), ChannelMetadata.tagsOf(envelope.tags()));
+        EventMessage event = reconstitute(envelope);
+        Set<Tag> tags = ChannelMetadata.tagsOf(envelope.tags());
+
+        unitOfWorkFactory().create("axon-inbox").executeWithResult(context -> {
+            if (!inbox.register(envelope.identifier(), envelope.messageType(), origin)) {
+                log.info("inbox ← {} ({}) descartado: já ingerido antes",
+                        envelope.messageType(), envelope.identifier());
+                return java.util.concurrent.CompletableFuture.<Void>completedFuture(null);
+            }
+            log.debug("inbox ← {} ({}) de '{}' → apendando no event store local",
+                    envelope.messageType(), envelope.identifier(), origin);
+            return append(context, event, tags);
+        }).join();
     }
 
     /**
@@ -222,12 +248,17 @@ public class ChannelEventIngestion {
      * sourcing nunca completa, e o sintoma é a ingestão <b>pendurada</b> até o Narayana matar a transação
      * em 60 segundos. Nenhum erro, nenhuma stack: só silêncio e uma reentrega um minuto depois.
      * <p>
-     * A fábrica registrada pela extensão é transacional: ela faz begin-or-join no JTA. Como este método
-     * roda sob {@code @Transactional}, ela <b>junta</b> — e é isso que mantém a linha do inbox e o append
-     * no mesmo commit. Com duas transações, um crash entre elas deixaria o evento apendado sem registro
-     * de recebimento, e a reentrega duplicaria.
+     * A fábrica registrada pela extensão é transacional: ela faz begin-or-join no JTA. Como não há
+     * transação aberta quando a ingestão começa, ela <b>abre</b> — e a mesma unidade de trabalho carrega
+     * a linha do inbox e o append, no mesmo commit. Com duas transações, um crash entre elas deixaria o
+     * evento apendado sem registro de recebimento, e a reentrega duplicaria.
+     * <p>
+     * Que ela ABRA, e não junte, é o que mantém o after-commit do Axon depois do commit de verdade —
+     * ver {@link #ingest}.
      */
-    private void append(EventMessage event, Set<Tag> tags) {
+    private java.util.concurrent.CompletableFuture<Void> append(
+            org.axonframework.messaging.core.unitofwork.ProcessingContext context,
+            EventMessage event, Set<Tag> tags) {
         if (tags.isEmpty()) {
             /*
              * Sem tag não há agregado a que pertencer, logo não há sequência a respeitar. Isto não
@@ -235,20 +266,17 @@ public class ChannelEventIngestion {
              * e fica como caminho explícito em vez de comportamento indefinido.
              */
             log.warn("inbox ← {} sem tags: apendando sem fronteira de agregado", event.type());
-            eventStore().publish(null, event).join();
-            return;
+            return eventStore().publish(context, event);
         }
-        unitOfWorkFactory().create("axon-inbox").executeWithResult(context -> {
-            EventStoreTransaction transaction = eventStore().transaction(context);
-            return transaction
-                    .source(SourcingCondition.conditionFor(EventCriteria.havingTags(tags)))
-                    .reduce(0L, (count, entry) -> count + 1L)
-                    .thenAccept(sourced -> {
-                        log.debug("inbox ← o stream de {} tinha {} evento(s); apendando em seguida",
-                                tags, sourced);
-                        transaction.appendEvent(event);
-                    });
-        }).join();
+        EventStoreTransaction transaction = eventStore().transaction(context);
+        return transaction
+                .source(SourcingCondition.conditionFor(EventCriteria.havingTags(tags)))
+                .reduce(0L, (count, entry) -> count + 1L)
+                .thenAccept(sourced -> {
+                    log.debug("inbox ← o stream de {} tinha {} evento(s); apendando em seguida",
+                            tags, sourced);
+                    transaction.appendEvent(event);
+                });
     }
 
     /**

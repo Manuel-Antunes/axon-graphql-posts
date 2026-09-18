@@ -14,8 +14,10 @@ import org.axonframework.messaging.core.unitofwork.transaction.TransactionManage
 import org.axonframework.modelling.StateManager;
 import org.junit.jupiter.api.Test;
 
+import at.meks.quarkiverse.axon.runtime.customizations.AxonMetricsConfigurer;
 import at.meks.quarkiverse.axon.transaction.runtime.QuarkusTransactionManager;
 import dev.manuelantunes.axonposts.domain.post.Post;
+import dev.manuelantunes.axonposts.infrastructure.messaging.ChannelEventIngestion;
 import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.tag.Tag;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
@@ -26,26 +28,30 @@ import jakarta.enterprise.inject.Any;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * O guarda da configuração que a extensão monta: duas coisas que ela decide por default, que este projeto
- * decide diferente, e que quebram <b>em silêncio</b> se a substituição parar de valer.
+ * O guarda da configuração que a extensão monta: o que ela decide por default, que este projeto decide
+ * diferente, e que quebra <b>em silêncio</b> se a substituição parar de valer.
  *
  * <h2>Por que um teste, e não confiar no {@code @DefaultBean}</h2>
- * Porque as duas substituições funcionam por ausência: a extensão declara um bean padrão e cede a vez se
- * existir outro do mesmo tipo. Apagar {@link JtaTransactionManager} ou {@link EventSourcedEntities}, ou
- * trocar a anotação de escopo deles, não quebra compilação nenhuma — a extensão simplesmente volta ao
- * padrão dela, e o padrão dela está errado para este projeto:
+ * Porque as substituições funcionam por ausência: a extensão declara um bean padrão e cede a vez se
+ * existir outro do mesmo tipo. Apagar {@link JtaTransactionManager}, {@link EventSourcedEntities} ou
+ * {@link AxonMetrics} — ou trocar a anotação de escopo deles — não quebra compilação nenhuma. A extensão
+ * volta ao padrão dela, e o padrão dela está errado para este projeto:
  * <ul>
  *   <li>sem o transaction manager, o padrão é {@code NoTransactionManager}: o append do evento e o
  *       {@code merge} do read model deixam de commitar juntos;</li>
- *   <li>sem o mapa de ids, o padrão é {@code String}: todo command falha ao reidratar o agregado.</li>
+ *   <li>sem o mapa de ids, o padrão é {@code String}: todo command falha ao reidratar o agregado;</li>
+ *   <li>sem as métricas, o único sinal do que acontece dentro dos buses desaparece nos DOIS serviços.</li>
  * </ul>
- * O segundo caso apareceria nos testes ponta a ponta; o primeiro, não necessariamente — o
- * {@code @Transactional} do Panache abriria a própria transação e a maioria dos testes passaria. É esse
- * que justifica a classe.
+ * Só o segundo apareceria nos testes ponta a ponta; os outros dois passam calados.
+ * <p>
+ * A classe guarda também um invariante que não é bean nenhum: a ingestão <b>abre</b> a própria transação,
+ * e uma anotação a mais faria a unidade de trabalho do Axon juntar em vez de abrir. Ver
+ * {@link #theIngestionOwnsItsOwnTransaction()}.
  */
 @QuarkusTest
 class AxonWiringTest {
@@ -68,6 +74,67 @@ class AxonWiringTest {
         assertThat(axon.getComponent(TransactionManager.class))
                 .as("o default da extensão é NoTransactionManager, e ele não commita nada junto")
                 .isInstanceOf(QuarkusTransactionManager.class);
+    }
+
+    /**
+     * <b>As métricas do Axon existem.</b> Terceira substituição por ausência desta classe, e a mais
+     * silenciosa das três: o {@code NoMetricsConfigurer} da extensão é {@code @DefaultBean}, então apagar
+     * {@code AxonMetrics} de {@code libs/platform} — ou trocar a anotação de escopo dela — não quebra
+     * compilação, não derruba a partida e não falha nenhum outro teste. A aplicação sobe idêntica e
+     * simplesmente para de emitir métrica, nos DOIS serviços.
+     * <p>
+     * O que se perde é o único sinal do que acontece dentro do command/event bus, porque span ali não
+     * existe: o Axon 5 ainda não tem tracing.
+     */
+    @Test
+    void theAxonMetricsAreWiredToOpenTelemetry() {
+        assertThat(beans.resolve(beans.getBeans(AxonMetricsConfigurer.class, Any.Literal.INSTANCE)))
+                .as("o default da extensão é NoMetricsConfigurer, e com ele nenhuma métrica do Axon sai")
+                .isNotNull()
+                .extracting(Bean::getBeanClass)
+                .isEqualTo(AxonMetrics.class);
+    }
+
+    /**
+     * <b>A ingestão abre a própria transação — e por isso NÃO pode levar {@code @Transactional}.</b>
+     *
+     * <h2>Por que a ausência de uma anotação merece um teste</h2>
+     * Porque pôr {@code @Transactional} de volta em {@code ChannelEventIngestion.ingest} (ou no método do
+     * listener que a chama) não quebra <b>nada</b> que esta suíte veja. A atomicidade entre a linha do
+     * inbox e o append continua valendo, todos os 155 testes passam, e a aplicação sobe idêntica.
+     * <p>
+     * O que quebra é a subscription, e só no caminho entre PROCESSOS. Com uma transação JTA já aberta, a
+     * unidade de trabalho do Axon <b>junta</b> em vez de abrir; o {@code SimpleQueryBus} adia os updates
+     * para o after-commit do {@code ProcessingContext}, e esse after-commit passa a disparar com a
+     * transação ainda aberta. O assinante lê o banco noutra thread, dentro dela, e a transação aborta:
+     * {@code CheckedAction::check - atomic action ... aborting with 2 threads active!}
+     * <p>
+     * Medido nos dois sentidos com {@code docker/e2e/run.sh}: <b>11 de 12</b> com a anotação, <b>12 de
+     * 12</b> sem ela. Este teste é o que traz aquela medição para dentro do {@code ./mvnw test}.
+     * <p>
+     * A varredura sobe a hierarquia por {@code getDeclaredMethods()} pelo mesmo motivo que
+     * {@link #packagesWithEventHandlers()}: {@code getMethods()} não enxerga método pacote-visível.
+     */
+    @Test
+    void theIngestionOwnsItsOwnTransaction() {
+        assertThat(transactionalMethodsOf(ChannelEventIngestion.class))
+                .as("com @Transactional a unidade de trabalho do Axon JUNTA em vez de abrir, e o "
+                        + "after-commit dela deixa de ser depois do commit — a subscription morre, e só "
+                        + "entre processos")
+                .isEmpty();
+    }
+
+    private static Set<String> transactionalMethodsOf(Class<?> type) {
+        Set<String> annotated = new TreeSet<>();
+        for (Class<?> current = type; current != null && current != Object.class;
+                current = current.getSuperclass()) {
+            for (Method method : current.getDeclaredMethods()) {
+                if (method.isAnnotationPresent(Transactional.class)) {
+                    annotated.add(current.getSimpleName() + "." + method.getName());
+                }
+            }
+        }
+        return annotated;
     }
 
     @Test

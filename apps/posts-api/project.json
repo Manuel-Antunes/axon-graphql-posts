@@ -1,0 +1,13 @@
+{
+  "name": "dev.manuelantunes:quarkus-axon-graphql-posts",
+  "targets": {
+    "serve": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "continuous": true,
+      "options": {
+        "command": "./mvnw quarkus:dev -pl apps/posts-api -Ddebug=5005"
+      }
+    }
+  }
+}

@@ -6,7 +6,7 @@
 
     <parent>
         <groupId>dev.manuelantunes</groupId>
-        <artifactId>quarkus-axon-graphql-posts-parent</artifactId>
+        <artifactId>quarkus-axon-graphql</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
@@ -243,6 +243,18 @@
              ser atribuída a este serviço. O quarkus-opentelemetry instrumenta HTTP, JDBC e o contexto
              de segurança sozinho; o que o Axon faz por dentro do command/event bus NÃO é instrumentado
              por ele (a extensão do Axon não publica spans). -->
+        <!-- Traces, logs e métricas pelo protocolo OTLP.
+             `quarkus-opentelemetry` e NÃO `quarkus-micrometer-opentelemetry`: as métricas do Axon são
+             Micrometer, mas o registry que as recebe é construído em `axonposts-platform`
+             (`infrastructure/axon/AxonMetrics`) sobre o bean `OpenTelemetry` daqui — um JAR, não uma
+             extensão. Com isso não há `quarkus-micrometer` no build, não há registry de Prometheus
+             esperando um coletor que este projeto não sobe, e não há a extensão
+             `quarkus-micrometer-opentelemetry`, que está em PREVIEW no Quarkus 3.39. Os dois serviços
+             passam a usar exatamente o mesmo mecanismo.
+             O quarkus-opentelemetry instrumenta HTTP, JDBC, o conector de mensageria e o contexto de
+             segurança sozinho; o que o Axon faz por dentro do command/event bus NÃO é instrumentado em
+             SPANS (a extensão não os publica, e o Axon 5 ainda não tem tracing) — é por isso que as
+             MÉTRICAS do Axon importam: elas são o único sinal do que acontece ali dentro. -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-opentelemetry</artifactId>
