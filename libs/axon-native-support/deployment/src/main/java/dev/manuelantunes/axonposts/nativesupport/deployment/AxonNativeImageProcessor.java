@@ -95,6 +95,40 @@ public class AxonNativeImageProcessor {
             "org.axonframework.eventsourcing.annotation.AnnotationBasedEventCriteriaResolverDefinition",
             "org.axonframework.modelling.annotation.AnnotationBasedEntityIdResolverDefinition");
 
+    /**
+     * O que as {@code *Definition} INSTANCIAM — e por que elas não bastam.
+     *
+     * <h3>A reflexão do Axon tem DOIS níveis, e registrar só o primeiro engana</h3>
+     * {@link #AXON_DEFAULT_DEFINITIONS} cobre as fábricas; cada uma delas, ao ser chamada, instancia
+     * por reflexão o objeto que faz o trabalho. Registrar a fábrica e não o produto dela passa no
+     * build inteiro e falha na PARTIDA, com uma mensagem que não menciona native-image nenhuma:
+     *
+     * <pre>{@code
+     * Failed to instantiate id resolver:
+     *   org.axonframework.modelling.annotation.AnnotationBasedEntityIdResolver
+     * }</pre>
+     *
+     * Medido contra a stack: a aplicação sobe o bastante para o health check responder 200, e depois
+     * <b>morre a cada requisição</b> com `Runtime exited with error: exit status 1` — que o Lambda
+     * reporta como erro de runtime, sem uma linha sobre a causa. O log da aplicação é o único lugar
+     * onde a exceção aparece.
+     *
+     * <h3>Por que a lista é da FAMÍLIA, e não da classe que falhou</h3>
+     * Porque cada round-trip custa um build nativo de seis minutos. As três primeiras são os pares
+     * exatos das três {@code *Definition}; as outras são os demais {@code EntityIdResolver} concretos
+     * do 5.3.1, que a configuração alcança por caminhos que dependem do modelo — registrar um
+     * construtor a mais custa bytes, e descobri-lo em produção custa uma partida quebrada.
+     */
+    private static final List<String> AXON_DEFAULT_IMPLEMENTATIONS = List.of(
+            "org.axonframework.eventsourcing.annotation.reflection.AnnotationBasedEventSourcedEntityFactory",
+            "org.axonframework.eventsourcing.annotation.AnnotationBasedEventCriteriaResolver",
+            "org.axonframework.modelling.annotation.AnnotationBasedEntityIdResolver",
+            "org.axonframework.modelling.PropertyBasedEntityIdResolver",
+            "org.axonframework.eventsourcing.configuration.RepresentationConvertingEntityIdResolver",
+            "org.axonframework.modelling.entity.annotation.AnnotatedEntityIdResolver",
+            "org.axonframework.modelling.annotation.AnnotationBasedEntityEvolvingComponent",
+            "org.axonframework.eventsourcing.eventstore.AnnotationBasedTagResolver");
+
     /** Anotações de classe: a entidade e os três tipos de mensagem, que são contrato serializado. */
     private static final List<DotName> ON_CLASS = List.of(
             DotName.createSimple("org.axonframework.eventsourcing.annotation.EventSourcedEntity"),
@@ -185,6 +219,7 @@ public class AxonNativeImageProcessor {
     void registerEntityDefinitions(CombinedIndexBuildItem combinedIndex,
             BuildProducer<ReflectiveClassBuildItem> reflective) {
         Set<String> definitions = new LinkedHashSet<>(AXON_DEFAULT_DEFINITIONS);
+        definitions.addAll(AXON_DEFAULT_IMPLEMENTATIONS);
 
         for (AnnotationInstance entity : combinedIndex.getIndex().getAnnotations(EVENT_SOURCED_ENTITY)) {
             for (String attribute : DEFINITION_ATTRIBUTES) {
@@ -197,7 +232,8 @@ public class AxonNativeImageProcessor {
 
         reflective.produce(ReflectiveClassBuildItem.builder(definitions.toArray(String[]::new))
                 .constructors()
-                .reason("o Axon instancia as *Definition de @EventSourcedEntity por reflexão")
+                .reason("o Axon instancia as *Definition de @EventSourcedEntity por reflexão, "
+                        + "e cada uma delas instancia o resolver/fábrica que faz o trabalho")
                 .build());
     }
 

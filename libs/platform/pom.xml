@@ -64,6 +64,28 @@
             <groupId>io.opentelemetry.instrumentation</groupId>
             <artifactId>opentelemetry-micrometer-1.5</artifactId>
         </dependency>
+        <!-- ATENÇÃO: esta dependência existe POR CAUSA DO BINÁRIO NATIVO, e por nada mais.
+
+             `io.micrometer.core.instrument.AbstractTimer` referencia `org.LatencyUtils.PauseDetector`
+             e `IntervalEstimator` — e o Micrometer as declara OPCIONAIS, porque só são usadas por
+             histograma de percentil com detector de pausa. Na JVM elas nunca são carregadas e ninguém
+             percebe a ausência.
+
+             O native-image linka em build time e cobra: com o `AbstractTimer` alcançável, o build
+             morre em `[2/8] Performing analysis` com
+
+               Discovered unresolved type during parsing: org.LatencyUtils.IntervalEstimator
+               Error encountered while parsing io.micrometer.core.instrument.AbstractTimer.record
+
+             Quem normalmente a traz é o `quarkus-micrometer`, que este projeto NÃO usa de propósito
+             (ver o comentário do opentelemetry-micrometer acima: ele arrastaria `quarkus-vertx-http`
+             para um serviço que não quer porta HTTP). Então ela é declarada aqui, à mão, ao lado do
+             Micrometer que a exige. -->
+        <dependency>
+            <groupId>org.latencyutils</groupId>
+            <artifactId>LatencyUtils</artifactId>
+            <version>2.0.3</version>
+        </dependency>
         <!-- O bean `OpenTelemetry` que AxonMetrics recebe. `provided` porque quem o PRODUZ é a extensão
              na aplicação: a plataforma só o consome, e declarar compile o arrastaria para o runner sem
              necessidade. Toda aplicação deste repositório tem OpenTelemetry — é regra, não coincidência. -->
