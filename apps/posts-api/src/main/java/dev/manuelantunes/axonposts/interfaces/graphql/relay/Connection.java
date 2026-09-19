@@ -1,5 +1,6 @@
 package dev.manuelantunes.axonposts.interfaces.graphql.relay;
 
+import io.quarkus.runtime.annotations.RegisterForReflection;
 import java.util.List;
 
 import org.eclipse.microprofile.graphql.Description;
@@ -32,6 +33,23 @@ import org.eclipse.microprofile.graphql.NonNull;
  * @param <N> o tipo do nó
  * @param <E> o tipo concreto do edge, que dá nome ao tipo no schema
  */
+/**
+ * REGISTRO PARA REFLEXÃO — e por que a subclasse não basta.
+ *
+ * <p>No schema quem existe é {@code PostConnection}, e o Quarkus registra os tipos do schema sozinho.
+ * Só que {@code PostConnection} é uma subclasse VAZIA: {@code getEdges()} e {@code getPageInfo()} são
+ * declarados aqui, na base genérica, e um método herdado não vem no registro da subclasse.
+ *
+ * <p>Na JVM isso nunca aparece. No binário nativo, a leitura de QUALQUER campo da connection falha —
+ * e falha em silêncio: o cliente recebe {@code "System error"} com {@code path: ["posts","edges"]} e
+ * o servidor não loga uma linha. Medido: {@code pageInfo} e {@code edges} falhando juntos, enquanto
+ * {@code __typename} e o SDL respondiam normalmente. É o que denuncia que o problema é o OBJETO, e
+ * não um campo.
+ *
+ * <p>É o preço do mecanismo dos genéricos descrito abaixo: a subclasse de uma linha existe para dar
+ * ao schema o nome da convenção Relay, e é justamente ela que esvazia o registro.
+ */
+@RegisterForReflection
 public abstract class Connection<N, E extends Edge<N>> {
 
     private List<E> edges = List.of();
