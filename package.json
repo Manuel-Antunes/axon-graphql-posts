@@ -11,5 +11,8 @@
   "scripts": {
     "dev": "nx run-many --target serve",
     "test": "./mvnw test"
+  },
+  "nx": {
+    "name": "root"
   }
 }
