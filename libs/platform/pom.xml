@@ -64,6 +64,25 @@
             <groupId>io.opentelemetry.instrumentation</groupId>
             <artifactId>opentelemetry-micrometer-1.5</artifactId>
         </dependency>
+        <!-- SEGUNDA dependência que existe POR CAUSA DO BINÁRIO NATIVO — e o irmão da de baixo.
+
+             `org.axonframework.messaging.core.annotation.MessageStreamResolverUtils` referencia
+             `reactor.core.publisher.Mono`, e o Axon declara o Project Reactor OPCIONAL: ele só é usado
+             por quem devolve `Mono`/`Flux` de um handler, o que este projeto não faz.
+
+             O `apps/posts-api` tinha reactor-core 3.7.10 por transitividade e nunca soube disso. O
+             `apps/tagging` não tem — e foi exatamente ele que quebrou, em `[2/8] Performing analysis`:
+
+               Discovered unresolved type during parsing: reactor.core.publisher.Mono
+               ... because class ...MessageStreamResolverUtils is registered for linking at image build time
+
+             Declarar aqui é o que garante que os DOIS apps tenham o mesmo classpath do Axon. A versão
+             é a que o posts-api já resolvia; o `axon-framework-bom` não gerencia este artefato. -->
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-core</artifactId>
+            <version>3.7.10</version>
+        </dependency>
         <!-- ATENÇÃO: esta dependência existe POR CAUSA DO BINÁRIO NATIVO, e por nada mais.
 
              `io.micrometer.core.instrument.AbstractTimer` referencia `org.LatencyUtils.PauseDetector`

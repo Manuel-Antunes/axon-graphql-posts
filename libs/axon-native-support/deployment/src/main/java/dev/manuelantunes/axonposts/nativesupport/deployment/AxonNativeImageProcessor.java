@@ -1,5 +1,8 @@
 package dev.manuelantunes.axonposts.nativesupport.deployment;
 
+import java.lang.reflect.Modifier;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -9,7 +12,9 @@ import org.jboss.jandex.AnnotationTarget;
 import org.jboss.jandex.AnnotationValue;
 import org.jboss.jandex.ClassInfo;
 import org.jboss.jandex.DotName;
+import org.jboss.jandex.FieldInfo;
 import org.jboss.jandex.IndexView;
+import org.jboss.jandex.RecordComponentInfo;
 import org.jboss.jandex.Type;
 
 import io.quarkus.deployment.annotations.BuildProducer;
@@ -203,11 +208,83 @@ public class AxonNativeImageProcessor {
             }
         }
 
+        // UMA MENSAGEM É SERIALIZADA INTEIRA — então registrar só a classe de fora é registrar metade.
+        types.addAll(composedTypesOf(types, index));
+
         if (!types.isEmpty()) {
             reflective.produce(ReflectiveClassBuildItem.builder(types.toArray(String[]::new))
                     .constructors().methods().fields()
-                    .reason("Axon invoca handlers, @EntityCreator e payloads de mensagem por reflexão")
+                    .reason("Axon invoca handlers, @EntityCreator e payloads de mensagem por reflexão,"
+                            + " e serializa cada payload com tudo que ele contém")
                     .build());
+        }
+    }
+
+    /**
+     * O FECHO TRANSITIVO dos tipos que compõem as mensagens — e por que ele é obrigatório.
+     *
+     * <h3>O que acontece sem isto</h3>
+     * As anotações do Axon marcam a mensagem, não as peças dela. {@code PostCreatedEvent} é
+     * {@code @Event} e é registrado; o {@code AssignedTag} que ele carrega dentro de
+     * {@code List<AssignedTag>} é um record ANINHADO, sem anotação nenhuma, e ficava de fora.
+     * <p>
+     * O build passa. O binário sobe. E o serviço falha ao APENDAR o evento, com uma mensagem que não
+     * menciona native-image nem reflexão:
+     *
+     * <pre>{@code
+     * ConversionException: Exception when trying to convert object of type
+     *   'dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent' to 'byte[]'
+     * }</pre>
+     *
+     * Medido na stack: o `apps/tagging` consumia `PostPreCreated` (record PLANO, que serializa bem),
+     * decidia a tag e não conseguia publicar o `PostCreated`. A saga parava na versão 1, o contador de
+     * erros do Lambda ficava em ZERO — a exceção é tratada pelo interceptador — e as filas ficavam
+     * vazias. Nada apontava para o binário.
+     *
+     * <h3>O critério de parada</h3>
+     * Só entram tipos que o ÍNDICE conhece, o que na prática significa "código deste repositório":
+     * `String`, `Instant` e companhia não precisam de registro, e sair atrás deles percorreria o JDK
+     * inteiro. Os argumentos de tipo entram junto — é o que faz `List<AssignedTag>` render
+     * `AssignedTag`.
+     */
+    private static Set<String> composedTypesOf(Set<String> roots, IndexView index) {
+        Set<String> found = new LinkedHashSet<>();
+        Deque<DotName> pending = new ArrayDeque<>();
+        roots.forEach(root -> pending.add(DotName.createSimple(root)));
+
+        while (!pending.isEmpty()) {
+            ClassInfo owner = index.getClassByName(pending.poll());
+            if (owner == null) continue;
+
+            for (RecordComponentInfo component : owner.recordComponents()) {
+                collect(component.type(), index, found, pending);
+            }
+            for (FieldInfo field : owner.fields()) {
+                if (!Modifier.isStatic(field.flags())) {
+                    collect(field.type(), index, found, pending);
+                }
+            }
+        }
+        return found;
+    }
+
+    private static void collect(Type type, IndexView index, Set<String> found, Deque<DotName> pending) {
+        if (type.kind() == Type.Kind.PARAMETERIZED_TYPE) {
+            for (Type argument : type.asParameterizedType().arguments()) {
+                collect(argument, index, found, pending);
+            }
+            return;
+        }
+        if (type.kind() == Type.Kind.ARRAY) {
+            collect(type.asArrayType().constituent(), index, found, pending);
+            return;
+        }
+        if (type.kind() != Type.Kind.CLASS) return;
+
+        DotName name = type.name();
+        if (index.getClassByName(name) == null) return;
+        if (found.add(name.toString())) {
+            pending.add(name);
         }
     }
 
