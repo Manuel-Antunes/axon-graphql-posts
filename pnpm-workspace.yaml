@@ -1,8 +1,16 @@
-# O monorepo é Java; o pnpm existe aqui só para instalar o Nx e seus plugins, que são pacotes npm.
-# Nenhum pacote JavaScript é publicado deste repositório, por isso a lista de workspaces está vazia.
-packages: []
+# O monorepo é Java, e o pnpm existia aqui só para instalar o Nx e o SST. `apps/web` é o primeiro
+# pacote JavaScript de verdade: o cliente GraphQL que exercita a API. Ele entra no workspace para que
+# um `pnpm install` na raiz instale as duas coisas e o `pnpm --filter` alcance os scripts dele.
+packages:
+  - apps/web
 
 # Sem isto o pnpm 10 pede aprovação interativa para os scripts de build do nx (que compila binários
 # nativos por plataforma), e a instalação fica pendurada em CI.
 onlyBuiltDependencies:
   - nx
+  # O Next e o Tailwind 4 trazem binários nativos por plataforma, e sem esta lista o pnpm 10 pede
+  # aprovação interativa para cada um — o que pendura a instalação em CI e no deploy.
+  - "@tailwindcss/oxide"
+  - sharp
+  - esbuild
+  - unrs-resolver

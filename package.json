@@ -4,7 +4,9 @@
   "packageManager": "pnpm@10.30.3",
   "devDependencies": {
     "@nx/maven": "23.2.1",
-    "nx": "23.2.1"
+    "nx": "23.2.1",
+    "@nx/next": "23.2.1",
+    "sst": "^4.17.1"
   },
   "scripts": {
     "dev": "nx run-many --target serve",

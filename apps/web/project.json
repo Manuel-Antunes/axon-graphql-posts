@@ -1,0 +1,78 @@
+{
+  "name": "web",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/web/src",
+  "targets": {
+    "serve": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "continuous": true,
+      "options": {
+        "cwd": "apps/web",
+        "command": "pnpm dev"
+      }
+    },
+    "codegen": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/schema.graphql",
+        "{projectRoot}/codegen.ts",
+        "{projectRoot}/src/**/*.{ts,tsx}"
+      ],
+      "outputs": ["{projectRoot}/src/gql"],
+      "options": {
+        "cwd": "apps/web",
+        "command": "pnpm codegen"
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "outputs": ["{projectRoot}/.next"],
+      "inputs": [
+        "default",
+        { "env": "INFRA_PROVIDER" },
+        { "env": "NEXT_PUBLIC_GRAPHQL_URL" },
+        { "env": "NEXT_PUBLIC_COGNITO_ISSUER" }
+      ],
+      "options": {
+        "cwd": "apps/web",
+        "command": "pnpm build"
+      }
+    },
+    "open-next-build": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["build"],
+      "cache": true,
+      "outputs": ["{projectRoot}/.open-next"],
+      "inputs": [
+        "default",
+        { "env": "INFRA_PROVIDER" },
+        { "env": "NEXT_PUBLIC_GRAPHQL_URL" },
+        { "env": "NEXT_PUBLIC_COGNITO_ISSUER" }
+      ],
+      "options": {
+        "cwd": "apps/web",
+        "command": "open-next build"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "cwd": "apps/web",
+        "command": "pnpm typecheck"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "cwd": "apps/web",
+        "command": "pnpm lint"
+      }
+    }
+  }
+}
