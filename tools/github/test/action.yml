@@ -30,10 +30,18 @@ runs:
     - name: Upload Surefire reports
       # `always()` porque o artefato só vale a pena quando o passo acima FALHOU — é onde está o
       # relatório do teste que quebrou.
+      #
+      # `libs/**` junto com `apps/*`, e não é simetria: neste nível a MAIORIA dos testes é das libs
+      # — 79 de 151, medido —, porque o teste mora no módulo que ele testa. Com o padrão só de
+      # `apps/`, o artefato do job saía sem o relatório de mais da metade da suíte, que é
+      # justamente o que se vem procurar aqui. O `**` no meio é porque `axon-native-support` tem os
+      # dois módulos dele um nível mais fundo.
       if: ${{ always() && inputs.upload_reports == 'true' }}
       uses: actions/upload-artifact@v4
       with:
         name: surefire-reports-test
-        path: apps/*/target/surefire-reports/**
+        path: |
+          apps/*/target/surefire-reports/**
+          libs/**/target/surefire-reports/**
         if-no-files-found: ignore
         retention-days: 7
