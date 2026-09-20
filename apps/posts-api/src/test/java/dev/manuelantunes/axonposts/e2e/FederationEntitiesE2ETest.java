@@ -3,7 +3,6 @@ package dev.manuelantunes.axonposts.e2e;
 import java.util.List;
 import java.util.Map;
 
-import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.Test;
 
@@ -11,8 +10,6 @@ import dev.manuelantunes.axonposts.support.AbstractGraphQlE2ETest;
 import dev.manuelantunes.axonposts.support.GraphQl;
 import dev.manuelantunes.axonposts.support.Realm;
 import io.quarkus.test.junit.QuarkusTest;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManagerFactory;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -42,9 +39,6 @@ class FederationEntitiesE2ETest extends AbstractGraphQlE2ETest {
                 ... on Reader { id email }
               }
             }""";
-
-    @Inject
-    EntityManagerFactory entityManagerFactory;
 
     private static Map<String, Object> ref(String typename, String id) {
         return Map.of("__typename", typename, "id", id);
@@ -169,8 +163,9 @@ class FederationEntitiesE2ETest extends AbstractGraphQlE2ETest {
 
     @SuppressWarnings("unchecked")
     private long statementsResolving(List<String> postIds) {
-        Statistics statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
-        statistics.clear();
+        // a janela começa com o banco quieto: o processor que notifica os assinantes conta na mesma
+        // estatística, e a primeira medição de um teste cairia em cima da varredura dele
+        Statistics statistics = statisticsOfAQuietDatabase();
         List<Map<String, Object>> entities = (List<Map<String, Object>>) anonymous
                 .execute(ENTITIES, "reps", postIds.stream().map(id -> ref("Post", id)).toList())
                 .list("_entities");

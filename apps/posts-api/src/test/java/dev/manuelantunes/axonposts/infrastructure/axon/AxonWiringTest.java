@@ -69,6 +69,16 @@ class AxonWiringTest {
     @ConfigProperty(name = "quarkus.axon.subscribingprocessor.namespaces")
     List<String> subscribingNamespaces;
 
+    /**
+     * Os namespaces que rodam num processor <b>pooled streaming</b> DECLARADO — e não por esquecimento.
+     * <p>
+     * Hoje há um: {@code application.post.event}, onde moram os handlers que NOTIFICAM os assinantes.
+     * Eles precisam ler do event store para enxergar o que os outros containers apendaram — ver o
+     * {@code package-info} daquele pacote.
+     */
+    @ConfigProperty(name = "quarkus.axon.pooledprocessor.post-subscriptions.namespaces")
+    List<String> pooledNamespaces;
+
     @Test
     void theTransactionManagerIsTheBridgeToJta() {
         assertThat(axon.getComponent(TransactionManager.class))
@@ -147,9 +157,24 @@ class AxonWiringTest {
     }
 
     /**
-     * <b>Todo pacote com {@code @EventHandler} tem de estar em
-     * {@code quarkus.axon.subscribingprocessor.namespaces}.</b> É o teste que responde "e quando entrar um
-     * event handler de outro agregado?".
+     * <b>Todo pacote com {@code @EventHandler} tem de estar DECLARADO em algum processor</b> — o
+     * subscribing ou um pooled nomeado. É o teste que responde "e quando entrar um event handler de
+     * outro agregado?".
+     *
+     * <h2>Por que a asserção deixou de ser "tem de ser subscribing"</h2>
+     * Porque passou a existir um pacote que <b>precisa</b> ser pooled: {@code application.post.event} lê
+     * do event store para enxergar o que os OUTROS containers apendaram, que é o único jeito de uma
+     * subscription funcionar com mais de uma instância. Tratá-lo como exceção numa constante diria
+     * "este escapou do guarda"; lê-lo da configuração diz o que é verdade — ele está declarado, só que
+     * noutro processor.
+     * <p>
+     * É também por isso que o guarda não pode ser "tudo o que projeta é subscribing": o que decide o
+     * processor de um pacote é a ENTREGA que as reações dele precisam, e este projeto tem as duas.
+     * {@code application.post.projection} grava uma vez, na transação do append;
+     * {@code application.post.event} avisa em todo container, fora dela.
+     * <p>
+     * O guarda não perdeu dente nenhum: um pacote que não esteja em NENHUMA das duas listas continua
+     * falhando, e é esse o caso silencioso que importa.
      *
      * <h2>Os dois jeitos de errar, e por que só um precisa de teste</h2>
      * A extensão agrupa event handlers por {@code @Namespace} lido da classe, caindo no <b>nome do
@@ -158,7 +183,9 @@ class AxonWiringTest {
      * <ul>
      *   <li><b>pacote novo esquecido na lista</b> — a aplicação sobe, os handlers rodam, e a projeção vira
      *       eventualmente consistente sem ninguém pedir: o {@code createPost} passa a responder antes da
-     *       tag, e a subscription chega depois da resposta. Silêncio total. É este que o teste pega;</li>
+     *       tag. Pior, o pooled anônimo vem com token store JPA, que é o oposto do que um fan-out
+     *       precisa — um container reclama o segmento e os outros ficam sem ver nada. Silêncio total nos
+     *       dois casos. É este que o teste pega;</li>
      *   <li><b>pacote na lista sem handler nenhum</b> — {@code getEventhandlers} faz
      *       {@code map(mapa::get).flatMap(Collection::stream)} sobre um {@code null}, e a aplicação
      *       <b>não sobe</b>: {@code NullPointerException} na partida. Não precisa de teste porque
@@ -168,11 +195,12 @@ class AxonWiringTest {
      * </ul>
      */
     @Test
-    void everyPackageWithAnEventHandlerRunsInTheSubscribingProcessor() {
+    void everyPackageWithAnEventHandlerIsAssignedToAProcessor() {
         assertThat(packagesWithEventHandlers())
-                .as("pacote com @EventHandler fora de quarkus.axon.subscribingprocessor.namespaces cai "
-                        + "num processor pooled (assíncrono) sem avisar — acrescente-o à propriedade")
-                .isSubsetOf(union(subscribingNamespaces, MANUALLY_CONFIGURED));
+                .as("pacote com @EventHandler que não está nem em subscribingprocessor.namespaces nem "
+                        + "num pooledprocessor nomeado cai num pooled anônimo (assíncrono, com token "
+                        + "store JPA) sem avisar — declare-o numa das duas propriedades")
+                .isSubsetOf(union(union(subscribingNamespaces, pooledNamespaces), MANUALLY_CONFIGURED));
     }
 
     /**

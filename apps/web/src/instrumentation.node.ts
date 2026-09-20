@@ -29,6 +29,31 @@ registerOTel({
     serviceName: "axonposts-web",
     spanProcessors: ["auto"],
     propagators: ["auto"],
+    /*
+     * A PROPAGAÇÃO NÃO É LIGADA POR DEFAULT, e descobrir isso custou um probe no backend.
+     *
+     * No `@vercel/otel`, `propagateContextUrls` começa VAZIO (`?? []` no código do pacote): a
+     * instrumentação de `fetch` cria o span da chamada — ele aparece no trace — mas NÃO injeta o
+     * `traceparent`, exceto para as URLs de deploy da Vercel. O resultado é enganoso: o salto está
+     * lá, desenhado, e mesmo assim o serviço do outro lado abre um trace novo.
+     *
+     * MEDIDO no Better Stack antes desta linha: 317 spans de `axonposts-web` e 127 de
+     * `quarkus-axon-graphql-posts` na mesma hora, e ZERO traces contendo os dois.
+     *
+     * A lista é explícita em vez de um curinga porque o servidor do Next também fala com o Cognito,
+     * nas server actions. Mandar cabeçalho de trace para um provedor de identidade não quebra nada e
+     * também não serve para nada — e o que não serve, não sai daqui.
+     */
+    instrumentationConfig: {
+        fetch: {
+            propagateContextUrls: [
+                // a Function URL do `posts-api` (o que o proxy de `/api/graphql` chama)
+                /lambda-url\..*\.on\.aws/,
+                // e o mesmo subgraph pelo API Gateway
+                /execute-api\..*\.amazonaws\.com/,
+            ],
+        },
+    },
     instrumentations: [
         // `fetch` é o que costura o proxy ao `posts-api`: é ele que injeta o `traceparent`.
         "fetch",

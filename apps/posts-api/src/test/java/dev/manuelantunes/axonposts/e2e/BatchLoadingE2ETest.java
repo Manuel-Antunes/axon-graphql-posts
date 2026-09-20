@@ -1,6 +1,5 @@
 package dev.manuelantunes.axonposts.e2e;
 
-import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.Test;
 
@@ -8,8 +7,6 @@ import dev.manuelantunes.axonposts.support.AbstractGraphQlE2ETest;
 import io.quarkus.test.junit.QuarkusTest;
 import dev.manuelantunes.axonposts.support.GraphQl;
 import dev.manuelantunes.axonposts.support.Realm;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManagerFactory;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -50,17 +47,15 @@ class BatchLoadingE2ETest extends AbstractGraphQlE2ETest {
               }
             }""";
 
-    @Inject
-    EntityManagerFactory entityManagerFactory;
-
-    private Statistics statistics() {
-        return entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
-    }
-
-    /** Executa a consulta pedindo {@code n} posts e devolve quantos statements o Hibernate preparou. */
+    /**
+     * Executa a consulta pedindo {@code n} posts e devolve quantos statements o Hibernate preparou.
+     * <p>
+     * A janela de medição começa em {@code statisticsOfAQuietDatabase()}, e não num {@code clear()}
+     * solto: o processor que avisa os assinantes é assíncrono e conta na MESMA estatística. Ver o
+     * Javadoc daquele método.
+     */
     private long statementsFor(int n, int expectedPosts) {
-        Statistics statistics = statistics();
-        statistics.clear();
+        Statistics statistics = statisticsOfAQuietDatabase();
 
         assertThat(anonymous.execute(FAT_QUERY, "n", n).list("posts.edges")).hasSize(expectedPosts);
 
