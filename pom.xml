@@ -48,18 +48,18 @@
       ele não tem. Antes desta divisão as duas saídas eram importar tudo ou redeclarar o evento do lado
       de cá; as duas foram tentadas, e as duas eram erradas.
     -->
-    <modules>
-        <module>libs/platform</module>
-        <module>libs/users</module>
-        <module>libs/posts</module>
-        <module>libs/axon-channels</module>
-        <module>libs/axon-aws</module>
-        <module>libs/axon-lambda</module>
-        <module>libs/axon-native-support/runtime</module>
-        <module>libs/axon-native-support/deployment</module>
-        <module>apps/posts-api</module>
-        <module>apps/tagging</module>
-    </modules>
+  <modules>
+    <module>libs/platform</module>
+    <module>libs/users</module>
+    <module>libs/posts</module>
+    <module>libs/axon-channels</module>
+    <module>libs/axon-aws</module>
+    <module>libs/axon-lambda</module>
+    <module>libs/axon-native-support/runtime</module>
+    <module>libs/axon-native-support/deployment</module>
+    <module>apps/posts-api</module>
+    <module>apps/tagging</module>
+  </modules>
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
@@ -72,38 +72,39 @@
     <quarkus-axon.version>2.0.0-alpha6</quarkus-axon.version>
     <axon.version>5.3.1</axon.version>
 
-        <!-- Quarkus Amazon Services (Quarkiverse). A 3.22.1 declara <quarkus.version>3.39.2</quarkus.version>
+    <!-- Quarkus Amazon Services (Quarkiverse). A 3.22.1 declara
+    <quarkus.version>3.39.2</quarkus.version>
              — a MESMA linha de cima, e foi o que se conferiu antes de adotá-la: o versionamento deste
              conjunto é próprio e NÃO acompanha o número do Quarkus, então "3.22 < 3.39" não diz nada.
              Dela vêm o conector SQS (smallrye-sqs) e o cliente do SNS. O conector do SNS não vem: não
              existe `quarkus-messaging-amazon-sns`, e ele é adicionado como JAR do SmallRye em
              libs/axon-aws. -->
-        <quarkus-amazon.version>3.22.1</quarkus-amazon.version>
+    <quarkus-amazon.version>3.22.1</quarkus-amazon.version>
 
-        <mapstruct.version>1.6.3</mapstruct.version>
-        <assertj.version>3.27.6</assertj.version>
-        <surefire-plugin.version>3.5.3</surefire-plugin.version>
-        <compiler-plugin.version>3.14.0</compiler-plugin.version>
-        <antrun-plugin.version>3.1.0</antrun-plugin.version>
-    </properties>
+    <mapstruct.version>1.6.3</mapstruct.version>
+    <assertj.version>3.27.6</assertj.version>
+    <surefire-plugin.version>3.5.3</surefire-plugin.version>
+    <compiler-plugin.version>3.14.0</compiler-plugin.version>
+    <antrun-plugin.version>3.1.0</antrun-plugin.version>
+  </properties>
 
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>${quarkus.platform.group-id}</groupId>
-                <artifactId>${quarkus.platform.artifact-id}</artifactId>
-                <version>${quarkus.platform.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <dependency>
-                <groupId>org.axonframework</groupId>
-                <artifactId>axon-framework-bom</artifactId>
-                <version>${axon.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <!--
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>${quarkus.platform.group-id}</groupId>
+        <artifactId>${quarkus.platform.artifact-id}</artifactId>
+        <version>${quarkus.platform.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.axonframework</groupId>
+        <artifactId>axon-framework-bom</artifactId>
+        <version>${axon.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <!--
               DEPOIS do quarkus-bom, e a ordem é o que torna isto seguro: em `dependencyManagement` a
               PRIMEIRA declaração vence, então nada que o Quarkus já gerencia é alterado por este
               import. O que ele acrescenta é o que ninguém gerenciava — os artefatos do
@@ -112,27 +113,27 @@
               trazer um número escrito à mão, e a divergência apareceria como NoSuchMethodError em
               runtime.
             -->
-            <dependency>
-                <groupId>io.quarkiverse.amazonservices</groupId>
-                <artifactId>quarkus-amazon-services-bom</artifactId>
-                <version>${quarkus-amazon.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
+      <dependency>
+        <groupId>io.quarkiverse.amazonservices</groupId>
+        <artifactId>quarkus-amazon-services-bom</artifactId>
+        <version>${quarkus-amazon.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>${compiler-plugin.version}</version>
-            </plugin>
-        </plugins>
-    </build>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>${compiler-plugin.version}</version>
+      </plugin>
+    </plugins>
+  </build>
 
-    <!--
+  <!--
       ================================================================================
       OS PERFIS DE BUILD NATIVO — na RAIZ porque valem para os DOIS apps
       ================================================================================
@@ -151,8 +152,8 @@
       Por isso cada app tem o SEU gatilho: `-Dnative` liga o do `posts-api`, `-Dnative.tagging` liga
       o do `apps/tagging`. O que é comum — construir dentro do builder image — fica aqui.
     -->
-    <profiles>
-        <!--
+  <profiles>
+    <!--
           O build DENTRO do builder image do Mandrel. Num Mac isto não é conveniência: o
           `native-image` produz um executável do sistema onde roda, e o Lambda precisa de ELF/Linux.
           GraalVM instalada localmente não resolve.
@@ -161,12 +162,12 @@
           mencionar memória. Precisa de ~12 GiB. Com 13,6 GiB, um binário leva ~7 min e o pico de uso
           fica em 7,1 GB no `[5/8] Inlining methods`.
         -->
-        <profile>
-            <id>native-container</id>
-            <properties>
-                <quarkus.native.container-build>true</quarkus.native.container-build>
-                <quarkus.native.native-image-xmx>10g</quarkus.native.native-image-xmx>
-            </properties>
-        </profile>
-    </profiles>
+    <profile>
+      <id>native-container</id>
+      <properties>
+        <quarkus.native.container-build>true</quarkus.native.container-build>
+        <quarkus.native.native-image-xmx>10g</quarkus.native.native-image-xmx>
+      </properties>
+    </profile>
+  </profiles>
 </project>
