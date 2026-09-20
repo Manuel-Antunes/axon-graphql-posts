@@ -112,6 +112,25 @@
             <artifactId>axonposts-platform</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- O suporte a GraalVM native do Axon, como extensão local. Em JVM não faz nada.
+
+             ELA FALTAVA AQUI, e a ausência só apareceu no primeiro binário nativo deste serviço: o
+             `TaggingMigrate` subiu e morreu com
+
+               No suitable constructor found for entity of type
+                 [AnnotationBasedEventSourcedEntityFactoryDefinition] with zero arguments
+
+             que é literalmente a primeira das três falhas descritas no Javadoc do
+             `AxonNativeImageProcessor`. O `apps/posts-api` a declarava desde sempre; este serviço
+             usa o MESMO Axon, pelas mesmas libs, e precisava dos mesmos registros.
+
+             REGRA: serviço que usa Axon e é compilado nativo declara esta extensão. Sem ela o build
+             passa, o binário é gerado, e a falha é na PARTIDA — onde ninguém está olhando. -->
+        <dependency>
+            <groupId>dev.manuelantunes</groupId>
+            <artifactId>axon-native-support</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!-- O DOMÍNIO e a INFRAESTRUTURA de posts: o `Post`, os eventos, a regra de como um post se
              completa, e os repositórios. Traz `axonposts-users` com ele, porque um Post tem autor.
              O que ela NÃO traz é a camada de APLICAÇÃO — commands, queries, views e projeção moram nos
@@ -199,4 +218,82 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+          ================================================================================
+          AWS LAMBDA: A MESMA APLICAÇÃO, DUAS FUNÇÕES
+          ================================================================================
+          Um perfil só, e duas funções saindo do mesmo zip — porque o que as distingue não é código, é
+          a fila que as aciona e a variável de ambiente que diz para qual canal entregar:
+
+            ./mvnw package -Plambda
+
+            função axonposts-tagging-precreated  AXONPOSTS_LAMBDA_SQS_CHANNEL=post-precreated-in
+            função axonposts-tagging-changes     AXONPOSTS_LAMBDA_SQS_CHANNEL=post-changes-in
+
+          São duas e não uma pela MESMA razão que as filas são duas, e que já está escrita no
+          application.properties deste módulo: uma mensagem de atualização envenenada não pode ser
+          rejeitada junto com as decisões pendentes, e escalar um fluxo não pode mexer no outro. Numa
+          função só, os dois fluxos voltariam a dividir concorrência, DLQ e throttle.
+
+          `quarkus.profile` tem duas entradas de propósito: `lambda` traz o
+          application-lambda.properties e `prod` mantém valendo as linhas `%prod.` deste arquivo (o
+          datasource e o endpoint do OTLP). E precisa ser repetido em runtime, como
+          QUARKUS_PROFILE=lambda,prod na função: o que se fixa aqui é build time.
+        -->
+        <!--
+          ./mvnw package -DskipTests -Plambda -Dnative.tagging -Pnative-container
+
+          O gatilho é `native.tagging` e não `native` DE PROPÓSITO: como `-pl` não funciona neste
+          reator, um gatilho compartilhado faria este módulo compilar um binário em toda invocação
+          que pede native para o outro app — e são quatro artefatos, logo quatro invocações do Maven.
+
+          O que o build em container precisa (`-Pnative-container`) está na raiz, porque é comum aos
+          dois.
+        -->
+        <profile>
+            <id>native-tagging</id>
+            <activation>
+                <property>
+                    <name>native.tagging</name>
+                </property>
+            </activation>
+            <properties>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>lambda</id>
+            <properties>
+                <quarkus.profile>lambda,prod</quarkus.profile>
+            </properties>
+            <dependencies>
+                <!-- Acha o único RequestHandler do índice, que é o AxonSqsLambda de libs/axon-aws.
+                     A extensão fica AQUI e não na lib porque empacotamento é escolha da aplicação:
+                     o posts-api tem um perfil que usa `quarkus-amazon-lambda-http` no lugar dela, e
+                     as duas não convivem. -->
+                <dependency>
+                    <groupId>io.quarkus</groupId>
+                    <artifactId>quarkus-amazon-lambda</artifactId>
+                </dependency>
+                <!-- SnsAddressing na saída, SqsChannelIngress na entrada. O @AxonOutbox deste serviço
+                     não muda: continua dizendo channel = "post-events-out", namespaces = "posts". -->
+                <dependency>
+                    <groupId>dev.manuelantunes</groupId>
+                    <artifactId>axonposts-axon-aws</artifactId>
+                    <version>${project.version}</version>
+                </dependency>
+                <!-- O handler e a ponte SQSEvent -> canal, num módulo à parte de propósito: ele
+                     carrega o `RequestHandler`, e onde há `quarkus-amazon-lambda-http` isso derruba
+                     o build. Aqui a extensão é a outra, então ele entra. -->
+                <dependency>
+                    <groupId>dev.manuelantunes</groupId>
+                    <artifactId>axonposts-axon-lambda</artifactId>
+                    <version>${project.version}</version>
+                </dependency>
+            </dependencies>
+        </profile>
+    </profiles>
 </project>

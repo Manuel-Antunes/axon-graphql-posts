@@ -8,6 +8,173 @@
       "options": {
         "command": "./mvnw quarkus:dev -pl apps/posts-api -Ddebug=5005"
       }
+    },
+    "lambda-http": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "quarkusLambda"
+      ],
+      "outputs": [
+        "{workspaceRoot}/infra/dist/posts-api-http.zip"
+      ],
+      "defaultConfiguration": "native",
+      "metadata": {
+        "description": "O zip da função atrás do API Gateway (perfil Maven lambda-http). O quarkus-amazon-lambda-http produz target/function.zip; o alvo só o publica em infra/dist/ com o collector.yaml dentro. Configurações: native (default, a GraalVM da MÁQUINA — num Mac o binário é Mach-O e só serve para rodar aqui), native-container (builder image do Mandrel, o único que produz o ELF/Linux que o Lambda executa) e jvm."
+      },
+      "options": {
+        "parallel": false,
+        "forwardAllArgs": false,
+        "mvnFlags": "",
+        "extraFlags": "",
+        "commands": [
+          {
+            "command": "mkdir -p infra/dist",
+            "description": "infra/dist é gitignored: num clone novo ele não existe."
+          },
+          {
+            "command": "infra/scripts/build-env.sh ./mvnw package -DskipTests -Plambda-http {args.mvnFlags} {args.extraFlags}",
+            "description": "Da RAIZ, e não com -pl: a validação do quarkus-extension-maven-plugin em axon-native-support exige o artefato de deployment no reator."
+          },
+          {
+            "command": "cp apps/posts-api/target/function.zip infra/dist/posts-api-http.zip",
+            "description": "Um nome por artefato: os perfis escrevem todos no MESMO target/function.zip."
+          },
+          {
+            "command": "zip -qj infra/dist/posts-api-http.zip infra/lambda/collector.yaml",
+            "description": "A layer do coletor lê /var/task/collector.yaml, então ele vai na raiz do zip."
+          }
+        ]
+      },
+      "configurations": {
+        "native": {
+          "mvnFlags": "-Dnative"
+        },
+        "native-container": {
+          "mvnFlags": "-Dnative -Pnative-container"
+        },
+        "jvm": {
+          "mvnFlags": ""
+        }
+      }
+    },
+    "lambda-sqs": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "quarkusLambda"
+      ],
+      "outputs": [
+        "{workspaceRoot}/infra/dist/posts-api-sqs.zip"
+      ],
+      "defaultConfiguration": "native",
+      "metadata": {
+        "description": "O zip da VOLTA da saga (perfil Maven lambda-sqs). O MESMO artefato serve a função de fila e a de migração: o que as separa é QUARKUS_LAMBDA_HANDLER, que é configuração de runtime. Configurações: native (default, a GraalVM da MÁQUINA — num Mac o binário é Mach-O e só serve para rodar aqui), native-container (builder image do Mandrel, o único que produz o ELF/Linux que o Lambda executa) e jvm."
+      },
+      "options": {
+        "parallel": false,
+        "forwardAllArgs": false,
+        "mvnFlags": "",
+        "extraFlags": "",
+        "commands": [
+          {
+            "command": "mkdir -p infra/dist",
+            "description": "infra/dist é gitignored: num clone novo ele não existe."
+          },
+          {
+            "command": "infra/scripts/build-env.sh ./mvnw package -DskipTests -Plambda-sqs {args.mvnFlags} {args.extraFlags}",
+            "description": "Da RAIZ, e não com -pl: a validação do quarkus-extension-maven-plugin em axon-native-support exige o artefato de deployment no reator."
+          },
+          {
+            "command": "cp apps/posts-api/target/function.zip infra/dist/posts-api-sqs.zip",
+            "description": "Um nome por artefato: os perfis escrevem todos no MESMO target/function.zip."
+          },
+          {
+            "command": "zip -qj infra/dist/posts-api-sqs.zip infra/lambda/collector.yaml",
+            "description": "A layer do coletor lê /var/task/collector.yaml, então ele vai na raiz do zip."
+          }
+        ]
+      },
+      "configurations": {
+        "native": {
+          "mvnFlags": "-Dnative"
+        },
+        "native-container": {
+          "mvnFlags": "-Dnative -Pnative-container"
+        },
+        "jvm": {
+          "mvnFlags": ""
+        }
+      }
+    },
+    "lambda-stream": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "quarkusLambda"
+      ],
+      "outputs": [
+        "{workspaceRoot}/infra/dist/posts-api-stream.zip"
+      ],
+      "defaultConfiguration": "native",
+      "metadata": {
+        "description": "O zip da Function URL com response streaming (perfil Maven lambda-stream). Aqui não há extensão de Lambda que monte um function.zip: o artefato é o run.sh mais o binário nativo (application) ou o quarkus-app/, e quem o executa é a layer do AWS Lambda Web Adapter. Por isso a configuração decide o CONTEÚDO do zip, e não só as flags do Maven. Configurações: native (default, a GraalVM da MÁQUINA — num Mac o binário é Mach-O e só serve para rodar aqui), native-container (builder image do Mandrel, o único que produz o ELF/Linux que o Lambda executa) e jvm."
+      },
+      "options": {
+        "parallel": false,
+        "forwardAllArgs": false,
+        "mvnFlags": "",
+        "extraFlags": "",
+        "prepare": "true",
+        "payload": "quarkus-app",
+        "commands": [
+          {
+            "command": "mkdir -p infra/dist",
+            "description": "infra/dist é gitignored: num clone novo ele não existe."
+          },
+          {
+            "command": "infra/scripts/build-env.sh ./mvnw package -DskipTests -Plambda-stream {args.mvnFlags} {args.extraFlags}",
+            "description": "O único perfil que não acrescenta extensão de Lambda: a aplicação é empacotada como o servidor HTTP que ela é. Da RAIZ, e não com -pl: a validação do quarkus-extension-maven-plugin em axon-native-support exige o artefato de deployment no reator."
+          },
+          {
+            "command": "install -m 755 apps/posts-api/src/main/lambda/run.sh apps/posts-api/target/run.sh",
+            "description": "O handler da função é o NOME deste arquivo. 755 porque sem a permissão o Lambda responde 'fork/exec /var/task/run.sh: permission denied'."
+          },
+          {
+            "command": "{args.prepare}",
+            "description": "Só o empacotamento NATIVO tem passo aqui: pôr o *-runner na raiz com o nome que o run.sh procura. Em jvm é um no-op (true)."
+          },
+          {
+            "command": "rm -f infra/dist/posts-api-stream.zip",
+            "description": "zip APENDA: sem isto o artefato acumularia o conteúdo do build anterior."
+          },
+          {
+            "command": "cd apps/posts-api/target && zip -qrX ../../../infra/dist/posts-api-stream.zip run.sh {args.payload}",
+            "description": "-X preserva a permissão de execução do run.sh; o payload é application (nativo) ou quarkus-app/ (JVM), e o run.sh escolhe entre os dois por um if."
+          },
+          {
+            "command": "zip -qj infra/dist/posts-api-stream.zip infra/lambda/collector.yaml",
+            "description": "A layer do coletor lê /var/task/collector.yaml, então ele vai na raiz do zip."
+          }
+        ]
+      },
+      "configurations": {
+        "native": {
+          "mvnFlags": "-Dnative",
+          "prepare": "install -m 755 $(ls apps/posts-api/target/*-runner | head -1) apps/posts-api/target/application",
+          "payload": "application"
+        },
+        "native-container": {
+          "mvnFlags": "-Dnative -Pnative-container",
+          "prepare": "install -m 755 $(ls apps/posts-api/target/*-runner | head -1) apps/posts-api/target/application",
+          "payload": "application"
+        },
+        "jvm": {
+          "mvnFlags": "",
+          "prepare": "true",
+          "payload": "quarkus-app"
+        }
+      }
     }
   }
 }

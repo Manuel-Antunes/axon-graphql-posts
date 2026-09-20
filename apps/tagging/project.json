@@ -8,6 +8,55 @@
       "options": {
         "command": "./mvnw quarkus:dev -pl apps/tagging -Ddebug=5006"
       }
+    },
+    "lambda": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "quarkusLambda"
+      ],
+      "outputs": [
+        "{workspaceRoot}/infra/dist/tagging.zip"
+      ],
+      "defaultConfiguration": "native",
+      "metadata": {
+        "description": "O zip das DUAS funções de tagueamento (perfil Maven lambda). Configurações: native (default, a GraalVM da MÁQUINA — num Mac o binário é Mach-O e só serve para rodar aqui), native-container (builder image do Mandrel, o único que produz o ELF/Linux que o Lambda executa) e jvm."
+      },
+      "options": {
+        "parallel": false,
+        "forwardAllArgs": false,
+        "mvnFlags": "",
+        "extraFlags": "",
+        "commands": [
+          {
+            "command": "mkdir -p infra/dist",
+            "description": "infra/dist é gitignored: num clone novo ele não existe."
+          },
+          {
+            "command": "infra/scripts/build-env.sh ./mvnw package -DskipTests -Plambda {args.mvnFlags} {args.extraFlags}",
+            "description": "O gatilho do nativo é -Dnative.tagging e NÃO -Dnative: como -pl não funciona neste reator, um gatilho compartilhado faria este módulo compilar um binário em toda invocação que pede native para o outro app."
+          },
+          {
+            "command": "cp apps/tagging/target/function.zip infra/dist/tagging.zip",
+            "description": "Um zip, DUAS funções: o que as distingue é a fila que as aciona e o AXONPOSTS_LAMBDA_SQS_CHANNEL."
+          },
+          {
+            "command": "zip -qj infra/dist/tagging.zip infra/lambda/collector.yaml",
+            "description": "A layer do coletor lê /var/task/collector.yaml, então ele vai na raiz do zip."
+          }
+        ]
+      },
+      "configurations": {
+        "native": {
+          "mvnFlags": "-Dnative.tagging"
+        },
+        "native-container": {
+          "mvnFlags": "-Dnative.tagging -Pnative-container"
+        },
+        "jvm": {
+          "mvnFlags": ""
+        }
+      }
     }
   }
 }

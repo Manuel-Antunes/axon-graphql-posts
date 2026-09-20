@@ -7,6 +7,15 @@
       "default",
       "!{projectRoot}/src/test/**/*",
       "!{projectRoot}/**/*.md"
+    ],
+    "quarkusLambda": [
+      "production",
+      "{workspaceRoot}/mvnw",
+      "{workspaceRoot}/.mvn/**/*",
+      "{workspaceRoot}/libs/**/pom.xml",
+      "{workspaceRoot}/libs/**/src/main/**/*",
+      "{workspaceRoot}/infra/lambda/collector.yaml",
+      "{workspaceRoot}/infra/scripts/build-env.sh"
     ]
   },
   "plugins": [
