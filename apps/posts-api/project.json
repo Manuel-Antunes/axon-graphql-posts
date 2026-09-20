@@ -12,9 +12,6 @@
         "{projectRoot}/target/surefire-reports",
         "{projectRoot}/target/jacoco-report"
       ],
-      "metadata": {
-        "description": "Os testes de UNIDADE e fiação deste módulo, com `-pl`. O `^publish-local` é quem publica as dependências no ~/.m2, e a ORDEM vem do grafo do Nx. E não há `build-env.sh` na frente — o JDK vem do ambiente, que é onde ele tem de vir. O `clean` NÃO é zelo e foi medido: sem ele a suíte passa a falhar com `Could not load class with name` / `NoClassDefFoundError` no augmentation, e volta a passar com ele. Com `-pl` ele limpa SÓ este módulo, então custa pouco. **Este app roda com `-am`, e os dois flags foram MEDIDOS.** Sem `-am` (as libs vindo como JAR do ~/.m2) o augmentation do Quarkus falha 6 de 6 com `Unsatisfied dependency ... PostViewMapper`; com `-am` elas entram no reator como DIRETÓRIOS e ele passa. O `clean` melhora as chances da intermitência que o CLAUDE.md documenta. O preço do `-am` é as libs recompilarem e reexecutarem os testes delas aqui — é o que se paga por este módulo ser o único com augmentation pesado."
-      },
       "options": {
         "forwardAllArgs": false,
         "command": "./mvnw clean test -pl apps/posts-api -am -Dtest='!*E2ETest,!*IT' -Dsurefire.failIfNoSpecifiedTests=false"
@@ -34,9 +31,6 @@
         "{projectRoot}/target/surefire-reports",
         "{projectRoot}/target/jacoco-report"
       ],
-      "metadata": {
-        "description": "Os testes ponta a ponta deste módulo, com `-pl`. O `^publish-local` é quem publica as dependências no ~/.m2, e a ORDEM vem do grafo do Nx. E não há `build-env.sh` na frente — o JDK vem do ambiente, que é onde ele tem de vir. O `clean` NÃO é zelo e foi medido: sem ele a suíte passa a falhar com `Could not load class with name` / `NoClassDefFoundError` no augmentation, e volta a passar com ele. Com `-pl` ele limpa SÓ este módulo, então custa pouco. **Este app roda com `-am`, e os dois flags foram MEDIDOS.** Sem `-am` (as libs vindo como JAR do ~/.m2) o augmentation do Quarkus falha 6 de 6 com `Unsatisfied dependency ... PostViewMapper`; com `-am` elas entram no reator como DIRETÓRIOS e ele passa. O `clean` melhora as chances da intermitência que o CLAUDE.md documenta. O preço do `-am` é as libs recompilarem e reexecutarem os testes delas aqui — é o que se paga por este módulo ser o único com augmentation pesado."
-      },
       "options": {
         "forwardAllArgs": false,
         "command": "./mvnw clean test -pl apps/posts-api -am -Dtest='*E2ETest' -Dsurefire.failIfNoSpecifiedTests=false"
@@ -56,9 +50,6 @@
         "^default"
       ],
       "outputs": [],
-      "metadata": {
-        "description": "Instala o JAR deste módulo no `~/.m2`, que é de onde o `-pl` de quem depende dele o resolve. O `dependsOn: [^publish-local]` deixa a ORDEM com o grafo do Nx — é o Nx gerenciando o publish. NÃO se usa o `mvn-install` inferido pelo @nx/maven para isso: MEDIDO, ele expande em ~155 tarefas (uma por fase do ciclo de vida, de cada dependência), o Nx marcou 65 delas como flaky e o log de uma execução passou de 130 MB. Um alvo por módulo são NOVE tarefas."
-      },
       "options": {
         "forwardAllArgs": false,
         "command": "./mvnw install -DskipTests -q -pl apps/posts-api"
@@ -78,16 +69,12 @@
       "inputs": [
         "javaSources"
       ],
-      "metadata": {
-        "description": "O lint do JAVA, e ele cobre o REATOR INTEIRO — os oito módulos, não só este app. Mora aqui pelo mesmo motivo que o test-unit: `-pl` não funciona neste reator, então todo alvo do lado Java roda da raiz, e `apps/posts-api` é quem tem a maior superfície Java. Com o mesmo NOME dos alvos de ESLint de `web` e `posts-api-e2e`, `pnpm lint` (nx run-many -t lint) cobre o monorepo inteiro numa invocação."
-      },
       "options": {
         "parallel": false,
         "forwardAllArgs": false,
         "commands": [
           {
-            "command": "./mvnw -q -fae spotless:check",
-            "description": "`-fae` (fail at end) porque sem ele o Maven para no PRIMEIRO módulo com violação, e quem roda o lint quer a lista inteira de uma vez. `forwardAllArgs: false` porque o default é true, e aí um `--fix` na linha de comando entrava CRU no comando do Maven, que respondia com a tela de ajuda dele e um código de saída 1."
+            "command": "./mvnw -q -fae spotless:check"
           }
         ]
       },
@@ -95,8 +82,7 @@
         "fix": {
           "commands": [
             {
-              "command": "./mvnw -q -fae spotless:apply",
-              "description": "O lado arrumável do lint do Java. O Error Prone NÃO tem equivalente aqui de propósito: o que ele acha exige ler o código, e é por isso que ele falha o build em vez de ter um botão."
+              "command": "./mvnw -q -fae spotless:apply"
             }
           ]
         }
@@ -112,9 +98,6 @@
         "{workspaceRoot}/infra/dist/posts-api-http.zip"
       ],
       "defaultConfiguration": "native",
-      "metadata": {
-        "description": "O zip da função atrás do API Gateway (perfil Maven lambda-http). O quarkus-amazon-lambda-http produz target/function.zip; o alvo só o publica em infra/dist/ com o collector.yaml dentro. Configurações: native (default, a GraalVM da MÁQUINA — num Mac o binário é Mach-O e só serve para rodar aqui), native-container (builder image do Mandrel, o único que produz o ELF/Linux que o Lambda executa) e jvm. O `-Pnative-clt-toolchain` é o que sobrou do antigo `build-env.sh`: ele injeta o `-isysroot` apontando para o symlink `MacOSX.sdk` das Command Line Tools. MEDIDO — sem ele, o SDK 27 que o `xcode-select` entrega por default quebra o linker com `libSystem.B.tbd: error: unknown architecture`. Não vai na configuração `native-container` porque lá a compilação acontece DENTRO do builder image do Mandrel, onde esse caminho não existe."
-      },
       "options": {
         "parallel": false,
         "forwardAllArgs": false,
@@ -122,20 +105,16 @@
         "extraFlags": "",
         "commands": [
           {
-            "command": "mkdir -p infra/dist",
-            "description": "infra/dist é gitignored: num clone novo ele não existe."
+            "command": "mkdir -p infra/dist"
           },
           {
-            "command": "./mvnw package -DskipTests -Plambda-http {args.mvnFlags} {args.extraFlags}",
-            "description": "Da RAIZ, e não com -pl: a validação do quarkus-extension-maven-plugin em axon-native-support exige o artefato de deployment no reator."
+            "command": "./mvnw package -DskipTests -Plambda-http {args.mvnFlags} {args.extraFlags}"
           },
           {
-            "command": "cp apps/posts-api/target/function.zip infra/dist/posts-api-http.zip",
-            "description": "Um nome por artefato: os perfis escrevem todos no MESMO target/function.zip."
+            "command": "cp apps/posts-api/target/function.zip infra/dist/posts-api-http.zip"
           },
           {
-            "command": "zip -qj infra/dist/posts-api-http.zip infra/lambda/collector.yaml",
-            "description": "A layer do coletor lê /var/task/collector.yaml, então ele vai na raiz do zip."
+            "command": "zip -qj infra/dist/posts-api-http.zip infra/lambda/collector.yaml"
           }
         ]
       },
@@ -161,9 +140,6 @@
         "{workspaceRoot}/infra/dist/posts-api-sqs.zip"
       ],
       "defaultConfiguration": "native",
-      "metadata": {
-        "description": "O zip da VOLTA da saga (perfil Maven lambda-sqs). O MESMO artefato serve a função de fila e a de migração: o que as separa é QUARKUS_LAMBDA_HANDLER, que é configuração de runtime. Configurações: native (default, a GraalVM da MÁQUINA — num Mac o binário é Mach-O e só serve para rodar aqui), native-container (builder image do Mandrel, o único que produz o ELF/Linux que o Lambda executa) e jvm. O `-Pnative-clt-toolchain` é o que sobrou do antigo `build-env.sh`: ele injeta o `-isysroot` apontando para o symlink `MacOSX.sdk` das Command Line Tools. MEDIDO — sem ele, o SDK 27 que o `xcode-select` entrega por default quebra o linker com `libSystem.B.tbd: error: unknown architecture`. Não vai na configuração `native-container` porque lá a compilação acontece DENTRO do builder image do Mandrel, onde esse caminho não existe."
-      },
       "options": {
         "parallel": false,
         "forwardAllArgs": false,
@@ -171,20 +147,16 @@
         "extraFlags": "",
         "commands": [
           {
-            "command": "mkdir -p infra/dist",
-            "description": "infra/dist é gitignored: num clone novo ele não existe."
+            "command": "mkdir -p infra/dist"
           },
           {
-            "command": "./mvnw package -DskipTests -Plambda-sqs {args.mvnFlags} {args.extraFlags}",
-            "description": "Da RAIZ, e não com -pl: a validação do quarkus-extension-maven-plugin em axon-native-support exige o artefato de deployment no reator."
+            "command": "./mvnw package -DskipTests -Plambda-sqs {args.mvnFlags} {args.extraFlags}"
           },
           {
-            "command": "cp apps/posts-api/target/function.zip infra/dist/posts-api-sqs.zip",
-            "description": "Um nome por artefato: os perfis escrevem todos no MESMO target/function.zip."
+            "command": "cp apps/posts-api/target/function.zip infra/dist/posts-api-sqs.zip"
           },
           {
-            "command": "zip -qj infra/dist/posts-api-sqs.zip infra/lambda/collector.yaml",
-            "description": "A layer do coletor lê /var/task/collector.yaml, então ele vai na raiz do zip."
+            "command": "zip -qj infra/dist/posts-api-sqs.zip infra/lambda/collector.yaml"
           }
         ]
       },
@@ -210,9 +182,6 @@
         "{workspaceRoot}/infra/dist/posts-api-stream.zip"
       ],
       "defaultConfiguration": "native",
-      "metadata": {
-        "description": "O zip da Function URL com response streaming (perfil Maven lambda-stream). Aqui não há extensão de Lambda que monte um function.zip: o artefato é o run.sh mais o binário nativo (application) ou o quarkus-app/, e quem o executa é a layer do AWS Lambda Web Adapter. Por isso a configuração decide o CONTEÚDO do zip, e não só as flags do Maven. Configurações: native (default, a GraalVM da MÁQUINA — num Mac o binário é Mach-O e só serve para rodar aqui), native-container (builder image do Mandrel, o único que produz o ELF/Linux que o Lambda executa) e jvm. O `-Pnative-clt-toolchain` é o que sobrou do antigo `build-env.sh`: ele injeta o `-isysroot` apontando para o symlink `MacOSX.sdk` das Command Line Tools. MEDIDO — sem ele, o SDK 27 que o `xcode-select` entrega por default quebra o linker com `libSystem.B.tbd: error: unknown architecture`. Não vai na configuração `native-container` porque lá a compilação acontece DENTRO do builder image do Mandrel, onde esse caminho não existe."
-      },
       "options": {
         "parallel": false,
         "forwardAllArgs": false,
@@ -222,32 +191,25 @@
         "payload": "quarkus-app",
         "commands": [
           {
-            "command": "mkdir -p infra/dist",
-            "description": "infra/dist é gitignored: num clone novo ele não existe."
+            "command": "mkdir -p infra/dist"
           },
           {
-            "command": "./mvnw package -DskipTests -Plambda-stream {args.mvnFlags} {args.extraFlags}",
-            "description": "O único perfil que não acrescenta extensão de Lambda: a aplicação é empacotada como o servidor HTTP que ela é. Da RAIZ, e não com -pl: a validação do quarkus-extension-maven-plugin em axon-native-support exige o artefato de deployment no reator."
+            "command": "./mvnw package -DskipTests -Plambda-stream {args.mvnFlags} {args.extraFlags}"
           },
           {
-            "command": "install -m 755 apps/posts-api/src/main/lambda/run.sh apps/posts-api/target/run.sh",
-            "description": "O handler da função é o NOME deste arquivo. 755 porque sem a permissão o Lambda responde 'fork/exec /var/task/run.sh: permission denied'."
+            "command": "install -m 755 apps/posts-api/src/main/lambda/run.sh apps/posts-api/target/run.sh"
           },
           {
-            "command": "{args.prepare}",
-            "description": "Só o empacotamento NATIVO tem passo aqui: pôr o *-runner na raiz com o nome que o run.sh procura. Em jvm é um no-op (true)."
+            "command": "{args.prepare}"
           },
           {
-            "command": "rm -f infra/dist/posts-api-stream.zip",
-            "description": "zip APENDA: sem isto o artefato acumularia o conteúdo do build anterior."
+            "command": "rm -f infra/dist/posts-api-stream.zip"
           },
           {
-            "command": "cd apps/posts-api/target && zip -qrX ../../../infra/dist/posts-api-stream.zip run.sh {args.payload}",
-            "description": "-X preserva a permissão de execução do run.sh; o payload é application (nativo) ou quarkus-app/ (JVM), e o run.sh escolhe entre os dois por um if."
+            "command": "cd apps/posts-api/target && zip -qrX ../../../infra/dist/posts-api-stream.zip run.sh {args.payload}"
           },
           {
-            "command": "zip -qj infra/dist/posts-api-stream.zip infra/lambda/collector.yaml",
-            "description": "A layer do coletor lê /var/task/collector.yaml, então ele vai na raiz do zip."
+            "command": "zip -qj infra/dist/posts-api-stream.zip infra/lambda/collector.yaml"
           }
         ]
       },

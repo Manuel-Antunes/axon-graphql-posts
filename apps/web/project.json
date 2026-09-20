@@ -59,9 +59,6 @@
       }
     },
     "lint": {
-      "metadata": {
-        "description": "O alvo é INFERIDO pelo @nx/eslint/plugin; o que está declarado aqui só se funde com ele. `forwardAllArgs: false` é o que impede `pnpm lint --fix` de funcionar PELA METADE: o default repassa a flag, então o ESLint consertava enquanto o Spotless do lado Java apenas conferia — meia correção, sem aviso. Quem conserta é `pnpm lint:fix`, que roda a configuração `fix` nos TRÊS projetos. Ela repete o comando (`eslint . --fix`) em vez de usar a opção `args`, e isso foi MEDIDO: `forwardAllArgs: false` bloqueia `args` junto, então a configuração rodava sem o `--fix` e dizia que tinha passado."
-      },
       "options": {
         "forwardAllArgs": false
       },
@@ -74,6 +71,7 @@
     "typecheck": {
       "executor": "nx:run-commands",
       "cache": true,
+      "dependsOn": ["codegen"],
       "options": {
         "cwd": "apps/web",
         "command": "pnpm typecheck"

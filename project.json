@@ -1,20 +1,16 @@
 {
-  "name": "dev.manuelantunes:axonposts-axon-lambda",
+  "name": "root",
   "targets": {
     "publish-local": {
       "executor": "nx:run-commands",
       "cache": true,
-      "dependsOn": [
-        "^publish-local"
-      ],
       "inputs": [
-        "default",
-        "^default"
+        "{workspaceRoot}/pom.xml"
       ],
       "outputs": [],
       "options": {
         "forwardAllArgs": false,
-        "command": "./mvnw install -DskipTests -q -pl libs/axon-lambda"
+        "command": "./mvnw install -N -DskipTests -q"
       }
     }
   }

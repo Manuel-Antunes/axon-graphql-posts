@@ -1952,6 +1952,40 @@ testes em 26s, `-pl libs/axon-channels` roda 19 em 2,3s.
 
 **E não há mais `build-env.sh` na frente de nada disso.** Ver a próxima seção.
 
+#### O `~/.m2` FRIO é um ambiente diferente, e ele só existe na ESTEIRA e no clone novo
+
+Três coisas quebravam aqui e NENHUMA aparece na máquina de quem já rodou `./mvnw install` uma vez —
+porque o que falta é sempre um artefato que aquele comando deixou no repositório local anos-luz atrás.
+Foi a primeira execução da esteira que as revelou, as três de uma vez, e as três com mensagem que
+aponta para o lugar errado:
+
+| o que falta | o que a mensagem diz | onde se conserta |
+|---|---|---|
+| o POM PAI | `Could not find artifact dev.manuelantunes:quarkus-axon-graphql:pom (absent)`, dentro de um `Could not collect dependencies for project axonposts-users` | `root:publish-local`, no `project.json` da RAIZ |
+| o artefato de DEPLOYMENT da extensão | `Deployment artifact ...-deployment is missing the following dependencies: axon-native-support::jar, quarkus-core-deployment::jar` | o `-pl` do `axon-native-support`, que passou a levar o PAR |
+| `apps/web/src/gql` | `Cannot find module '@/gql'` mais 44 erros em cascata de `implicitly has an 'any' type` | `dependsOn: ["codegen"]` no `typecheck` do `web` |
+
+**O POM pai não é dependência de ninguém, e é de TODO mundo.** `-pl libs/users` resolve
+`axonposts-platform` do `~/.m2` — e ler o DESCRITOR daquele artefato exige o pai que o POM dele
+declara. Ninguém instalava o pai, porque `-pl <módulo>` nunca o inclui no reator. Quem o instala agora
+é `./mvnw install -N -DskipTests -q`, não-recursivo, num alvo do projeto `root`. **Não há lista
+escrita à mão ligando esse alvo ao resto**: o `@nx/maven` já põe uma aresta de TODO módulo para
+`root` — é a relação de parent do POM —, então o `dependsOn: ["^publish-local"]` que cada módulo já
+tinha alcança o alvo novo e a ordem continua vindo do grafo.
+
+**A validação da extensão não exige o reator inteiro: exige o PAR.** É a mesma do aviso lá de cima
+(`-pl` não serve para os goals de build), e ela roda no artefato de RUNTIME, conferindo o que o de
+DEPLOYMENT declara. Com o deployment fora do reator e fora do `~/.m2`, não há de onde resolvê-lo. Daí
+`-pl libs/axon-native-support/runtime,libs/axon-native-support/deployment` — os dois no mesmo comando,
+que é o mínimo que a validação aceita.
+
+**E `src/gql/` é gerado e gitignored**, então o `typecheck` do cliente afirmava sobre um diretório que
+só existe depois de um `pnpm dev` ou `pnpm build`. O `build` roda o codegen por dentro e por isso nunca
+notou; quem confere SEM construir precisava dizer no grafo que depende dele.
+
+**MEDIDO, com `~/.m2/repository/dev/manuelantunes` apagado — que é exatamente o estado da esteira**:
+`pnpm test` passa, 15 tarefas em 57s, com o `root:publish-local` na frente das outras oito.
+
 ### O `build-env.sh` FOI APAGADO — e o que ele sabia está aqui
 
 Ele existia porque o `JAVA_HOME` desta máquina estava errado para tudo que não fosse um terminal: a
@@ -2065,6 +2099,23 @@ dois lados** — a intermitência do augmentation é a mesma com ou sem ele. É 
 independente do que a seção do `posts-api` já dizia ao descartar "estado sujo em `target/`". **UM alvo e não dois**, porque `-pl` não funciona neste reator:
 um `./mvnw package` produz os `quarkus-app` dos dois serviços, e dois alvos rodariam o reator inteiro
 duas vezes disputando `target/`.
+
+**E O ARTEFATO É COPIADO PARA O `target/` DESTE PROJETO, que é de onde o teste sobe os processos.** O
+Maven escreve em `apps/posts-api/target/quarkus-app`, que é o diretório de build de OUTRO módulo — e o
+`test:e2e` daquele módulo roda `./mvnw clean`. Rodando os dois níveis na mesma invocação, que é
+exatamente o que `pnpm test:e2e` faz, a ordem decidia o resultado: MEDIDO — `posts-api-e2e:build` ✔,
+`posts-api:test:e2e` ✔ (limpando), e a saga morrendo em
+`Unable to access jarfile .../apps/posts-api/target/quarkus-app/quarkus-run.jar`. **A mensagem não
+menciona `clean` em lugar nenhum**, e o alvo que apagou tinha passado. Com a cópia em
+`apps/posts-api-e2e/target/stack/`, a ordem entre os alvos deixa de importar e o `--parallel=1` volta a
+significar só o que sempre significou: dois Mavens não disputam o mesmo `target/`. Os `outputs` do
+alvo foram junto — um cache que restaura dentro do `target/` de outro módulo escreve por cima de quem
+é dono dele. O fast-jar é RELOCÁVEL (o `quarkus-run.jar` acha `lib/`, `app/` e `quarkus/` pelo próprio
+diretório), então nada no empacotamento mudou.
+
+**Por que isso só apareceu agora:** enquanto o `^publish-local` falhava na esteira, o `test:e2e` dos
+dois apps Java nem rodava — o job passava pelo `build` e pela saga e morria antes. Consertado o
+`~/.m2` frio, o alvo que limpa passou a rodar, e o defeito que estava escondido atrás dele apareceu.
 
 **A prontidão é uma estratégia, não um `if`** (`support/service.ts`). O `posts-api` tem `/q/health`;
 o `tagging` **não tem porta nenhuma** — `quarkus-opentelemetry` depende de `quarkus-vertx` e não de

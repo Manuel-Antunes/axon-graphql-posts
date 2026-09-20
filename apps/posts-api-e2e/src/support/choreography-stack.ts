@@ -20,6 +20,17 @@ import { HttpHealth, LogLine, Service } from "./service";
 const POSTS_DB = "axonposts";
 const TAGGING_DB = "axonposts_tagging";
 
+/**
+ * Onde o alvo `build` DEIXA os dois `quarkus-app`, e não é onde o Maven os produz.
+ *
+ * O Maven escreve em `apps/<app>/target/quarkus-app`, que é o diretório de build de OUTRO módulo —
+ * e o `test:e2e` daquele módulo roda `./mvnw clean`, que apaga o que acabou de ser empacotado.
+ * Rodando os dois níveis na mesma invocação (é o que `pnpm test:e2e` faz), a saga morria em
+ * `Unable to access jarfile`, um erro que não menciona `clean` em lugar nenhum. O `build` copia
+ * para cá, dentro do `target/` deste projeto, e a ordem entre os alvos deixa de importar.
+ */
+const STAGE = "apps/posts-api-e2e/target/stack";
+
 /** As tabelas de LEITURA do `posts-api`. O `tagging` não tem read model — ele nem mapeia essas entidades. */
 const POSTS_READ_MODEL = ["post_tags", "posts", "tags", "accounts", "authors", "users"];
 
@@ -49,7 +60,7 @@ export class ChoreographyStack {
 
   readonly postsApi = new Service(
     "posts-api",
-    "apps/posts-api/target/quarkus-app/quarkus-run.jar",
+    `${STAGE}/posts-api/quarkus-run.jar`,
     {
       ...SHARED_ENV,
       QUARKUS_DATASOURCE_JDBC_URL: `jdbc:postgresql://localhost:5432/${POSTS_DB}`,
@@ -61,7 +72,7 @@ export class ChoreographyStack {
 
   readonly tagging = new Service(
     "tagging",
-    "apps/tagging/target/quarkus-app/quarkus-run.jar",
+    `${STAGE}/tagging/quarkus-run.jar`,
     {
       ...SHARED_ENV,
       QUARKUS_DATASOURCE_JDBC_URL: `jdbc:postgresql://localhost:5432/${TAGGING_DB}`,
