@@ -1,4 +1,4 @@
-import { graphql } from "@/gql";
+import { graphql } from '@/gql';
 
 /**
  * Os documentos desta página — e nenhum deles é prefetchado. É a única página onde isso acontece, e a
@@ -14,14 +14,14 @@ import { graphql } from "@/gql";
  * procura o que uma página pede.
  */
 export const CreateSagaPostMutation = graphql(`
-    mutation CreateSagaPost($input: CreatePostInput!) {
-        createPost(input: $input) {
-            id
-            title
-            version
-            createdAt
-        }
+  mutation CreateSagaPost($input: CreatePostInput!) {
+    createPost(input: $input) {
+      id
+      title
+      version
+      createdAt
     }
+  }
 `);
 
 /**
@@ -30,20 +30,20 @@ export const CreateSagaPostMutation = graphql(`
  * `PostCard_post` faria a medição mudar quando alguém mexesse no card.
  */
 export const SagaProbeQuery = graphql(`
-    query SagaProbe($id: ID!) {
-        post(id: $id) {
+  query SagaProbe($id: ID!) {
+    post(id: $id) {
+      id
+      title
+      version
+      updatedAt
+      tags(first: 5) {
+        edges {
+          node {
             id
-            title
-            version
-            updatedAt
-            tags(first: 5) {
-                edges {
-                    node {
-                        id
-                        name
-                    }
-                }
-            }
+            name
+          }
         }
+      }
     }
+  }
 `);

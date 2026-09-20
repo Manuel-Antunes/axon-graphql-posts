@@ -6,7 +6,7 @@
  * efeito colateral é o que dá valor ao teste — montar o envelope VALIDA O FORMATO DE FIO. Se o
  * `AxonEventEnvelope` mudar de forma, é aqui que aparece.
  */
-import type { Container } from "./docker";
+import type { Container } from './docker';
 
 /**
  * O envelope que o `ChannelEventOutbox` põe no fio.
@@ -25,7 +25,12 @@ export class AxonEnvelope {
     readonly payload: string,
   ) {}
 
-  static of({ identity, origin, tag, payload }: {
+  static of({
+    identity,
+    origin,
+    tag,
+    payload,
+  }: {
     identity: { identifier: string; messageType: string };
     origin: string;
     tag: { key: string; value: string };
@@ -35,10 +40,10 @@ export class AxonEnvelope {
       identity.messageType,
       identity.identifier,
       new Date().toISOString(),
-      { "axon-channel-origin": origin },
+      { 'axon-channel-origin': origin },
       [tag],
       // O payload vai em base64: é como o outbox o serializa.
-      Buffer.from(JSON.stringify(payload)).toString("base64"),
+      Buffer.from(JSON.stringify(payload)).toString('base64'),
     );
   }
 }
@@ -52,51 +57,67 @@ export class Broker {
    * aplicações a redeclararem exatamente o que elas declaram hoje.
    */
   private static readonly KNOWN_QUEUES = [
-    "axonposts.posts-api.post-completed",
-    "axonposts.tagging.post-precreated",
-    "axonposts.tagging.post-changes",
-    "axonposts.posts.inbox",
-    "axonposts.tagging.inbox",
-    "axonposts.events.in",
-    "axonposts.tagging.in",
-    "axonposts.consumer.in",
+    'axonposts.posts-api.post-completed',
+    'axonposts.tagging.post-precreated',
+    'axonposts.tagging.post-changes',
+    'axonposts.posts.inbox',
+    'axonposts.tagging.inbox',
+    'axonposts.events.in',
+    'axonposts.tagging.in',
+    'axonposts.consumer.in',
   ];
 
   constructor(
     private readonly container: Container,
     /** O exchange de saída do `posts-api` — o mesmo que o `mp.messaging.outgoing` declara. */
-    private readonly exchange = "axonposts.events",
-    private readonly managementUrl = "http://localhost:15672/api",
-    private readonly credentials = `Basic ${Buffer.from("guest:guest").toString("base64")}`,
+    private readonly exchange = 'axonposts.events',
+    private readonly managementUrl = 'http://localhost:15672/api',
+    private readonly credentials = `Basic ${Buffer.from('guest:guest').toString('base64')}`,
   ) {}
 
   deleteKnownQueues(): void {
     for (const queue of Broker.KNOWN_QUEUES) {
-      this.container.execQuietly("rabbitmqctl", "-q", "delete_queue", queue);
+      this.container.execQuietly('rabbitmqctl', '-q', 'delete_queue', queue);
     }
   }
 
   /** A topologia que as duas aplicações declararam ao subir — só para o log do teste. */
   bindings(): string {
     return this.container
-      .execQuietly("rabbitmqctl", "-q", "list_bindings", "source_name", "routing_key", "destination_name")
-      .split("\n")
-      .filter((line) => line.includes("axonposts"))
-      .join("\n");
+      .execQuietly(
+        'rabbitmqctl',
+        '-q',
+        'list_bindings',
+        'source_name',
+        'routing_key',
+        'destination_name',
+      )
+      .split('\n')
+      .filter((line) => line.includes('axonposts'))
+      .join('\n');
   }
 
   /** Publica e devolve o que o broker disse sobre o ROTEAMENTO — `routed: false` é binding errado. */
-  async publish(routingKey: string, envelope: AxonEnvelope): Promise<{ routed: boolean }> {
-    const response = await fetch(`${this.managementUrl}/exchanges/%2F/${this.exchange}/publish`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: this.credentials },
-      body: JSON.stringify({
-        properties: {},
-        routing_key: routingKey,
-        payload: JSON.stringify(envelope),
-        payload_encoding: "string",
-      }),
-    });
+  async publish(
+    routingKey: string,
+    envelope: AxonEnvelope,
+  ): Promise<{ routed: boolean }> {
+    const response = await fetch(
+      `${this.managementUrl}/exchanges/%2F/${this.exchange}/publish`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': this.credentials,
+        },
+        body: JSON.stringify({
+          properties: {},
+          routing_key: routingKey,
+          payload: JSON.stringify(envelope),
+          payload_encoding: 'string',
+        }),
+      },
+    );
     return (await response.json()) as { routed: boolean };
   }
 }

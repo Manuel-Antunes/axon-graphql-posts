@@ -1,4 +1,4 @@
-import { graphql } from "@/gql";
+import { graphql } from '@/gql';
 
 /**
  * A query desta página — a que dá os ids com que a sonda é montada.
@@ -8,26 +8,26 @@ import { graphql } from "@/gql";
  * depois que eles chegam), e não medição.
  */
 export const FederationSeedQuery = graphql(`
-    query FederationSeed {
-        posts(first: 3) {
+  query FederationSeed {
+    posts(first: 3) {
+      edges {
+        node {
+          id
+          title
+          author {
+            id
+            name
+          }
+          tags(first: 2) {
             edges {
-                node {
-                    id
-                    title
-                    author {
-                        id
-                        name
-                    }
-                    tags(first: 2) {
-                        edges {
-                            node {
-                                id
-                                name
-                            }
-                        }
-                    }
-                }
+              node {
+                id
+                name
+              }
             }
+          }
         }
+      }
     }
+  }
 `);

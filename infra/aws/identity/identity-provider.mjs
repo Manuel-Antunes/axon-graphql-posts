@@ -23,12 +23,12 @@
  * decidir, lembre que o custo dele entra no caminho de cada login.
  */
 export const handler = async (event) => {
-    event.response = {
-        claimsOverrideDetails: {
-            claimsToAddOrOverride: {
-                identity_provider: "cognito",
-            },
-        },
-    };
-    return event;
+  event.response = {
+    claimsOverrideDetails: {
+      claimsToAddOrOverride: {
+        identity_provider: 'cognito',
+      },
+    },
+  };
+  return event;
 };

@@ -1,4 +1,4 @@
-import { graphql } from "@/gql";
+import { graphql } from '@/gql';
 
 /**
  * Os documentos desta página. Três, e só UM deles é prefetchável — o que diz muito sobre a página.
@@ -16,25 +16,25 @@ import { graphql } from "@/gql";
  * no servidor do Next.
  */
 export const OnPostCreatedSubscription = graphql(`
-    subscription OnPostCreated($authorId: ID) {
-        onPostCreated(authorId: $authorId) {
-            id
-            title
-            version
-            ...PostCard_post
-        }
+  subscription OnPostCreated($authorId: ID) {
+    onPostCreated(authorId: $authorId) {
+      id
+      title
+      version
+      ...PostCard_post
     }
+  }
 `);
 
 export const OnPostUpdatedSubscription = graphql(`
-    subscription OnPostUpdated($authorId: ID, $postId: ID) {
-        onPostUpdated(authorId: $authorId, postId: $postId) {
-            id
-            title
-            version
-            ...PostCard_post
-        }
+  subscription OnPostUpdated($authorId: ID, $postId: ID) {
+    onPostUpdated(authorId: $authorId, postId: $postId) {
+      id
+      title
+      version
+      ...PostCard_post
     }
+  }
 `);
 
 /**
@@ -45,18 +45,18 @@ export const OnPostUpdatedSubscription = graphql(`
  * custar um ciclo de espera no navegador.
  */
 export const RecentPostsQuery = graphql(`
-    query RecentPosts($first: Int!) {
-        posts(first: $first) {
-            edges {
-                node {
-                    id
-                    title
-                    version
-                    updatedAt
-                }
-            }
+  query RecentPosts($first: Int!) {
+    posts(first: $first) {
+      edges {
+        node {
+          id
+          title
+          version
+          updatedAt
         }
+      }
     }
+  }
 `);
 
 /**

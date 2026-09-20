@@ -7,10 +7,10 @@
  * no topo — no topo, o bundle de edge tentaria carregar o pacote de Node e o BUILD quebraria.
  */
 export async function register() {
-    if (process.env.NEXT_RUNTIME === "nodejs") {
-        await import("./instrumentation.node");
-    }
-    if (process.env.NEXT_RUNTIME === "edge") {
-        await import("./instrumentation.edge");
-    }
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    await import('./instrumentation.node');
+  }
+  if (process.env.NEXT_RUNTIME === 'edge') {
+    await import('./instrumentation.edge');
+  }
 }

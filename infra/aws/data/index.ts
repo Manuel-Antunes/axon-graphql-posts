@@ -1,6 +1,6 @@
 /// <reference path="../../../.sst/platform/config.d.ts" />
 
-import { vpc } from "../network";
+import { vpc } from '../network';
 
 /**
  * Os DOIS event stores.
@@ -25,18 +25,18 @@ import { vpc } from "../network";
  * <p>
  * Quem cria o schema é o {@code Migrator} de `compute/migrations.ts`, invocado pelo PRÓPRIO deploy.
  */
-export const postsDb = new sst.aws.Postgres("PostsDb", {
-    vpc,
-    instance: "t4g.micro",
-    storage: "20 GB",
+export const postsDb = new sst.aws.Postgres('PostsDb', {
+  vpc,
+  instance: 't4g.micro',
+  storage: '20 GB',
 });
 
 /**
  * O do `apps/tagging`. Ele não tem read model nenhum — `quarkus.hibernate-orm.packages` restringe a
  * persistence unit a `org.axonframework` —, então aqui só existem as tabelas do Axon.
  */
-export const taggingDb = new sst.aws.Postgres("TaggingDb", {
-    vpc,
-    instance: "t4g.micro",
-    storage: "20 GB",
+export const taggingDb = new sst.aws.Postgres('TaggingDb', {
+  vpc,
+  instance: 't4g.micro',
+  storage: '20 GB',
 });

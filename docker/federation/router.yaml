@@ -20,7 +20,7 @@ headers:
   all:
     request:
       - propagate:
-          named: "authorization"
+          named: 'authorization'
 
 # Erros do subgraph aparecem na resposta do router. DEV APENAS: em produção isto vaza mensagem interna
 # para o cliente — que é exatamente o cuidado que o `show-runtime-exception-message` toma do outro lado.

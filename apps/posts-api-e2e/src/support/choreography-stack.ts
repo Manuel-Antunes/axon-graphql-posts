@@ -9,16 +9,17 @@
  *
  * Uma instância só por execução do Vitest: quem a cria e a destrói é o `global-setup`.
  */
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { Broker } from "./broker";
-import { Compose, Container, WORKSPACE_ROOT } from "./docker";
-import { EventStore } from "./event-store";
-import { PostsApi } from "./posts-api";
-import { HttpHealth, LogLine, Service } from "./service";
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 
-const POSTS_DB = "axonposts";
-const TAGGING_DB = "axonposts_tagging";
+import { Broker } from './broker';
+import { Compose, Container, WORKSPACE_ROOT } from './docker';
+import { EventStore } from './event-store';
+import { PostsApi } from './posts-api';
+import { HttpHealth, LogLine, Service } from './service';
+
+const POSTS_DB = 'axonposts';
+const TAGGING_DB = 'axonposts_tagging';
 
 /**
  * Onde o alvo `build` DEIXA os dois `quarkus-app`, e não é onde o Maven os produz.
@@ -29,55 +30,63 @@ const TAGGING_DB = "axonposts_tagging";
  * `Unable to access jarfile`, um erro que não menciona `clean` em lugar nenhum. O `build` copia
  * para cá, dentro do `target/` deste projeto, e a ordem entre os alvos deixa de importar.
  */
-const STAGE = "apps/posts-api-e2e/target/stack";
+const STAGE = 'apps/posts-api-e2e/target/stack';
 
 /** As tabelas de LEITURA do `posts-api`. O `tagging` não tem read model — ele nem mapeia essas entidades. */
-const POSTS_READ_MODEL = ["post_tags", "posts", "tags", "accounts", "authors", "users"];
+const POSTS_READ_MODEL = [
+  'post_tags',
+  'posts',
+  'tags',
+  'accounts',
+  'authors',
+  'users',
+];
 
 const SHARED_ENV = {
-  RABBITMQ_HOST: "localhost",
-  RABBITMQ_PORT: "5672",
-  RABBITMQ_USERNAME: "guest",
-  RABBITMQ_PASSWORD: "guest",
-  QUARKUS_DATASOURCE_USERNAME: "axonposts",
-  QUARKUS_DATASOURCE_PASSWORD: "axonposts",
+  RABBITMQ_HOST: 'localhost',
+  RABBITMQ_PORT: '5672',
+  RABBITMQ_USERNAME: 'guest',
+  RABBITMQ_PASSWORD: 'guest',
+  QUARKUS_DATASOURCE_USERNAME: 'axonposts',
+  QUARKUS_DATASOURCE_PASSWORD: 'axonposts',
   // Sem coletor no ar, o SDK ligado faz cada teste pagar tentativa de exportação e encher o log de
   // falha de conexão. `sdk.disabled` desliga a instrumentação inteira, não só o exportador.
-  QUARKUS_OTEL_SDK_DISABLED: "true",
+  QUARKUS_OTEL_SDK_DISABLED: 'true',
 };
 
 export class ChoreographyStack {
-  readonly logDirectory = process.env.E2E_LOGS
-    ?? join(WORKSPACE_ROOT, "apps/posts-api-e2e/target/logs");
+  readonly logDirectory =
+    process.env.E2E_LOGS ??
+    join(WORKSPACE_ROOT, 'apps/posts-api-e2e/target/logs');
 
   private readonly compose = new Compose();
-  private readonly postgres = new Container("quarkus-axonposts-postgres");
+  private readonly postgres = new Container('quarkus-axonposts-postgres');
 
-  readonly broker = new Broker(new Container("quarkus-axonposts-rabbitmq"));
+  readonly broker = new Broker(new Container('quarkus-axonposts-rabbitmq'));
   readonly postsStore = new EventStore(this.postgres, POSTS_DB);
   readonly taggingStore = new EventStore(this.postgres, TAGGING_DB);
   readonly api = new PostsApi();
 
   readonly postsApi = new Service(
-    "posts-api",
+    'posts-api',
     `${STAGE}/posts-api/quarkus-run.jar`,
     {
       ...SHARED_ENV,
       QUARKUS_DATASOURCE_JDBC_URL: `jdbc:postgresql://localhost:5432/${POSTS_DB}`,
-      KEYCLOAK_ISSUER_URI: "http://localhost:8081/realms/axon-posts",
+      KEYCLOAK_ISSUER_URI: 'http://localhost:8081/realms/axon-posts',
     },
     new HttpHealth(this.api.healthUrl),
     this.logDirectory,
   );
 
   readonly tagging = new Service(
-    "tagging",
+    'tagging',
     `${STAGE}/tagging/quarkus-run.jar`,
     {
       ...SHARED_ENV,
       QUARKUS_DATASOURCE_JDBC_URL: `jdbc:postgresql://localhost:5432/${TAGGING_DB}`,
     },
-    new LogLine("started in"),
+    new LogLine('started in'),
     this.logDirectory,
   );
 
@@ -101,19 +110,30 @@ export class ChoreographyStack {
   }
 
   private async startInfrastructure(): Promise<void> {
-    await this.compose.up("postgres", "keycloak", "rabbitmq");
+    await this.compose.up('postgres', 'keycloak', 'rabbitmq');
 
     // O banco do tagueamento vem de `docker/postgres/init/02-tagging-database.sql` — mas o
     // `initdb` do Postgres roda SÓ com o volume vazio. Num volume que já existe o script nunca
     // rodou, e o sintoma é o Flyway girando em `connectRetries` sem dizer contra o quê.
     // `create database` não aceita `if not exists`, daí o guard.
     const exists = this.postgres.execQuietly(
-      "psql", "-U", "axonposts", "-d", "postgres", "-tAc",
+      'psql',
+      '-U',
+      'axonposts',
+      '-d',
+      'postgres',
+      '-tAc',
       `select 1 from pg_database where datname = '${TAGGING_DB}'`,
     );
-    if (exists !== "1") {
+    if (exists !== '1') {
       this.postgres.exec(
-        "psql", "-U", "axonposts", "-d", "postgres", "-q", "-c",
+        'psql',
+        '-U',
+        'axonposts',
+        '-d',
+        'postgres',
+        '-q',
+        '-c',
         `create database ${TAGGING_DB} owner axonposts`,
       );
     }
@@ -127,8 +147,8 @@ export class ChoreographyStack {
    * aplicação morreria com `missing table [accounts]`.
    */
   private async migrate(): Promise<void> {
-    await this.compose.runToCompletion("flyway-posts");
-    await this.compose.runToCompletion("flyway-tagging");
+    await this.compose.runToCompletion('flyway-posts');
+    await this.compose.runToCompletion('flyway-tagging');
   }
 
   private reset(): void {

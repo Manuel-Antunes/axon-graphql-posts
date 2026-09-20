@@ -30,23 +30,23 @@
  * que não havia o que fazer.
  */
 function queue(name: string) {
-    const dlq = new sst.aws.Queue(`${name}Dlq`, { fifo: true });
-    return new sst.aws.Queue(name, {
-        fifo: true,
-        visibilityTimeout: "180 seconds",
-        dlq: { queue: dlq.arn, retry: 5 },
-    });
+  const dlq = new sst.aws.Queue(`${name}Dlq`, { fifo: true });
+  return new sst.aws.Queue(name, {
+    fifo: true,
+    visibilityTimeout: '180 seconds',
+    dlq: { queue: dlq.arn, retry: 5 },
+  });
 }
 
 /** Onde o tagueamento AGE: um post nasceu sem tag. Cada mensagem vira uma decisão e um evento. */
-export const precreated = queue("TaggingPrecreated");
+export const precreated = queue('TaggingPrecreated');
 
 /**
  * Onde o tagueamento só REPLICA. Nenhum handler reage a estes eventos: eles existem para o stream do
  * Post ficar COMPLETO naquele store, porque é dele que a posição do próximo append depende. Ver o
  * Javadoc de `PostChangesListener`.
  */
-export const changes = queue("TaggingChanges");
+export const changes = queue('TaggingChanges');
 
 /** A VOLTA da saga: o post voltando completo de quem decidiu a tag. */
-export const completed = queue("PostsApiCompleted");
+export const completed = queue('PostsApiCompleted');

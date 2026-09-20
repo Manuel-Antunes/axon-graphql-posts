@@ -3,20 +3,28 @@
   "private": true,
   "packageManager": "pnpm@10.30.3",
   "devDependencies": {
+    "@ianvs/prettier-plugin-sort-imports": "^4.7.1",
     "@nx/eslint": "23.2.1",
     "@nx/eslint-plugin": "23.2.1",
     "@nx/maven": "23.2.1",
     "@nx/next": "23.2.1",
+    "@nx/vitest": "23.2.1",
     "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
     "jsonc-eslint-parser": "^3.3.0",
     "nx": "23.2.1",
+    "prettier": "^3.9.8",
+    "prettier-plugin-tailwindcss": "^0.8.1",
     "sst": "^4.17.1",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.70.0"
+    "typescript-eslint": "^8.70.0",
+    "vite": "^7.3.6"
   },
   "scripts": {
-    "lint": "nx run-many -t lint",
-    "lint:fix": "nx run-many -t lint -c fix --skip-nx-cache",
+    "lint": "nx run-many -t lint && prettier --check .",
+    "lint:fix": "nx run-many -t lint -c fix --skip-nx-cache && prettier --write .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "dev": "nx run-many --target serve",
     "test": "nx run-many -t test",
     "test:e2e": "nx run-many -t test:e2e --parallel=1"

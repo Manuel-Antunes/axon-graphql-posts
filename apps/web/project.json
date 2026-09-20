@@ -76,6 +76,10 @@
         "cwd": "apps/web",
         "command": "pnpm typecheck"
       }
+    },
+    "test": {
+      "dependsOn": ["codegen"],
+      "outputs": ["{projectRoot}/target/test-results"]
     }
   }
 }

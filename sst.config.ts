@@ -13,18 +13,18 @@
 export default $config({
   app(input) {
     return {
-      name: "axonposts",
+      name: 'axonposts',
       // `retain` em produção porque os dois Postgres SÃO o event store: apagar a stack
       // apagaria o log de fatos do qual todo estado deste sistema é derivado. Não é o read
       // model que se perderia — é a história.
-      removal: input?.stage === "production" ? "retain" : "remove",
-      protect: input?.stage === "production",
-      home: "aws",
-      providers: { command: { package: "@pulumi/command", version: "1.2.1" } },
+      removal: input?.stage === 'production' ? 'retain' : 'remove',
+      protect: input?.stage === 'production',
+      home: 'aws',
+      providers: { command: { package: '@pulumi/command', version: '1.2.1' } },
     };
   },
   async run() {
-    const infra = await import("./infra/aws");
+    const infra = await import('./infra/aws');
     return infra.outputs;
   },
 });

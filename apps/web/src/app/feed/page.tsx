@@ -1,10 +1,10 @@
-import { Suspense } from "react";
+import { Suspense } from 'react';
 
-import { PreloadQuery } from "@/lib/apollo/rsc";
+import { PreloadQuery } from '@/lib/apollo/rsc';
 
-import { FeedSkeleton } from "./_components/feed-skeleton";
-import { FeedView } from "./_components/feed-view";
-import { FEED_PAGE_SIZE, FeedPostsQuery } from "./query";
+import { FeedSkeleton } from './_components/feed-skeleton';
+import { FeedView } from './_components/feed-view';
+import { FEED_PAGE_SIZE, FeedPostsQuery } from './query';
 
 /**
  * O prefetch acontece AQUI, no servidor.
@@ -20,15 +20,15 @@ import { FEED_PAGE_SIZE, FeedPostsQuery } from "./query";
  * do RSC e a rota inteira cairia. Aqui ele vira dado, e a página o mostra.
  */
 export default function FeedPage() {
-    return (
-        <PreloadQuery
-            query={FeedPostsQuery}
-            variables={{ first: FEED_PAGE_SIZE }}
-            errorPolicy="all"
-        >
-            <Suspense fallback={<FeedSkeleton />}>
-                <FeedView />
-            </Suspense>
-        </PreloadQuery>
-    );
+  return (
+    <PreloadQuery
+      query={FeedPostsQuery}
+      variables={{ first: FEED_PAGE_SIZE }}
+      errorPolicy="all"
+    >
+      <Suspense fallback={<FeedSkeleton />}>
+        <FeedView />
+      </Suspense>
+    </PreloadQuery>
+  );
 }

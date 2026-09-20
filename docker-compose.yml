@@ -29,7 +29,7 @@ services:
     ports:
       # a porta do host é variável para conviver com outro Postgres já rodando:
       #   POSTGRES_PORT=5433 docker compose up -d
-      - "${POSTGRES_PORT:-5432}:5432"
+      - '${POSTGRES_PORT:-5432}:5432'
     volumes:
       # O init roda só quando o volume está vazio. Para reexecutar: docker compose down -v
       #
@@ -41,7 +41,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
       # -d é importante: sem ele o pg_isready responde antes de o init script ter rodado
-      test: ["CMD-SHELL", "pg_isready -U axonposts -d axonposts"]
+      test: ['CMD-SHELL', 'pg_isready -U axonposts -d axonposts']
       interval: 5s
       timeout: 5s
       retries: 20
@@ -101,7 +101,7 @@ services:
     image: quay.io/keycloak/keycloak:26.0
     container_name: quarkus-axonposts-keycloak
     # start-dev: HTTP puro e sem hostname fixo. Em produção seria `start` com TLS e KC_HOSTNAME.
-    command: ["start-dev", "--import-realm"]
+    command: ['start-dev', '--import-realm']
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
@@ -110,10 +110,10 @@ services:
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: keycloak
-      KC_HEALTH_ENABLED: "true"
+      KC_HEALTH_ENABLED: 'true'
     ports:
       # 8081 fora, 8080 dentro: 8080 é da aplicação. Variável pelo mesmo motivo do Postgres
-      - "${KEYCLOAK_PORT:-8081}:8080"
+      - '${KEYCLOAK_PORT:-8081}:8080'
     volumes:
       - ./docker/keycloak/realm-axon-posts.json:/opt/keycloak/data/import/realm-axon-posts.json:ro
     depends_on:
@@ -121,7 +121,11 @@ services:
         condition: service_healthy
     healthcheck:
       # A imagem não tem curl nem wget; o Keycloak 25+ expõe o health por esta porta de gestão
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000; echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '\"UP\"' <&3"]
+      test:
+        [
+          'CMD-SHELL',
+          "exec 3<>/dev/tcp/127.0.0.1/9000; echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '\"UP\"' <&3",
+        ]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -152,10 +156,10 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
     ports:
-      - "${RABBITMQ_PORT:-5672}:5672"
-      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+      - '${RABBITMQ_PORT:-5672}:5672'
+      - '${RABBITMQ_MANAGEMENT_PORT:-15672}:15672'
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'check_running']
       interval: 5s
       timeout: 5s
       retries: 20
@@ -166,15 +170,22 @@ services:
     # imagem — `manifest unknown` na hora do pull.
     image: ghcr.io/apollographql/router:v2.9.0
     container_name: quarkus-axonposts-router
-    profiles: ["federation"]
-    command: ["--dev", "--config", "/etc/router/router.yaml", "--supergraph", "/etc/router/supergraph.graphql"]
+    profiles: ['federation']
+    command:
+      [
+        '--dev',
+        '--config',
+        '/etc/router/router.yaml',
+        '--supergraph',
+        '/etc/router/supergraph.graphql',
+      ]
     ports:
-      - "${ROUTER_PORT:-4000}:4000"
+      - '${ROUTER_PORT:-4000}:4000'
     volumes:
       - ./docker/federation/router.yaml:/etc/router/router.yaml:ro
       - ./docker/federation/supergraph.graphql:/etc/router/supergraph.graphql:ro
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - 'host.docker.internal:host-gateway'
 
 volumes:
   postgres-data:

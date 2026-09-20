@@ -1,8 +1,8 @@
 name: 'test'
-description: 'O nível de baixo da suíte Java: domínio, commands, fiação e schema (alvo `test-unit`)'
+description: 'O nível de baixo da suíte: domínio, commands, fiação e schema em Java, mais os testes de unidade do cliente web'
 inputs:
   upload_reports:
-    description: 'Guardar os relatórios do Surefire como artefato do run.'
+    description: 'Guardar os relatórios dos testes (Surefire e junit do Vitest) como artefato do run.'
     default: 'true'
     required: false
 runs:
@@ -21,13 +21,17 @@ runs:
       # `pnpm test` e não `./mvnw test` DE PROPÓSITO: quem sabe o que este nível é, e como cacheá-lo,
       # é o alvo `test-unit` do Nx. A esteira roda o mesmo comando que alguém roda na máquina.
       #
+      # E ele NÃO lista ninguém: `nx run-many -t test` resolve os projetos do grafo. Foi assim que o
+      # `web:test` entrou neste job no dia em que o `@nx/vitest` passou a inferi-lo, sem uma linha
+      # aqui — que é o mesmo motivo pelo qual o alvo do Vitest se chama `test` e não `test-web`.
+      #
       # Precisa de Docker mesmo neste nível: AxonWiringTest, OutboxRoutingTest e os três de schema
       # são @QuarkusTest, e o Dev Services levanta Postgres e Keycloak para eles. O runner
       # ubuntu-latest já tem o daemon de pé.
       run: pnpm test
       shell: bash
 
-    - name: Upload Surefire reports
+    - name: Upload test reports
       # `always()` porque o artefato só vale a pena quando o passo acima FALHOU — é onde está o
       # relatório do teste que quebrou.
       #
@@ -43,5 +47,6 @@ runs:
         path: |
           apps/*/target/surefire-reports/**
           libs/**/target/surefire-reports/**
+          apps/*/target/test-results/**
         if-no-files-found: ignore
         retention-days: 7

@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import { ApolloNextAppProvider } from "@apollo/client-integration-nextjs";
+import { ApolloNextAppProvider } from '@apollo/client-integration-nextjs';
 
-import { makeClient } from "@/lib/apollo/client";
+import { makeClient } from '@/lib/apollo/client';
 
 /**
  * O provider da integração do Next, e não o `ApolloProvider` de sempre.
@@ -14,5 +14,9 @@ import { makeClient } from "@/lib/apollo/client";
  * nada no cache e refaria toda query na hidratação.
  */
 export function ApolloProvider({ children }: { children: React.ReactNode }) {
-    return <ApolloNextAppProvider makeClient={makeClient}>{children}</ApolloNextAppProvider>;
+  return (
+    <ApolloNextAppProvider makeClient={makeClient}>
+      {children}
+    </ApolloNextAppProvider>
+  );
 }

@@ -1,4 +1,4 @@
-import { disableFragmentWarnings } from "@apollo/client";
+import { disableFragmentWarnings } from '@apollo/client';
 
 /**
  * Cala um aviso do `graphql-tag` que, NESTE arranjo, não pode indicar problema.

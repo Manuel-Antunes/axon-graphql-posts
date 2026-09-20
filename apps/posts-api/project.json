@@ -4,10 +4,7 @@
     "test": {
       "executor": "nx:run-commands",
       "cache": true,
-      "inputs": [
-        "default",
-        "^default"
-      ],
+      "inputs": ["default", "^default"],
       "outputs": [
         "{projectRoot}/target/surefire-reports",
         "{projectRoot}/target/jacoco-report"
@@ -16,17 +13,12 @@
         "forwardAllArgs": false,
         "command": "./mvnw clean test -pl apps/posts-api -am -Dtest='!*E2ETest,!*IT' -Dsurefire.failIfNoSpecifiedTests=false"
       },
-      "dependsOn": [
-        "^publish-local"
-      ]
+      "dependsOn": ["^publish-local"]
     },
     "test:e2e": {
       "executor": "nx:run-commands",
       "cache": true,
-      "inputs": [
-        "default",
-        "^default"
-      ],
+      "inputs": ["default", "^default"],
       "outputs": [
         "{projectRoot}/target/surefire-reports",
         "{projectRoot}/target/jacoco-report"
@@ -35,20 +27,13 @@
         "forwardAllArgs": false,
         "command": "./mvnw clean test -pl apps/posts-api -am -Dtest='*E2ETest' -Dsurefire.failIfNoSpecifiedTests=false"
       },
-      "dependsOn": [
-        "^publish-local"
-      ]
+      "dependsOn": ["^publish-local"]
     },
     "publish-local": {
       "executor": "nx:run-commands",
       "cache": true,
-      "dependsOn": [
-        "^publish-local"
-      ],
-      "inputs": [
-        "default",
-        "^default"
-      ],
+      "dependsOn": ["^publish-local"],
+      "inputs": ["default", "^default"],
       "outputs": [],
       "options": {
         "forwardAllArgs": false,
@@ -66,9 +51,7 @@
     "lint": {
       "executor": "nx:run-commands",
       "cache": true,
-      "inputs": [
-        "javaSources"
-      ],
+      "inputs": ["javaSources"],
       "options": {
         "parallel": false,
         "forwardAllArgs": false,
@@ -91,12 +74,8 @@
     "lambda-http": {
       "executor": "nx:run-commands",
       "cache": true,
-      "inputs": [
-        "quarkusLambda"
-      ],
-      "outputs": [
-        "{workspaceRoot}/infra/dist/posts-api-http.zip"
-      ],
+      "inputs": ["quarkusLambda"],
+      "outputs": ["{workspaceRoot}/infra/dist/posts-api-http.zip"],
       "defaultConfiguration": "native",
       "options": {
         "parallel": false,
@@ -133,12 +112,8 @@
     "lambda-sqs": {
       "executor": "nx:run-commands",
       "cache": true,
-      "inputs": [
-        "quarkusLambda"
-      ],
-      "outputs": [
-        "{workspaceRoot}/infra/dist/posts-api-sqs.zip"
-      ],
+      "inputs": ["quarkusLambda"],
+      "outputs": ["{workspaceRoot}/infra/dist/posts-api-sqs.zip"],
       "defaultConfiguration": "native",
       "options": {
         "parallel": false,
@@ -175,12 +150,8 @@
     "lambda-stream": {
       "executor": "nx:run-commands",
       "cache": true,
-      "inputs": [
-        "quarkusLambda"
-      ],
-      "outputs": [
-        "{workspaceRoot}/infra/dist/posts-api-stream.zip"
-      ],
+      "inputs": ["quarkusLambda"],
+      "outputs": ["{workspaceRoot}/infra/dist/posts-api-stream.zip"],
       "defaultConfiguration": "native",
       "options": {
         "parallel": false,

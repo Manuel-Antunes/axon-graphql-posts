@@ -1,5 +1,6 @@
 // @ts-check
-import nx from "@nx/eslint-plugin";
+import nx from '@nx/eslint-plugin';
+import prettier from 'eslint-config-prettier/flat';
 
 /**
  * A BASE do ESLint — o que TODO sistema deste workspace herda, e nada além disso.
@@ -24,34 +25,34 @@ export default [
      */
     ignores: [
       // O Maven escreve em `target/` de oito módulos; nada ali é escrito por alguém.
-      "**/target/**",
+      '**/target/**',
       // Saída de build e de empacotamento.
-      "**/dist/**",
-      "**/.next/**",
-      "**/.open-next/**",
-      "**/out-tsc/**",
+      '**/dist/**',
+      '**/.next/**',
+      '**/.open-next/**',
+      '**/out-tsc/**',
       // Caches de ferramenta.
-      "**/.nx/**",
-      "**/.sst/**",
-      "**/vite.config.*.timestamp*",
-      "**/vitest.config.*.timestamp*",
+      '**/.nx/**',
+      '**/.sst/**',
+      '**/vite.config.*.timestamp*',
+      '**/vitest.config.*.timestamp*',
       // Declarações GERADAS: o `sst-env.d.ts` sai do `sst deploy` e o `next-env.d.ts` do Next.
       // As regras aqui valem para o que alguém escreveu.
-      "**/sst-env.d.ts",
-      "**/next-env.d.ts",
+      '**/sst-env.d.ts',
+      '**/next-env.d.ts',
     ],
   },
 
   // O `flat/base` traz só o plugin `@nx`; são as duas linhas abaixo que ligam as regras.
-  ...nx.configs["flat/base"],
-  ...nx.configs["flat/typescript"],
-  ...nx.configs["flat/javascript"],
+  ...nx.configs['flat/base'],
+  ...nx.configs['flat/typescript'],
+  ...nx.configs['flat/javascript'],
 
   {
-    files: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
+    files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
     rules: {
-      "@nx/enforce-module-boundaries": [
-        "error",
+      '@nx/enforce-module-boundaries': [
+        'error',
         {
           enforceBuildableLibDependency: true,
           /*
@@ -59,7 +60,7 @@ export default [
            * fronteira do projeto — exatamente o que a regra proíbe. Sem esta exceção, compor as
            * configs em vez de duplicá-las seria um erro de lint.
            */
-          allow: ["^.*/eslint(\\.base)?\\.config\\.[cm]?[jt]s$"],
+          allow: ['^.*/eslint(\\.base)?\\.config\\.[cm]?[jt]s$'],
           /*
            * TAGS: uma só, e permissiva, DE PROPÓSITO. Hoje não há lib JS compartilhada neste
            * monorepo — o domínio compartilhado é Java, e quem o separa é o reator do Maven. Uma
@@ -70,7 +71,7 @@ export default [
            * confere: import relativo que sai do próprio projeto, ciclo entre projetos, e import do
            * MIOLO de um pacote em vez do ponto de entrada dele.
            */
-          depConstraints: [{ sourceTag: "*", onlyDependOnLibsWithTags: ["*"] }],
+          depConstraints: [{ sourceTag: '*', onlyDependOnLibsWithTags: ['*'] }],
         },
       ],
     },
@@ -78,21 +79,39 @@ export default [
 
   {
     files: [
-      "**/*.ts",
-      "**/*.tsx",
-      "**/*.cts",
-      "**/*.mts",
-      "**/*.js",
-      "**/*.jsx",
-      "**/*.cjs",
-      "**/*.mjs",
+      '**/*.ts',
+      '**/*.tsx',
+      '**/*.cts',
+      '**/*.mts',
+      '**/*.js',
+      '**/*.jsx',
+      '**/*.cjs',
+      '**/*.mjs',
     ],
     rules: {
       // Um tipo importado como valor entra no bundle como import de runtime. `import type` some na
       // compilação — e é o que mantém um import de tipo de não criar dependência de verdade.
-      "@typescript-eslint/consistent-type-imports": "warn",
-      "@typescript-eslint/no-namespace": "off",
-      "@typescript-eslint/consistent-type-definitions": "error",
+      '@typescript-eslint/consistent-type-imports': 'warn',
+      '@typescript-eslint/no-namespace': 'off',
+      '@typescript-eslint/consistent-type-definitions': 'error',
     },
   },
+
+  /*
+   * O PRETTIER POR ÚLTIMO, e a posição é a regra inteira: este bloco só DESLIGA coisas, então ele
+   * precisa vir depois de tudo que possa ligá-las.
+   *
+   * É `eslint-config-prettier` e não `eslint-plugin-prettier`, e a diferença importa. O plugin
+   * roda o Prettier COMO SE FOSSE uma regra de lint: cada divergência de formatação vira um erro
+   * do ESLint, com a mensagem dele, e o `--fix` passa a reformatar. Custa uma passada do Prettier
+   * por arquivo dentro do lint e, pior, transforma "está fora do formato" — que é máquina que
+   * resolve — em ruído no meio dos achados que exigem alguém ler. É a mesma divisão que o lado
+   * Java já faz entre Spotless e Error Prone.
+   *
+   * O config só apaga as regras de ESTILO do ESLint (as do preset do Next, as do `typescript-eslint`)
+   * para que as duas ferramentas não disputem a mesma linha. Tudo que aponta DEFEITO — o
+   * `enforce-module-boundaries`, as do Vitest, as do GraphQL, as de correção do Tailwind —
+   * atravessa intacto, porque o Prettier não tem opinião sobre nenhuma delas.
+   */
+  prettier,
 ];

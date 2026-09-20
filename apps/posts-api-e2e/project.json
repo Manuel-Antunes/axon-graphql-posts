@@ -11,12 +11,8 @@
     "build": {
       "executor": "nx:run-commands",
       "cache": true,
-      "inputs": [
-        "quarkusStack"
-      ],
-      "outputs": [
-        "{projectRoot}/target/stack"
-      ],
+      "inputs": ["quarkusStack"],
+      "outputs": ["{projectRoot}/target/stack"],
       "options": {
         "parallel": false,
         "commands": [
@@ -57,25 +53,21 @@
       }
     },
     "test:e2e": {
-      "executor": "nx:run-commands",
-      "dependsOn": [
-        "build"
-      ],
-      "cache": true,
+      "dependsOn": ["build"],
       "inputs": [
         "default",
         "quarkusStack",
         {
+          "externalDependencies": ["vitest"]
+        },
+        {
+          "env": "CI"
+        },
+        {
           "env": "E2E_LOGS"
         }
       ],
-      "outputs": [
-        "{projectRoot}/target/test-results"
-      ],
-      "options": {
-        "cwd": "apps/posts-api-e2e",
-        "command": "vitest run"
-      }
+      "outputs": ["{projectRoot}/target/test-results"]
     }
   }
 }

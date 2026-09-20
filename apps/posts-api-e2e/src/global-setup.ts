@@ -10,17 +10,17 @@
  * teste constrói a dele e olha para a mesma stack. O que NÃO atravessa é o processo filho de cada
  * serviço, e por isso quem os derruba é o `teardown` daqui.
  */
-import { ChoreographyStack } from "./support/choreography-stack";
+import { ChoreographyStack } from './support/choreography-stack';
 
 const stack = new ChoreographyStack();
 
 export async function setup(): Promise<void> {
-  console.log("### provisionando a stack da saga coreografada");
+  console.log('### provisionando a stack da saga coreografada');
   await stack.up();
   console.log(`    posts-api: ${stack.postsApi.startupTime}`);
   console.log(`    tagging:   ${stack.tagging.startupTime}`);
-  console.log("### a topologia que as duas aplicações declararam");
-  console.log(stack.broker.bindings().replace(/^/gm, "    "));
+  console.log('### a topologia que as duas aplicações declararam');
+  console.log(stack.broker.bindings().replace(/^/gm, '    '));
 }
 
 export function teardown(): void {

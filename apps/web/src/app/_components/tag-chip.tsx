@@ -1,5 +1,6 @@
-import { Badge } from "@/components/ui/badge";
-import { getFragmentData, graphql, type FragmentType } from "@/gql";
+import type { FragmentType } from '@/gql';
+import { Badge } from '@/components/ui/badge';
+import { getFragmentData, graphql } from '@/gql';
 
 /**
  * O menor componente com dados deste projeto — e por isso o melhor exemplo do padrão.
@@ -10,17 +11,17 @@ import { getFragmentData, graphql, type FragmentType } from "@/gql";
  * de compilação.
  */
 export const TagChip_tag = graphql(`
-    fragment TagChip_tag on Tag {
-        id
-        name
-    }
+  fragment TagChip_tag on Tag {
+    id
+    name
+  }
 `);
 
 export function TagChip({ tag }: { tag: FragmentType<typeof TagChip_tag> }) {
-    const { name } = getFragmentData(TagChip_tag, tag);
-    return (
-        <Badge variant="secondary" className="font-mono text-[11px]">
-            #{name}
-        </Badge>
-    );
+  const { name } = getFragmentData(TagChip_tag, tag);
+  return (
+    <Badge variant="secondary" className="font-mono text-[11px]">
+      #{name}
+    </Badge>
+  );
 }

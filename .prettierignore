@@ -1,0 +1,46 @@
+# O que o Prettier NÃO pode tocar. Ele já pula o que não sabe formatar; o que está aqui é o que ele
+# SABE e mesmo assim não deve — mais a saída de build, que ninguém escreve.
+
+# ─── Reescrever isto QUEBRA O BANCO ────────────────────────────────────────────────────────────
+# O Flyway grava o CHECKSUM do conteúdo de cada migration em `flyway_schema_history`. Reformatar uma
+# migration já aplicada não muda o que ela faz e mesmo assim derruba a aplicação na partida, com
+# `Migration checksum mismatch`, em TODO ambiente onde ela já rodou. É a mesma razão pela qual o
+# CLAUDE.md diz que renomear migration aplicada não é opção.
+#
+# Hoje o Prettier nem formata `.sql` — isso exige o `prettier-plugin-sql`, que não está instalado.
+# A linha existe para o dia em que alguém o instalar: a proteção tem de ser mais velha que o plugin.
+**/src/main/resources/db/migration/**
+
+# ─── Markdown: prosa, e o .editorconfig já disse que ela não se normaliza ──────────────────────
+# O bloco `[*.md]` de lá desliga `max_line_length` e `trim_trailing_whitespace` — ou seja, a
+# intenção declarada nesses arquivos é "não mexa". O Prettier faria o contrário, e MEDIDO: 144
+# linhas só no README da raiz, quase todas tabelas que ele expande com padding até 150 colunas —
+# num documento cujo texto é mantido em ~100. O CLAUDE.md, que são 2500 linhas e é a memória das
+# decisões deste projeto, entra na mesma conta.
+#
+# O que se perde é alinhamento automático de tabela. O que se ganha é `git blame` legível nos
+# quatro documentos onde o PORQUÊ de cada decisão está escrito.
+*.md
+
+# ─── Gerado: as regras valem para o que alguém escreveu ────────────────────────────────────────
+# Sai do graphql-codegen a cada build.
+apps/web/src/gql/
+# Sai da API, por `pnpm schema:pull`. Formatá-lo faria este repo opinar sobre o SDL do servidor.
+apps/web/schema.graphql
+schema.graphql
+# Sai do `rover supergraph compose`.
+docker/federation/supergraph.graphql
+# Sai do `sst deploy`.
+sst-env.d.ts
+apps/web/next-env.d.ts
+
+# ─── Saída de build e de empacotamento ─────────────────────────────────────────────────────────
+**/target/
+**/.next/
+**/.open-next/
+**/dist/
+infra/dist/
+.sst/
+.nx/
+node_modules/
+pnpm-lock.yaml

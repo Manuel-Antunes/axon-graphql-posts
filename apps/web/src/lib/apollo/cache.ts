@@ -1,7 +1,7 @@
-import { InMemoryCache } from "@apollo/client-integration-nextjs";
-import { relayStylePagination } from "@apollo/client/utilities";
+import { InMemoryCache } from '@apollo/client-integration-nextjs';
+import { relayStylePagination } from '@apollo/client/utilities';
 
-import generatedIntrospection from "@/gql/possible-types";
+import generatedIntrospection from '@/gql/possible-types';
 
 /**
  * O cache, e as DUAS coisas que ele precisa saber e não consegue deduzir do resultado JSON.
@@ -43,28 +43,28 @@ import generatedIntrospection from "@/gql/possible-types";
  * Relay à risca.
  */
 export function createCache(): InMemoryCache {
-    return new InMemoryCache({
-        possibleTypes: generatedIntrospection.possibleTypes,
-        typePolicies: {
-            Query: {
-                fields: {
-                    // `keyArgs: ["first"]`, e não o default `false`. Duas páginas do MESMO tamanho
-                    // continuam se fundindo (é o que "carregar mais" precisa, porque `after` fica de
-                    // fora da chave), mas `posts(first: 6)` do feed e `posts(first: 100)` de `/live`
-                    // passam a ser campos distintos no cache. Sem isso, abrir `/live` fazia o feed
-                    // aparecer com cem cards na volta.
-                    posts: relayStylePagination(["first"]),
-                },
-            },
-            // Os ids são escalares no fio (`PostId` leva `@JsonValue`), então o `id` default do
-            // Apollo normaliza tudo sozinho. O que precisa de ajuda é o `Tag` DENTRO da connection do
-            // post: duas listas diferentes podem trazer a mesma tag, e sem normalização ela viraria
-            // dois objetos. `keyFields: ["id"]` é o default — está escrito para deixar claro que a
-            // identidade é o id, e não a posição na lista.
-            Post: { keyFields: ["id"] },
-            Tag: { keyFields: ["id"] },
-            Author: { keyFields: ["id"] },
-            Reader: { keyFields: ["id"] },
+  return new InMemoryCache({
+    possibleTypes: generatedIntrospection.possibleTypes,
+    typePolicies: {
+      Query: {
+        fields: {
+          // `keyArgs: ["first"]`, e não o default `false`. Duas páginas do MESMO tamanho
+          // continuam se fundindo (é o que "carregar mais" precisa, porque `after` fica de
+          // fora da chave), mas `posts(first: 6)` do feed e `posts(first: 100)` de `/live`
+          // passam a ser campos distintos no cache. Sem isso, abrir `/live` fazia o feed
+          // aparecer com cem cards na volta.
+          posts: relayStylePagination(['first']),
         },
-    });
+      },
+      // Os ids são escalares no fio (`PostId` leva `@JsonValue`), então o `id` default do
+      // Apollo normaliza tudo sozinho. O que precisa de ajuda é o `Tag` DENTRO da connection do
+      // post: duas listas diferentes podem trazer a mesma tag, e sem normalização ela viraria
+      // dois objetos. `keyFields: ["id"]` é o default — está escrito para deixar claro que a
+      // identidade é o id, e não a posição na lista.
+      Post: { keyFields: ['id'] },
+      Tag: { keyFields: ['id'] },
+      Author: { keyFields: ['id'] },
+      Reader: { keyFields: ['id'] },
+    },
+  });
 }

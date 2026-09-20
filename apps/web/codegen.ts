@@ -1,4 +1,4 @@
-import type { CodegenConfig } from "@graphql-codegen/cli";
+import type { CodegenConfig } from '@graphql-codegen/cli';
 
 /**
  * O codegen, e as DUAS saídas que ele produz — que resolvem dois problemas diferentes.
@@ -28,35 +28,40 @@ import type { CodegenConfig } from "@graphql-codegen/cli";
  * lembrar — ver `lib/apollo/cache.ts`.
  */
 const config: CodegenConfig = {
-    // O SDL versionado, não a URL: `pnpm codegen` não deve exigir a API de pé. Ver scripts/pull-schema.sh.
-    schema: "schema.graphql",
-    // Os documentos moram JUNTO dos componentes que os consomem — é o que "fragment-based props"
-    // quer dizer. Não há pasta de queries.
-    documents: ["src/**/*.{ts,tsx}", "!src/gql/**/*"],
-    ignoreNoDocuments: true,
-    generates: {
-        "src/gql/": {
-            preset: "client",
-            presetConfig: {
-                fragmentMasking: { unmaskFunctionName: "getFragmentData" },
-            },
-            config: {
-                // O `DateTime` do SmallRye chega como string ISO-8601 no fio. Tipá-lo como `any`
-                // (o default para escalar desconhecido) apagaria o erro de passar um número.
-                scalars: { DateTime: "string", BigInteger: "string", BigDecimal: "string", _Any: "Record<string, unknown>" },
-                useTypeImports: true,
-                skipTypename: false,
-                enumsAsTypes: true,
-            },
+  // O SDL versionado, não a URL: `pnpm codegen` não deve exigir a API de pé. Ver scripts/pull-schema.sh.
+  schema: 'schema.graphql',
+  // Os documentos moram JUNTO dos componentes que os consomem — é o que "fragment-based props"
+  // quer dizer. Não há pasta de queries.
+  documents: ['src/**/*.{ts,tsx}', '!src/gql/**/*'],
+  ignoreNoDocuments: true,
+  generates: {
+    'src/gql/': {
+      preset: 'client',
+      presetConfig: {
+        fragmentMasking: { unmaskFunctionName: 'getFragmentData' },
+      },
+      config: {
+        // O `DateTime` do SmallRye chega como string ISO-8601 no fio. Tipá-lo como `any`
+        // (o default para escalar desconhecido) apagaria o erro de passar um número.
+        scalars: {
+          DateTime: 'string',
+          BigInteger: 'string',
+          BigDecimal: 'string',
+          _Any: 'Record<string, unknown>',
         },
-        "src/gql/possible-types.ts": {
-            plugins: ["fragment-matcher"],
-            config: { module: "es2015", apolloClientVersion: 3 },
-        },
+        useTypeImports: true,
+        skipTypename: false,
+        enumsAsTypes: true,
+      },
     },
-    hooks: {
-        afterAllFileWrite: [],
+    'src/gql/possible-types.ts': {
+      plugins: ['fragment-matcher'],
+      config: { module: 'es2015', apolloClientVersion: 3 },
     },
+  },
+  hooks: {
+    afterAllFileWrite: [],
+  },
 };
 
 export default config;

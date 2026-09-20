@@ -1,5 +1,4 @@
-import { pool } from ".";
-
+import { pool } from '.';
 
 /**
  * Os MESMOS três usuários do realm, com os mesmos e-mails, nomes e senhas — porque é isso que faz o
@@ -9,24 +8,30 @@ import { pool } from ".";
  * `messageAction: "SUPPRESS"` porque sem ele o Cognito tenta ENVIAR um e-mail de boas-vindas para
  * `@example.com` a cada deploy — e falha, ruidosamente.
  */
-export function seed(name: string, email: string, fullName: string, groups: string[]) {
+export function seed(
+  name: string,
+  email: string,
+  fullName: string,
+  groups: string[],
+) {
   const user = new aws.cognito.User(name, {
     ...pool,
     username: email,
-    password: "segredo123",
-    messageAction: "SUPPRESS",
+    password: 'segredo123',
+    messageAction: 'SUPPRESS',
     attributes: {
       email,
-      email_verified: "true",
+      email_verified: 'true',
       name: fullName,
     },
   });
   groups.forEach(
-    (group) => new aws.cognito.UserInGroup(`${name}In${group}`, {
-      ...pool,
-      username: user.username,
-      groupName: group,
-    })
+    (group) =>
+      new aws.cognito.UserInGroup(`${name}In${group}`, {
+        ...pool,
+        username: user.username,
+        groupName: group,
+      }),
   );
   return user;
 }

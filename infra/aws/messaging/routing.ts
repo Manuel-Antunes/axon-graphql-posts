@@ -1,7 +1,7 @@
 /// <reference path="../../../.sst/platform/config.d.ts" />
 
-import { postEvents } from "./topic";
-import { precreated, changes, completed } from "./queues";
+import { changes, completed, precreated } from './queues';
+import { postEvents } from './topic';
 
 /**
  * As "bindings": quem recebe qual evento.
@@ -23,9 +23,9 @@ import { precreated, changes, completed } from "./queues";
  */
 const raw = { subscription: { rawMessageDelivery: true } };
 
-postEvents.subscribeQueue("Precreated", precreated, {
-    filter: { "axon-message-name": ["PostPreCreated"] },
-    transform: raw,
+postEvents.subscribeQueue('Precreated', precreated, {
+  filter: { 'axon-message-name': ['PostPreCreated'] },
+  transform: raw,
 });
 
 /**
@@ -34,14 +34,16 @@ postEvents.subscribeQueue("Precreated", precreated, {
  * EVENTO NOVO NO CICLO DE VIDA DO POST = mais um nome AQUI. Esquecer não quebra na hora: quebra no
  * próximo append do tagueamento àquele agregado, longe da causa.
  */
-postEvents.subscribeQueue("Changes", changes, {
-    filter: { "axon-message-name": ["PostUpdated", "PostDeleted", "PostRestored"] },
-    transform: raw,
+postEvents.subscribeQueue('Changes', changes, {
+  filter: {
+    'axon-message-name': ['PostUpdated', 'PostDeleted', 'PostRestored'],
+  },
+  transform: raw,
 });
 
-postEvents.subscribeQueue("Completed", completed, {
-    filter: { "axon-message-name": ["PostCreated"] },
-    transform: raw,
+postEvents.subscribeQueue('Completed', completed, {
+  filter: { 'axon-message-name': ['PostCreated'] },
+  transform: raw,
 });
 
 /*

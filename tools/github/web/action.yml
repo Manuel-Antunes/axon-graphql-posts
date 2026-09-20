@@ -3,6 +3,20 @@ description: 'As checagens ESTÁTICAS dos pacotes JavaScript, mais o build do cl
 runs:
   using: composite
   steps:
+    - name: Check formatting
+      # PRIMEIRO, e pelo mesmo motivo que o Spotless roda antes dos testes no job do Java: leva
+      # segundos e falha por coisa que máquina conserta. Descobrir isso depois de um `next build` é
+      # desperdício.
+      #
+      # `--check` e não `--write`: numa esteira, formatar é esconder. Quem conserta é
+      # `pnpm lint:fix` na máquina de quem escreveu.
+      #
+      # Este passo é do workspace INTEIRO, e não só dos três projetos abaixo — o Prettier cobre
+      # `infra/`, `tools/`, os `project.json` das libs e o `sst.config.ts`, que não pertencem a
+      # projeto nenhum do Nx. Ele mora aqui porque é aqui que estão as checagens estáticas de JS.
+      run: pnpm format:check
+      shell: bash
+
     - name: Lint and typecheck every JavaScript project
       # `-p` e não `run-many` solto: `apps/posts-api` também declara um alvo `lint`, e o dele é o
       # Spotless do reator Java inteiro. Ele roda no job do Java, onde está o resto do gate daquele

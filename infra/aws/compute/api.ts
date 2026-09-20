@@ -1,8 +1,8 @@
 /// <reference path="../../../.sst/platform/config.d.ts" />
 
-import { HttpApi, QuarkusFunction, StreamingFunction } from "../support";
-import { platform, codeBucket, sources, projects } from "./platform";
-import { postsEnvironment } from "./environment";
+import { HttpApi, QuarkusFunction, StreamingFunction } from '../support';
+import { postsEnvironment } from './environment';
+import { codeBucket, platform, projects, sources } from './platform';
 
 /**
  * A API. `posts-api` empacotado com `-Plambda-http`.
@@ -21,22 +21,21 @@ import { postsEnvironment } from "./environment";
  * event store — então o evento existe e está disponível em todo container. O que falta aqui é só o
  * transporte, e é exatamente isso que a função abaixo tem. Ver `infra/aws/README.md`.
  */
-export const api = new QuarkusFunction("PostsApi", {
-    platform,
-    code: {
-        artifact: "posts-api-http",
-        buildCommand: `npx -y nx run "${projects.postsApi}:lambda-http:native-container"`,
-        output: "infra/dist/posts-api-http.zip",
-        bucket: codeBucket,
-        sources: sources.postsApi,
-    },
-    environment: postsEnvironment,
-    // 30s é o teto do API Gateway; passar disso não adianta nada.
-    timeout: 30,
+export const api = new QuarkusFunction('PostsApi', {
+  platform,
+  code: {
+    artifact: 'posts-api-http',
+    buildCommand: `npx -y nx run "${projects.postsApi}:lambda-http:native-container"`,
+    output: 'infra/dist/posts-api-http.zip',
+    bucket: codeBucket,
+    sources: sources.postsApi,
+  },
+  environment: postsEnvironment,
+  // 30s é o teto do API Gateway; passar disso não adianta nada.
+  timeout: 30,
 });
 
-export const gateway = new HttpApi("PostsApiGateway", { handler: api });
-
+export const gateway = new HttpApi('PostsApiGateway', { handler: api });
 
 /**
  * A MESMA aplicação, pela outra porta — a que consegue manter uma conexão aberta.
@@ -56,15 +55,15 @@ export const gateway = new HttpApi("PostsApiGateway", { handler: api });
  * pode durar o que durar até ele. É a diferença entre uma conexão que o transporte corta e uma que a
  * aplicação encerra.
  */
-export const streaming = new StreamingFunction("PostsApiStream", {
-    platform,
-    code: {
-        artifact: "posts-api-stream",
-        buildCommand: `npx -y nx run "${projects.postsApi}:lambda-stream:native-container"`,
-        output: "infra/dist/posts-api-stream.zip",
-        bucket: codeBucket,
-        sources: sources.postsApi,
-    },
-    environment: postsEnvironment,
-    timeout: 300,
+export const streaming = new StreamingFunction('PostsApiStream', {
+  platform,
+  code: {
+    artifact: 'posts-api-stream',
+    buildCommand: `npx -y nx run "${projects.postsApi}:lambda-stream:native-container"`,
+    output: 'infra/dist/posts-api-stream.zip',
+    bucket: codeBucket,
+    sources: sources.postsApi,
+  },
+  environment: postsEnvironment,
+  timeout: 300,
 });
