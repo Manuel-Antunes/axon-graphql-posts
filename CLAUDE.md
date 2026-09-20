@@ -1550,6 +1550,33 @@ O modo de falhar é o pior que há — o deploy publica o zip e imprime `✓ Com
 morre na invocação. O default continua sendo `native` porque quem constrói na máquina quase
 sempre quer rodar a aplicação ali.
 
+**E `native-container` NÃO bastava: há um SEGUNDO eixo, e ele custou um deploy inteiro.** O builder
+image do Mandrel é MULTI-ARCH (`linux/arm64` e `linux/amd64`, conferido no manifesto), e o Docker
+escolhe a variante pela arquitetura do HOST, sem dizer nada. Num Mac Apple Silicon sai aarch64 e
+casa com o `architectures: ['arm64']` das seis funções; num runner `ubuntu-latest` (x86_64) sai
+amd64, e a função recusa executar:
+
+```
+PostsMigrate axonposts:aws:QuarkusFunction → PostsMigrateInvocation aws:lambda:Invocation
+{"errorMessage":"failed to exec /var/task/bootstrap","errorType":"Runtime.InvalidEntrypoint"}
+```
+
+É o MESMO modo de falhar do parágrafo acima com outro eixo — lá o sistema operacional, aqui a
+arquitetura —, e a mensagem **não menciona arquitetura em lugar nenhum**. Quem o pegou foi o
+`Migrator`: ele INVOCA a função dentro do deploy, então migration que não roda vira deploy que
+falha. Sem essa invocação o deploy teria impresso `✓ Complete` e as seis funções estariam mortas.
+
+**Dois consertos, e os dois são necessários:**
+
+1. **a plataforma é DECLARADA** — `quarkus.native.container-runtime-options=--platform=linux/arm64`
+   no perfil `native-container` da RAIZ. Fica só lá: medido com `help:effective-pom`, a propriedade
+   alcança `apps/tagging` **e** `apps/posts-api`, mesmo este declarando um perfil de mesmo id (ele
+   redefine as outras duas propriedades e não esta). Num host arm64 o pino não custa nada — é a
+   variante que o Docker já escolheria;
+2. **o job de deploy roda em `ubuntu-24.04-arm`** (gratuito: o repositório é público). Sem ele o pino
+   ainda estaria certo, mas exigiria binfmt/QEMU no runner e o `native-image` emulado é inviável em
+   quatro artefatos.
+
 **E há um argumento de passagem**: `--extraFlags='...'` entra no comando do Maven e — por ser uma
 opção do alvo — **entra no hash**, então o cache continua correto quando alguém experimenta uma flag.
 
@@ -2272,6 +2299,12 @@ nada, e um volume sobrevivente entre jobs valeria menos ainda.
 (`QuarkusBuild.buildCommand`, em `infra/aws/support/functions.ts`) e o `triggers` do Pulumi decide se
 o comando roda. Um `package.sh` antes do deploy construiria FORA do grafo, e o SST reconstruiria
 mesmo assim.
+
+**E é por isso que o RUNNER do deploy é `ubuntu-24.04-arm` e o da CI não.** Quem constrói os quatro
+binários nativos é o próprio `sst deploy`, dentro do job — então a arquitetura do runner É a
+arquitetura do artefato. Os jobs da `ci.yml` não empacotam nada nativo e seguem em `ubuntu-latest`.
+A explicação inteira está em *O BINÁRIO NATIVO*; o resumo é que um runner x86_64 produzia um
+`bootstrap` amd64 para funções declaradas `arm64`.
 
 **As credenciais do Better Stack são obrigatórias no deploy**, e vão pelo `GITHUB_ENV` e não por um
 `env:` no passo: assim todo passo seguinte as enxerga, inclusive os de dentro do `deploy-sst`. Na

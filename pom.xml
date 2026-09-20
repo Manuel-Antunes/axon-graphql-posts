@@ -297,6 +297,21 @@
       <properties>
         <quarkus.native.container-build>true</quarkus.native.container-build>
         <quarkus.native.native-image-xmx>10g</quarkus.native.native-image-xmx>
+        <!--
+              A PLATAFORMA É DECLARADA, e não herdada do host.
+
+              O builder image do Mandrel é multi-arch (`linux/arm64` e `linux/amd64`) e o Docker
+              escolhe a variante pela arquitetura de QUEM RODA, sem dizer nada. As seis funções
+              declaram `architectures: ['arm64']`, então um build num host x86_64 produzia um
+              `bootstrap` amd64 que o deploy publicava e a função recusava executar
+              (`Runtime.InvalidEntrypoint`) — verde no build, morto na invocação.
+
+              Com o pino, um host arm64 (o Mac e o runner do deploy) não paga nada: é a variante que
+              ele já escolheria. Um host x86_64 passa a precisar de binfmt/QEMU e falha ALTO se não
+              tiver — que é a direção certa, porque o artefato errado não falha em lugar nenhum até
+              a AWS.
+            -->
+        <quarkus.native.container-runtime-options>--platform=linux/arm64</quarkus.native.container-runtime-options>
       </properties>
     </profile>
   </profiles>
