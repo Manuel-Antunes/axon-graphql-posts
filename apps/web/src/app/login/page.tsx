@@ -18,31 +18,6 @@ import { cn } from '@/lib/utils';
 
 import { LoginForm } from './_components/login-form';
 
-/**
- * Esta página NÃO redireciona quem já tem sessão — e essa ausência custou horas para ser entendida.
- *
- * <h2>A corrida</h2>
- * Havia aqui um `if (await readSession()) redirect("/feed")`, que é o reflexo certo. O problema é que
- * o Next <b>re-renderiza a rota atual depois de TODA server action</b>, e manda o resultado junto com
- * a resposta da ação. Então, no instante em que `signIn` gravava o cookie:
- *
- * <ol>
- *   <li>a ação devolvia `{ status: "ok" }`;</li>
- *   <li>o Next re-renderizava `/login` — que agora via a sessão e chamava `redirect("/feed")`;</li>
- *   <li>o roteador navegava SUAVE para `/feed`, reaproveitando o payload ANÔNIMO do layout que o
- *       prefetch havia guardado enquanto o usuário ainda não tinha entrado;</li>
- *   <li>o formulário era desmontado antes de conseguir fazer a recarga de página que corrigiria
- *       tudo.</li>
- * </ol>
- *
- * O sintoma: login bem-sucedido, cookie gravado, `/feed` na tela — e o cabeçalho dizendo "Entrar".
- * Em `next dev` nada disso aparecia, porque lá não há prefetch.
- *
- * <h2>A saída</h2>
- * Tirar o redirect daqui. Quem navega é o formulário, com recarga de página inteira (ver
- * `_components/login-form.tsx` e `app/actions/auth.ts`). Quem já está logado vê um cartão dizendo
- * isso, o que numa aplicação de teste é mais útil do que um salto.
- */
 export default async function LoginPage() {
   const session = await readSession();
 
@@ -85,8 +60,6 @@ export default async function LoginPage() {
             </Alert>
           ) : null}
 
-          {/* useSearchParams precisa de fronteira de Suspense para o Next poder
-                        pré-renderizar o resto da página. */}
           <Suspense fallback={<Skeleton className="h-64 w-full" />}>
             <LoginForm />
           </Suspense>

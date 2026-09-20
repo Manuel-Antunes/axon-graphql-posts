@@ -11,26 +11,8 @@ import jakarta.enterprise.context.ApplicationScoped;
 
 import java.util.List;
 
-/**
- * A query <b>FindAllPosts</b>: a mensagem {@link FindAllPosts} e como ela é respondida, num arquivo só —
- * mesma convenção dos commands, com a classe levando o nome da query e o record aninhado só o da ação.
- * <p>
- * A mecânica da paginação mora aqui, e não no controller nem no repositório: pede-se <b>uma linha a
- * mais</b> do que o cliente quer, e a existência dessa linha extra é a resposta para "tem próxima
- * página?". Ela é descartada antes de sair — o cliente recebe exatamente o que pediu.
- */
 @ApplicationScoped
 public class FindAllPostsQuery {
-
-    /**
-     * A mensagem: uma página de Posts, em ordem de criação.
-     * <p>
-     * Paginação em {@code offset}/{@code limit} crus: a query é uma mensagem, e mensagem não carrega
-     * tipo de framework. Quem transforma o cursor do GraphQL nestes dois números é o controller.
-     *
-     * @param offset índice da primeira linha desejada, contando de 0
-     * @param limit  quantidade máxima de linhas na página
-     */
     @Query(namespace = "posts", name = "FindAllPosts", version = "1.0.0")
     public record FindAllPosts(long offset, int limit) {
     }

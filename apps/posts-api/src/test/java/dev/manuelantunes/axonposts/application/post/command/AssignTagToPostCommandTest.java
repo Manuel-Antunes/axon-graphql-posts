@@ -27,9 +27,7 @@ import static dev.manuelantunes.axonposts.support.PostCommandFixtures.NOW;
 import static dev.manuelantunes.axonposts.support.PostCommandFixtures.hasCause;
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Given-when-then do {@link AssignTagToPostCommand}, e só dele. */
 class AssignTagToPostCommandTest {
-
     private static final TagId TAG_ID = TagId.of("tag-1");
 
     private InMemoryPostRepository posts;
@@ -40,7 +38,6 @@ class AssignTagToPostCommandTest {
     void setUp() {
         posts = new InMemoryPostRepository();
         tags = new InMemoryTagRepository();
-        // a tag tem de existir: o handler a carrega antes de decidir
         tags.save(Tag.reference(TAG_ID, TagName.of("Untagged")));
         fixture = PostCommandFixtures.forCommand(
                 "assign-tag", config -> new AssignTagToPostCommand(FIXED_CLOCK, posts, tags));

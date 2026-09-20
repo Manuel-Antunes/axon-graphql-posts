@@ -24,26 +24,10 @@ import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.infrastructure.Infrastructure;
 import jakarta.enterprise.context.ApplicationScoped;
 
-/**
- * O campo {@code Author.posts}: cursor connection servida em lote, gêmea de {@code Post.tags}.
- *
- * <h2>O N+1 que isto resolve</h2>
- * {@code posts(first: 20) { edges { node { author { posts { … } } } } }} pediria os posts de 20 autores.
- * Com o lote, os ids distintos vão numa consulta só.
- *
- * <h2>Recorte em memória: aqui o limite é mais perto do que nas tags</h2>
- * As tags de um post são poucas por natureza. Os posts de um autor <b>não</b> são: um autor produtivo
- * acumula milhares, e trazer todos para devolver os 20 primeiros é desperdício que cresce com o tempo.
- * <p>
- * A troca é consciente e vale enquanto o volume for de POC. O caminho de saída não muda a fronteira
- * deste método: seria uma consulta com {@code row_number() over (partition by author_id order by
- * created_at desc)} dentro da própria consulta em lote, devolvendo já recortado.
- */
 @GraphQLApi
 @ApplicationScoped
 @TranslatesErrors
 public class AuthorFieldsApi {
-
     private static final Logger log = Logger.getLogger(AuthorFieldsApi.class);
 
     private final QueryGateway queryGateway;
@@ -52,15 +36,13 @@ public class AuthorFieldsApi {
         this.queryGateway = queryGateway;
     }
 
-    /** Autor sem post nenhum não vem no mapa do lote — daí o {@code null} virar lista vazia. */
     @Name("posts")
     @NonNull
-    @Description("Posts deste autor, mais recentes primeiro, como Relay cursor connection")
+    @Description("This author's posts, newest first, as a Relay cursor connection")
     public Uni<List<PostConnection>> posts(
             @Source List<AuthorView> authors,
-            @Name("first") @Description("Quantos posts trazer; ausente = 20") Integer first,
-            @Name("after") @Description("Cursor do último post já visto; ausente = do começo") String after) {
-
+            @Name("first") @Description("How many posts to fetch; absent = 20") Integer first,
+            @Name("after") @Description("Cursor of the last post already seen; absent = from the start") String after) {
         ConnectionArgs args = ConnectionArgs.of(PostQueryApi.CURSOR_TYPE, first, after);
         List<String> authorIds = authors.stream().map(AuthorView::id).distinct().toList();
         log.debugf("lote de posts por autor: %d autor(es) numa consulta", authorIds.size());

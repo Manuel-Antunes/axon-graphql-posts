@@ -23,9 +23,7 @@ import static dev.manuelantunes.axonposts.support.PostCommandFixtures.NOW;
 import static dev.manuelantunes.axonposts.support.PostCommandFixtures.hasCause;
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Given-when-then do {@link CreatePostCommand}, e só dele. */
 class CreatePostCommandTest {
-
     private InMemoryPostRepository posts;
     private InMemoryTagRepository tags;
     private AxonTestFixture fixture;

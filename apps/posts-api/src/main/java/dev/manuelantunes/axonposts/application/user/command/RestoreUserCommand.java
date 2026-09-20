@@ -14,29 +14,8 @@ import java.time.Clock;
 
 import static dev.manuelantunes.axonposts.infrastructure.axon.AppendingDomainEventPublisher.appendingTo;
 
-/**
- * O command <b>RestoreUser</b>: reativa uma conta apagada.
- *
- * <h2>De novo, o event sourcing resolve a galinha e o ovo</h2>
- * Um usuário apagado é invisível para o JPA — o {@code @SQLRestriction} o esconde de toda consulta. Para
- * restaurar seria preciso carregar, e para carregar seria preciso não estar apagado.
- * <p>
- * Aqui não é: o {@code @InjectEntity User} <b>não vem do banco</b>, vem do stream, que nenhuma cláusula
- * SQL filtra. É exatamente o mesmo argumento do {@code RestorePostCommand} — e a repetição é o ponto: a
- * propriedade vale para qualquer agregado event-sourced com exclusão lógica.
- *
- * <h2>As duas escritas, e a ordem</h2>
- * <ol>
- *   <li>{@code users.restore(id)} — UPDATE nativo que zera o {@code deleted_at} e faz a linha voltar a
- *       existir para o JPA;</li>
- *   <li>{@code users.save(user)} — agora o {@code merge} acha a linha.</li>
- * </ol>
- * Invertida, o merge não encontraria a linha escondida, concluiria que a entidade é nova e tentaria um
- * INSERT com chave primária repetida.
- */
 @ApplicationScoped
 public class RestoreUserCommand {
-
     @Command(namespace = "users", name = "RestoreUser", version = "1.0.0")
     public record RestoreUser(@TargetEntityId UserId userId) {
     }

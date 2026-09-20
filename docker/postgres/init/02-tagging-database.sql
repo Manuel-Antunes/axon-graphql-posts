@@ -1,16 +1,1 @@
--- O banco do serviço de tagueamento.
---
--- POR QUE ELE É SEPARADO
--- ======================
--- Porque event store compartilhado é acoplamento pela porta dos fundos: dois serviços no mesmo store
--- podem ler o stream um do outro sem passar por contrato nenhum, e no dia em que um fizer isso a
--- coreografia acabou sem ninguém ter decidido. Bancos separados fazem a mensagem ser a única forma de
--- um saber algo do outro.
---
--- Mesmo container, bancos diferentes: é o que uma infraestrutura compartilhada faria de verdade.
--- Instâncias separadas custariam memória sem provar nada além disto.
---
--- O mesmo usuário `axonposts` é dono dos dois, e isto é uma simplificação de POC — em produção cada
--- serviço teria credencial própria, que é o que impediria o acesso cruzado de fato, e não só por
--- convenção.
 create database axonposts_tagging owner axonposts;

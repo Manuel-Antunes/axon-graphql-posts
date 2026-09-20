@@ -14,41 +14,14 @@ import dev.manuelantunes.axonposts.testing.UserFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-
 import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * A paginação do {@link FindAllPostsQuery}: ele pede uma linha a mais do que o cliente quer e usa
- * a existência dela como resposta para "tem próxima página?". Estes testes travam as duas pontas —
- * a linha extra nunca vaza para o resultado, e {@code hasNext} bate com a realidade.
- *
- * <h2>O mapper aqui é um DUBLO, e isso é deliberado</h2>
- * Este teste mede paginação: quantos itens a página traz e se {@code hasNext} bate com a realidade. O
- * mapeamento é incidental — só o {@code id} é observado.
- * <p>
- * Ele já dependeu do mapper de verdade por dois caminhos, e os dois custaram estabilidade de BUILD.
- * {@code new PostViewMapperImpl()} nomeia uma classe GERADA a partir de um teste do mesmo módulo;
- * {@code @QuarkusTest} + {@code @Inject PostViewMapper} faz a descoberta da suíte inteira depender de o
- * impl gerado ter saído anotado como bean. Nos dois casos, quando a geração oscilava entre os rounds de
- * compilação, o sintoma não falava de geração:
- * <pre>
- * incompatible types: PostViewMapperImpl cannot be converted to PostViewMapper
- * Could not load class with name: ...FindAllPostsQueryTest
- * </pre>
- * — este último derrubando os 149 testes, não só este.
- * <p>
- * Com o dublo, o teste volta a ser o que era: sem container, sem banco, sem bus, e sem opinião sobre
- * como o mapper é construído. Quem exercita o mapper de verdade é a suíte ponta a ponta, que lê os
- * campos pela borda GraphQL.
- */
 class FindAllPostsQueryTest {
-
     private static final Instant T0 = Instant.parse("2026-09-05T12:00:00Z");
 
-    /** Só o que este teste observa. Os demais campos não participam de nenhuma asserção daqui. */
     private final PostViewMapper viewMapper = new PostViewMapper() {
         @Override
         public PostView toView(Post post) {

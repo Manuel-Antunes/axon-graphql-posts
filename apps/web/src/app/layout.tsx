@@ -21,20 +21,11 @@ export const metadata: Metadata = {
     'Cliente GraphQL para exercitar os fluxos do blog: saga coreografada, federação e identidade.',
 };
 
-/**
- * A sessão é lida AQUI, no servidor, e desce por prop.
- *
- * O cookie do ID token é `httpOnly` — o JavaScript da página não o alcança. Este layout o lê da
- * requisição e entrega ao `SessionProvider`, que o põe em memória para o Apollo. O efeito colateral é
- * que toda página passa a ser dinâmica, e é o certo: uma página que mostra quem está logado não pode
- * ser servida de um cache estático.
- */
 export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // `publicSession` tira o token: o que desce para o navegador é só quem está logado.
   const session = publicSession(await readSession());
 
   return (

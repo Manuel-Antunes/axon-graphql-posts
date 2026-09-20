@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-#
-# A saga inteira, contra a stack de verdade — o irmão do `apps/posts-api-e2e`.
-#
-# O que ele afirma é a MESMA coisa que aquele afirma, porque é a mesma propriedade do sistema: um post
-# nasce na versão 1 SEM tag, atravessa dois processos por mensageria, e volta na versão 2 COM a tag que
-# o outro serviço decidiu. O que muda é só o transporte no meio.
-#
-#   ./infra/scripts/e2e.sh                 # descobre tudo com `sst outputs`
-#   API=... ISSUER=... ./infra/scripts/e2e.sh
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -22,9 +13,7 @@ API="${API%/}"
 echo "    api    = $API"
 echo "    issuer = $ISSUER"
 
-gql() { # $1 = query, $2 = variables json, $3 = token (opcional)
-  # O bash 3.2 do macOS trata `"${arr[@]}"` de um array VAZIO como variável não definida sob `set -u`
-  # e aborta com `auth[@]: unbound variable`. Daí passar o header por uma variável simples.
+gql() {
   local body auth vars
   vars="${2:-}"
   [ -n "$vars" ] || vars='{}'
@@ -39,7 +28,6 @@ gql() { # $1 = query, $2 = variables json, $3 = token (opcional)
 
 fail() { echo "FALHOU: $*" >&2; exit 1; }
 
-# ------------------------------------------------------------------------------------------------
 echo
 echo "==> 1. o schema é servido (e o subgraph se declara)"
 SDL=$(gql '{ _service { sdl } }' '{}' | jq -r '.data._service.sdl // empty')
@@ -47,14 +35,12 @@ SDL=$(gql '{ _service { sdl } }' '{}' | jq -r '.data._service.sdl // empty')
 echo "$SDL" | grep -q '@key' || fail 'o SDL não traz @key — a federação não está ligada'
 echo "    OK: SDL servido, com as diretivas de federação"
 
-# ------------------------------------------------------------------------------------------------
 echo
 echo "==> 2. query pública responde SEM token"
 ANON=$(gql '{ posts(first: 1) { edges { node { id } } } }')
 echo "$ANON" | jq -e '.data.posts' >/dev/null || fail "a query pública falhou: $ANON"
 echo "    OK: a query posts responde anonimamente (quarkus.http.auth.proactive=false)"
 
-# ------------------------------------------------------------------------------------------------
 echo
 echo "==> 3. mutation SEM token é recusada"
 DENIED=$(gql 'mutation { createPost(input:{title:"x",content:"y"}) { id } }')
@@ -62,16 +48,8 @@ echo "$DENIED" | jq -e '.errors[0].extensions.code == "UNAUTHORIZED"' >/dev/null
   || fail "esperava UNAUTHORIZED, veio: $DENIED"
 echo "    OK: UNAUTHORIZED, com mensagem (o ErrorTranslationInterceptor roda por fora da segurança)"
 
-# ------------------------------------------------------------------------------------------------
 echo
 echo "==> 4. token do Cognito"
-# NÃO é `grant_type=password`: o endpoint /oauth2/token do Cognito só aceita `authorization_code`,
-# `client_credentials` e `refresh_token`. Senha vai pela API própria dele.
-#
-# E é o ID TOKEN, não o access token. O access token do Cognito não traz `email`, e
-# `UserProvisioning` chama `Email.of(identity.email())` — sem e-mail não há como criar nem ligar o
-# perfil. Pôr `email` no access token exigiria o trigger V2_0, que a AWS só oferece nos planos
-# Essentials/Plus. Ver o Javadoc de infra/aws/cognito.ts.
 TOKEN=$(aws cognito-idp initiate-auth \
   --auth-flow USER_PASSWORD_AUTH \
   --client-id "$CLIENT_ID" \
@@ -80,7 +58,6 @@ TOKEN=$(aws cognito-idp initiate-auth \
 [ -n "$TOKEN" ] && [ "$TOKEN" != "None" ] || fail "não consegui um ID token do pool $USER_POOL"
 echo "    OK: ID token para manuel@example.com (grupo author)"
 
-# ------------------------------------------------------------------------------------------------
 echo
 echo "==> 5. createPost: nasce na versão 1, SEM tag"
 CREATED=$(gql 'mutation($i:CreatePostInput!){ createPost(input:$i){ id version tags{ edges{ node{ name } } } } }' \
@@ -95,7 +72,6 @@ echo "    id=$POST_ID versão=$V1 tags=[$TAGS1]"
 [ -z "$TAGS1" ] || fail "esperava NENHUMA tag na versão 1, veio [$TAGS1]"
 echo "    OK: PostPreCreated — o post existe e ainda não está completo"
 
-# ------------------------------------------------------------------------------------------------
 echo
 echo "==> 6. a saga fecha: SNS -> SQS -> tagging -> SNS -> SQS -> posts-api"
 echo "    (a primeira volta paga cold start de DUAS funções JVM)"
@@ -116,7 +92,6 @@ while [ $SECONDS -lt $DEADLINE ]; do
 done
 [ "${V:-0}" = "2" ] || fail "a saga não fechou em 180s (última versão vista: ${V:-?})"
 
-# ------------------------------------------------------------------------------------------------
 echo
 echo "==> 7. a atualização também atravessa (posts.PostUpdated -> a fila de réplica)"
 UPD=$(gql 'mutation($i:UpdatePostInput!){ updatePost(input:$i){ version } }' \

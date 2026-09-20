@@ -9,19 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * A CODIFICAÇÃO DAS TAGS NO FIO — ida e volta.
- *
- * <h2>Por que isto merece teste próprio</h2>
- * As tags atravessam o broker como UMA string num cabeçalho, e é o que chega do outro lado que decide
- * em qual stream o evento é apendado. Um escape errado aqui não quebra nada na hora: ele faz o evento
- * ir para o agregado errado — ou para nenhum — no serviço vizinho, longe da causa.
- * <p>
- * O separador é {@code ;} e o par é {@code chave=valor}: as duas coisas aparecem em valor de tag mais
- * vezes do que se espera, e é por isso que cada metade é percent-encoded antes de entrar na string.
- */
 class ChannelMetadataTest {
-
     private static List<EventTag> tags(String... keyValues) {
         return java.util.stream.IntStream.range(0, keyValues.length / 2)
                 .mapToObj(i -> new EventTag(keyValues[i * 2], keyValues[i * 2 + 1]))
@@ -45,10 +33,6 @@ class ChannelMetadataTest {
                 .containsExactly(new Tag("postId", "p-1"), new Tag("tagId", "t-2"));
     }
 
-    /**
-     * O CASO QUE JUSTIFICA O ESCAPE, e ele não é hipotético: um valor com {@code ;} ou {@code =}
-     * partiria a string em pares que não existem, e o outro lado apendaria no agregado errado.
-     */
     @Test
     void survivesSeparatorsInsideTheValue() {
         List<EventTag> awkward = tags("chave=estranha", "valor;com;ponto-e-vírgula");
@@ -74,12 +58,6 @@ class ChannelMetadataTest {
         assertThat(ChannelMetadata.decodeTags("   ")).isEmpty();
     }
 
-    /**
-     * Um par SEM {@code =} é descartado em silêncio, e o teste existe para que isso seja uma decisão
-     * e não um acidente: uma mensagem de uma versão anterior do formato não deve derrubar a ingestão
-     * inteira — ela chega sem aquela tag, e o append falha com uma mensagem sobre o agregado, que é
-     * onde se quer olhar.
-     */
     @Test
     void ignoresAMalformedPairInsteadOfFailing() {
         assertThat(ChannelMetadata.decodeTags("semIgual;postId=p-1"))
@@ -91,7 +69,6 @@ class ChannelMetadataTest {
         assertThat(ChannelMetadata.encodeTags(List.of())).isEmpty();
     }
 
-    /** {@code tagsOf} é a conversão sem fio no meio — usada quando o evento é local. */
     @Test
     void convertsEnvelopeTagsToAxonTagsPreservingOrder() {
         assertThat(ChannelMetadata.tagsOf(tags("postId", "p-1", "tagId", "t-2")))

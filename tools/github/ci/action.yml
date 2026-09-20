@@ -19,8 +19,6 @@ runs:
   steps:
     - name: Resolve the requested checks
       id: selection
-      # `,${checks},` com as vírgulas nas pontas: sem elas, `contains` casaria `test` dentro de
-      # `test-e2e` e a checagem de baixo rodaria junto com a de cima, calada.
       run: |
         set -euo pipefail
         selected=",${CHECKS},"

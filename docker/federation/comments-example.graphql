@@ -1,38 +1,20 @@
-# Um subgraph vizinho — SDL, sem implementação. Serve para duas coisas: compor (ver
-# supergraph-example.yaml) e documentar, em GraphQL e não em prosa, o que as chaves publicadas aqui
-# permitem a quem chega depois.
-
 extend schema
   @link(
     url: "https://specs.apollo.dev/federation/v2.7"
     import: ["@key", "@interfaceObject"]
   )
 
-# Entidade própria deste subgraph. `post: Post!` é uma REFERÊNCIA: no fio trafega
-# `{__typename: "Post", id: "..."}`, e quem resolve os campos do post é o subgraph de posts,
-# pelo `_entities`.
 type Comment @key(fields: "id") {
   id: ID!
   body: String!
   post: Post!
 }
 
-# Estender uma entidade alheia é redeclará-la com a MESMA chave e só os campos novos. Nada de `@external`
-# no `id`: isso era Federação 1 — na 2 o campo da chave é declarado normalmente.
-#
-# O roteador entrega a `Post.comments` a chave que o subgraph de posts devolveu, e os dois lados nunca se
-# falam. É o que permite acrescentar comentários a um post sem tocar numa linha deste repositório.
 type Post @key(fields: "id") {
   id: ID!
   comments: [Comment!]!
 }
 
-# `@interfaceObject`: acrescenta `commentCount` a TODA implementação de `User` — hoje `Author` e
-# `Reader`, amanhã o que houver — sem que este subgraph saiba que elas existem. Ele enxerga um tipo só.
-#
-# Só funciona porque a `interface User` do subgraph de posts leva `@key`: é o que a torna uma INTERFACE
-# DE ENTIDADE. Sem isso, um campo novo para todo usuário exigiria declarar cada tipo concreto aqui — e
-# de novo a cada tipo novo lá.
 type User @key(fields: "id") @interfaceObject {
   id: ID!
   commentCount: Int!

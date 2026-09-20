@@ -11,27 +11,8 @@ import at.meks.quarkiverse.axon.runtime.customizations.AxonEventProcessingConfig
 import at.meks.quarkiverse.axon.runtime.defaults.eventprocessors.EventhandlersPerNamespace;
 import jakarta.enterprise.context.ApplicationScoped;
 
-/**
- * Registra o {@link ChannelTagResolver} na configuração do Axon.
- *
- * <h2>Por que pelo gancho de EVENT PROCESSING, que não tem nada a ver com tags</h2>
- * Porque é o único gancho aditivo que a extensão oferece com acesso ao {@code EventSourcingConfigurer}.
- * O caminho natural seria o {@code EventstoreConfigurer}, e ele <b>não serve</b>: a extensão o injeta
- * como bean único, com o {@code InMemoryEventStoreConfigurer} marcado {@code @DefaultBean}. O
- * {@code quarkus-axon-jpa-eventstore} já ocupa esse lugar; um segundo bean faria a partida morrer com
- * {@code AmbiguousResolutionException}. O {@code AxonEventProcessingConfigurer}, ao contrário, é
- * coletado por {@code Instance} — várias implementações convivem.
- * <p>
- * É uso torto de um nome, e fica registrado como tal. O conserto certo é upstream, e é o mesmo tipo de
- * dívida que o {@code libs/axon-native-support} carrega: código escrito para ser doado à extensão.
- *
- * <h2>Decorador, não substituição</h2>
- * {@code registerTagResolver} trocaria o componente e quebraria o caminho local, onde as tags vêm das
- * anotações. {@code registerDecorator} embrulha o resolver do framework e o mantém como delegate.
- */
 @ApplicationScoped
 public class ChannelIntegrationConfiguration implements AxonEventProcessingConfigurer {
-
     private static final Logger log = LoggerFactory.getLogger(ChannelIntegrationConfiguration.class);
 
     @Override

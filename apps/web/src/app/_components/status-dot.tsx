@@ -10,7 +10,6 @@ const tones: Record<StreamStatus, { dot: string; label: string }> = {
   closed: { dot: 'bg-muted-foreground/60', label: 'fechado' },
 };
 
-/** O estado da conexão dito em voz alta. Numa página que testa streaming, isto É o resultado. */
 export function StatusDot({
   status,
   className,

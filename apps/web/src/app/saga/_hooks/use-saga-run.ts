@@ -6,7 +6,6 @@ import { useApolloClient } from '@apollo/client/react';
 import { CreateSagaPostMutation, SagaProbeQuery } from '../query';
 
 export interface SagaEvent {
-  /** Milissegundos desde o início da corrida. É a unidade que interessa aqui. */
   at: number;
   label: string;
   detail: string;
@@ -19,24 +18,6 @@ export type SagaStatus =
 const POLL_INTERVAL_MS = 1_000;
 const TIMEOUT_MS = 180_000;
 
-/**
- * Cria um post e espera a versão 2.
- *
- * <h2>Por que polling, e não subscription</h2>
- * Porque o que esta página mede é o TEMPO da travessia, e uma subscription responde outra pergunta:
- * ela diz que o evento chegou, não quantos segundos ele levou desde o `createPost`. O polling é o
- * relógio — cada tentativa é uma marca na régua.
- * <p>
- * Houve uma segunda razão, e ela deixou de valer: contra a stack em Lambda a subscription não
- * entregava nada, porque `emitUpdate` é em processo e a mutation cai noutro container. Hoje entrega —
- * o pacote dos handlers que notificam roda num processor streaming, que lê o event store. Quem mostra
- * isso é a página `/live`.
- *
- * <h2>Os ~50 segundos</h2>
- * Numa execução fria o tempo é quase todo cold start: duas JVMs de 72 MB subindo dentro de um VPC.
- * Repetir a corrida com as funções quentes é o que separa o custo do transporte do custo do Java —
- * e por isso o botão pode ser apertado várias vezes.
- */
 export function useSagaRun() {
   const client = useApolloClient();
   const [status, setStatus] = useState<SagaStatus>('idle');
@@ -66,7 +47,6 @@ export function useSagaRun() {
         if (cancelled.current) return;
         setElapsed(Date.now() - startedAt.current);
 
-        // `network-only`: o cache tem a v1, e é justamente a mudança que se quer ver.
         const { data } = await client.query({
           query: SagaProbeQuery,
           variables: { id },
@@ -152,7 +132,6 @@ export function useSagaRun() {
     }
   }, [client, observe, push]);
 
-  /** Observa um post que já existe — o link "Observar a saga" de /posts/new cai aqui. */
   const watch = useCallback(
     async (id: string) => {
       cancelled.current = false;

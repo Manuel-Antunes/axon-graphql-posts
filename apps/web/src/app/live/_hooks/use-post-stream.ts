@@ -16,23 +16,6 @@ export interface StreamEvent {
   version: number;
 }
 
-/**
- * O que o ponto colorido afirma.
- *
- * <h2>Por que ele NÃO pode sair do `loading` do Apollo</h2>
- * Porque o Apollo mantém `loading: true` até o PRIMEIRO dado, e o primeiro dado de uma subscription
- * pode demorar horas — ou nunca vir, se ninguém escrever nada. Lido assim, um stream aberto e quieto
- * aparecia como "conectando" para sempre, bem ao lado de um painel dizendo "Conectado. Nenhum evento
- * ainda." Duas afirmações sobre a mesma conexão, e a do ponto errada.
- * <p>
- * O que separa conectado de conectando é o `connected` do protocolo — a resposta COMEÇOU —, e quem o
- * republica por operação é {@link onSseConnected}, no próprio link.
- *
- * <h2>Não há mais MODO a mostrar</h2>
- * Havia: o proxy emulava a subscription quando o upstream não abria o stream, e a página dizia em
- * qual dos dois estava. O upstream passou a ser a Function URL com response streaming, o proxy virou
- * um repasse puro, e um distintivo que só pode dizer uma coisa não informa nada.
- */
 function statusOf(
   active: boolean,
   open: boolean,

@@ -6,10 +6,6 @@ import { graphql } from '@/gql';
 
 import { PostByIdQuery } from '../query';
 
-/**
- * `updatePost` devolve o post projetado, e o cache o normaliza pelo `id` — então a tela se atualiza
- * sozinha, sem `refetch`. É o que a identidade por id compra: o mesmo objeto, um lugar só.
- */
 const UpdatePostMutation = graphql(`
   mutation UpdatePost($input: UpdatePostInput!) {
     updatePost(input: $input) {
@@ -21,11 +17,6 @@ const UpdatePostMutation = graphql(`
   }
 `);
 
-/**
- * A exclusão é LÓGICA (`@SQLDelete` + `@SQLRestriction`): a linha e o stream continuam lá, e por isso
- * `restorePost` funciona — ele reidrata o agregado dos eventos. O retorno é `Boolean`, então o cache
- * não tem o que normalizar: quem refaz a leitura é o `refetchQueries`.
- */
 const DeletePostMutation = graphql(`
   mutation DeletePost($id: ID!) {
     deletePost(id: $id)

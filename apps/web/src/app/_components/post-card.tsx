@@ -14,18 +14,6 @@ import {
 } from '@/components/ui/card';
 import { getFragmentData, graphql } from '@/gql';
 
-/**
- * O post numa lista — e a melhor demonstração do que o mascaramento de fragmentos compra.
- *
- * <b>Este fragmento não pede `content`.</b> Um feed de 20 posts que trouxesse o corpo de cada um
- * transferiria o blog inteiro para desenhar 20 títulos. Quem pede `content` é `PostArticle_post`, na
- * página do post — e como os dois são fragmentos DIFERENTES, não há como um vazar no outro: se
- * alguém escrever `post.content` aqui, o TypeScript recusa, porque o tipo mascarado deste fragmento
- * não tem esse campo.
- *
- * É a mesma ideia do `@Source List<T>` do lado do servidor, vista do outro lado do fio: o custo da
- * consulta é decidido por quem consome, não por quem expõe.
- */
 export const PostCard_post = graphql(`
   fragment PostCard_post on Post {
     id

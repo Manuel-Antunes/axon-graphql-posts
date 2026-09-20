@@ -36,7 +36,6 @@ export function SagaRunner() {
 
   useEffect(() => {
     if (watching) void watch(watching);
-    // Só quando o id da URL muda: rodar de novo a cada render reiniciaria a medição.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watching]);
 

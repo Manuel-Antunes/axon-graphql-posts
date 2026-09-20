@@ -14,22 +14,10 @@ import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.infrastructure.Infrastructure;
 import jakarta.enterprise.context.ApplicationScoped;
 
-/**
- * As mutations sobre a <b>própria</b> conta.
- *
- * <h2>Autorização por identidade, não por papel</h2>
- * {@code deleteMe} não pede a role de autor nem nada além de estar autenticado: o alvo é sempre quem está
- * pedindo. Não existe argumento de id, e é isso que torna a operação segura — não há como apagar a conta
- * de outro porque não há como <b>nomear</b> a conta de outro.
- * <p>
- * É o mesmo princípio do {@code createPost}, que tira o autor do token em vez do input, aplicado ao caso
- * mais sensível.
- */
 @GraphQLApi
 @ApplicationScoped
 @TranslatesErrors
 public class MeMutationApi {
-
     private final CommandGateway commandGateway;
     private final AuthenticatedUser currentUser;
 
@@ -38,14 +26,10 @@ public class MeMutationApi {
         this.currentUser = currentUser;
     }
 
-    /**
-     * Exclusão lógica: o usuário some das consultas, e entrar de novo com a mesma credencial reativa a
-     * conta ({@code UserProvisioning}). Os posts dele somem junto — ver {@code DeleteUserCommand}.
-     */
     @Mutation("deleteMe")
     @NonNull
     @Authenticated
-    @Description("Apaga a própria conta (exclusão lógica). Exige apenas estar autenticado")
+    @Description("Deletes your own account (logical deletion). Requires only being authenticated")
     public Uni<Boolean> deleteMe() {
         return currentUser.require()
                 .flatMap(user -> Uni.createFrom()

@@ -25,50 +25,9 @@ import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ServiceProviderBuildItem;
 import io.quarkus.deployment.pkg.steps.NativeBuild;
 
-/**
- * O que falta ao Axon Framework 5 para rodar em GraalVM native sob a extensão
- * {@code at.meks.quarkiverse.axonframework-extension}.
- *
- * <h2>Por que isto existe</h2>
- * A extensão descobre entidades e handlers em build time e publica os gateways como beans, mas <b>não
- * emite um único build item de native</b> — nem {@code ReflectiveClassBuildItem}, nem
- * {@code ServiceProviderBuildItem}, e não há {@code META-INF/native-image} em nenhum jar dela. O Axon,
- * por outro lado, instancia e invoca por reflexão em três frentes. O binário <b>compila</b> e falha
- * depois, de três jeitos e todos tardios:
- * <ol>
- *   <li>na partida, {@code No suitable constructor found for entity of type
- *       [AnnotationBasedEventSourcedEntityFactoryDefinition]};</li>
- *   <li>na partida, {@code No suitable ParameterResolver found for type [TagCreatedEvent]}, porque o
- *       {@code ParameterResolverFactory} vem por {@code ServiceLoader} e o Quarkus compila com
- *       {@code -H:-UseServiceLoaderFeature};</li>
- *   <li><b>pior de todos</b>: a aplicação sobe, serve o schema, e toda mutation responde
- *       {@code no-handler-for-command} — porque os métodos {@code @CommandHandler} do projeto não
- *       estão registrados para reflexão. Nada falha no build.</li>
- * </ol>
- *
- * <h2>Por que build step e não um reachability-metadata.json</h2>
- * Um JSON capturado com o agente de tracing resolve, e foi como se provou que o Axon 5 funciona em
- * native. Mas ele é uma <b>lista nominal</b>: envelhece em silêncio a cada command ou handler novo, e
- * a falha aparece só em runtime, no terceiro formato acima. Aqui o que é do <b>projeto</b> sai de uma
- * regra sobre o índice Jandex, e só o que é <b>contrato do framework</b> é literal.
- *
- * <h2>Escrito para virar PR</h2>
- * Não depende de nada deste projeto: só das anotações públicas do Axon e da API de build items do
- * Quarkus. É para ser movido para {@code quarkus-axon-deployment} como está.
- */
 public class AxonNativeImageProcessor {
-
     private static final String FEATURE = "axon-native-support";
 
-    /**
-     * As oito interfaces que o Axon 5.3.1 resolve por {@code ServiceLoader}. Literal porque é contrato
-     * do framework, não do projeto.
-     * <p>
-     * O {@code allProvidersFromClassPath} registra <b>só estas</b>. A alternativa preguiçosa,
-     * {@code quarkus.native.auto-service-loader-registration=true}, registra as de todos os jars — e o
-     * build morre nos validadores Joda-Time do Hibernate Validator e no {@code TracingService} do
-     * SmallRye, que referenciam classes ausentes. Foi medido, nesta ordem.
-     */
     private static final List<String> AXON_SERVICE_INTERFACES = List.of(
             "org.axonframework.common.configuration.ConfigurationEnhancer",
             "org.axonframework.common.nullability.NullabilityResolver",
@@ -79,51 +38,11 @@ public class AxonNativeImageProcessor {
             "org.axonframework.messaging.core.annotation.ParameterResolverFactory",
             "org.axonframework.modelling.entity.annotation.EntityChildModelDefinition");
 
-    /**
-     * Os defaults dos três atributos {@code *Definition} de {@code @EventSourcedEntity}. O Axon os
-     * instancia com {@code ConstructorUtils.getConstructorFunctionWithZeroArguments} — fora do
-     * {@code ServiceLoader} —, então sem o construtor registrado a aplicação não sobe.
-     *
-     * <h3>Por que literal, e não lido do default da anotação</h3>
-     * Ler o default exigiria a classe da anotação no índice Jandex, o que significa
-     * {@code IndexDependencyBuildItem} sobre os jars do Axon. <b>Não fazer isso.</b> O índice é
-     * compartilhado: a extensão Hibernate ORM descobre {@code @Entity} lendo o mesmo índice, e indexar
-     * o Axon faz ela adotar as entidades JPA do event store dele na persistence unit. Com
-     * {@code schema-management.strategy=validate} o resultado é a aplicação morrendo com
-     * {@code Schema validation: missing table [AggregateEventEntry]}. Foi medido também.
-     * <p>
-     * Um atributo <b>explicitamente declarado</b> continua sendo lido do índice (ver
-     * {@link #registerEntityDefinitions}); esta lista cobre apenas o caso de não haver declaração.
-     */
     private static final List<String> AXON_DEFAULT_DEFINITIONS = List.of(
             "org.axonframework.eventsourcing.annotation.reflection.AnnotationBasedEventSourcedEntityFactoryDefinition",
             "org.axonframework.eventsourcing.annotation.AnnotationBasedEventCriteriaResolverDefinition",
             "org.axonframework.modelling.annotation.AnnotationBasedEntityIdResolverDefinition");
 
-    /**
-     * O que as {@code *Definition} INSTANCIAM — e por que elas não bastam.
-     *
-     * <h3>A reflexão do Axon tem DOIS níveis, e registrar só o primeiro engana</h3>
-     * {@link #AXON_DEFAULT_DEFINITIONS} cobre as fábricas; cada uma delas, ao ser chamada, instancia
-     * por reflexão o objeto que faz o trabalho. Registrar a fábrica e não o produto dela passa no
-     * build inteiro e falha na PARTIDA, com uma mensagem que não menciona native-image nenhuma:
-     *
-     * <pre>{@code
-     * Failed to instantiate id resolver:
-     *   org.axonframework.modelling.annotation.AnnotationBasedEntityIdResolver
-     * }</pre>
-     *
-     * Medido contra a stack: a aplicação sobe o bastante para o health check responder 200, e depois
-     * <b>morre a cada requisição</b> com `Runtime exited with error: exit status 1` — que o Lambda
-     * reporta como erro de runtime, sem uma linha sobre a causa. O log da aplicação é o único lugar
-     * onde a exceção aparece.
-     *
-     * <h3>Por que a lista é da FAMÍLIA, e não da classe que falhou</h3>
-     * Porque cada round-trip custa um build nativo de seis minutos. As três primeiras são os pares
-     * exatos das três {@code *Definition}; as outras são os demais {@code EntityIdResolver} concretos
-     * do 5.3.1, que a configuração alcança por caminhos que dependem do modelo — registrar um
-     * construtor a mais custa bytes, e descobri-lo em produção custa uma partida quebrada.
-     */
     private static final List<String> AXON_DEFAULT_IMPLEMENTATIONS = List.of(
             "org.axonframework.eventsourcing.annotation.reflection.AnnotationBasedEventSourcedEntityFactory",
             "org.axonframework.eventsourcing.annotation.AnnotationBasedEventCriteriaResolver",
@@ -134,18 +53,12 @@ public class AxonNativeImageProcessor {
             "org.axonframework.modelling.annotation.AnnotationBasedEntityEvolvingComponent",
             "org.axonframework.eventsourcing.eventstore.AnnotationBasedTagResolver");
 
-    /** Anotações de classe: a entidade e os três tipos de mensagem, que são contrato serializado. */
     private static final List<DotName> ON_CLASS = List.of(
             DotName.createSimple("org.axonframework.eventsourcing.annotation.EventSourcedEntity"),
             DotName.createSimple("org.axonframework.messaging.commandhandling.annotation.Command"),
             DotName.createSimple("org.axonframework.messaging.eventhandling.annotation.Event"),
             DotName.createSimple("org.axonframework.messaging.queryhandling.annotation.Query"));
 
-    /**
-     * Anotações de membro. Registra-se a classe <b>declarante</b>: é nela que o Axon procura o método,
-     * e é o método que ele invoca. Inclui as de parâmetro e de campo ({@code @InjectEntity},
-     * {@code @TargetEntityId}, {@code @EventTag}) porque a resolução delas também é reflexiva.
-     */
     private static final List<DotName> ON_MEMBER = List.of(
             DotName.createSimple("org.axonframework.messaging.commandhandling.annotation.CommandHandler"),
             DotName.createSimple("org.axonframework.messaging.queryhandling.annotation.QueryHandler"),
@@ -173,10 +86,6 @@ public class AxonNativeImageProcessor {
         }
     }
 
-    /**
-     * A regra que substitui a lista nominal: tudo que o Axon alcança por reflexão está marcado por uma
-     * anotação dele. Handler novo, command novo ou evento novo entram sozinhos.
-     */
     @BuildStep(onlyIf = NativeBuild.class)
     void registerAnnotatedTypes(CombinedIndexBuildItem combinedIndex,
             BuildProducer<ReflectiveClassBuildItem> reflective) {
@@ -198,7 +107,6 @@ public class AxonNativeImageProcessor {
                 }
             }
         }
-        // Os tipos concretos de um agregado polimórfico: o Axon fixa o tipo na criação e o instancia.
         for (AnnotationInstance entity : index.getAnnotations(EVENT_SOURCED_ENTITY)) {
             AnnotationValue concreteTypes = entity.value("concreteTypes");
             if (concreteTypes != null) {
@@ -208,7 +116,6 @@ public class AxonNativeImageProcessor {
             }
         }
 
-        // UMA MENSAGEM É SERIALIZADA INTEIRA — então registrar só a classe de fora é registrar metade.
         types.addAll(composedTypesOf(types, index));
 
         if (!types.isEmpty()) {
@@ -220,33 +127,6 @@ public class AxonNativeImageProcessor {
         }
     }
 
-    /**
-     * O FECHO TRANSITIVO dos tipos que compõem as mensagens — e por que ele é obrigatório.
-     *
-     * <h3>O que acontece sem isto</h3>
-     * As anotações do Axon marcam a mensagem, não as peças dela. {@code PostCreatedEvent} é
-     * {@code @Event} e é registrado; o {@code AssignedTag} que ele carrega dentro de
-     * {@code List<AssignedTag>} é um record ANINHADO, sem anotação nenhuma, e ficava de fora.
-     * <p>
-     * O build passa. O binário sobe. E o serviço falha ao APENDAR o evento, com uma mensagem que não
-     * menciona native-image nem reflexão:
-     *
-     * <pre>{@code
-     * ConversionException: Exception when trying to convert object of type
-     *   'dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent' to 'byte[]'
-     * }</pre>
-     *
-     * Medido na stack: o `apps/tagging` consumia `PostPreCreated` (record PLANO, que serializa bem),
-     * decidia a tag e não conseguia publicar o `PostCreated`. A saga parava na versão 1, o contador de
-     * erros do Lambda ficava em ZERO — a exceção é tratada pelo interceptador — e as filas ficavam
-     * vazias. Nada apontava para o binário.
-     *
-     * <h3>O critério de parada</h3>
-     * Só entram tipos que o ÍNDICE conhece, o que na prática significa "código deste repositório":
-     * `String`, `Instant` e companhia não precisam de registro, e sair atrás deles percorreria o JDK
-     * inteiro. Os argumentos de tipo entram junto — é o que faz `List<AssignedTag>` render
-     * `AssignedTag`.
-     */
     private static Set<String> composedTypesOf(Set<String> roots, IndexView index) {
         Set<String> found = new LinkedHashSet<>();
         Deque<DotName> pending = new ArrayDeque<>();
@@ -288,10 +168,6 @@ public class AxonNativeImageProcessor {
         }
     }
 
-    /**
-     * As {@code *Definition} de {@code @EventSourcedEntity}: os defaults do framework, mais qualquer
-     * implementação que o projeto declare explicitamente no atributo.
-     */
     @BuildStep(onlyIf = NativeBuild.class)
     void registerEntityDefinitions(CombinedIndexBuildItem combinedIndex,
             BuildProducer<ReflectiveClassBuildItem> reflective) {

@@ -47,8 +47,6 @@ runs:
         aws-region: ${{ inputs.aws-region }}
 
     - name: Export the telemetry destination
-      # Vai pelo GITHUB_ENV e não por `env:` no passo do deploy: assim TODO passo seguinte a enxerga,
-      # inclusive os de dentro da subaction `deploy-sst`, que é quem invoca o `sst deploy`.
       run: |
         echo "BETTER_STACK_URL=$BETTER_STACK_URL" >> "$GITHUB_ENV"
         echo "BETTER_STACK_API_KEY=$BETTER_STACK_API_KEY" >> "$GITHUB_ENV"
@@ -58,14 +56,6 @@ runs:
         BETTER_STACK_API_KEY: ${{ inputs.better-stack-api-key }}
 
     - name: Deploy
-      # QUEM CONSTRÓI OS ZIPS É O PRÓPRIO DEPLOY. Cada função declara o alvo do Nx que a empacota
-      # (`QuarkusBuild.buildCommand`, em `infra/aws/support/functions.ts`), e o `triggers` do Pulumi
-      # decide se o comando roda. Não há passo de empacotamento aqui de propósito: um `package.sh`
-      # antes do deploy construiria fora do grafo e o SST reconstruiria mesmo assim.
-      #
-      # E é `native-container`: o `native-image` gera um executável do SISTEMA onde roda, e o
-      # `provided.al2023` só executa ELF/Linux. O modo de falhar do artefato errado é o pior que há —
-      # o deploy publica o zip, imprime `✓ Complete`, e a função morre na invocação.
       uses: ./tools/github/deploy-sst
       with:
         stage: ${{ inputs.stage }}

@@ -10,27 +10,8 @@ import io.restassured.http.ContentType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * O contrato de <b>subgraph</b>: o que o roteador lê deste serviço antes de compor o supergraph.
- *
- * <h2>Por que ler o {@code _service { sdl }} e não introspecção</h2>
- * A introspecção não devolve diretivas aplicadas — {@code @key} e {@code @shareable} simplesmente não
- * aparecem nela. A composição da Federação é feita sobre o SDL do {@code _service}, e é por isso que o
- * teste lê exatamente o que o {@code rover} leria. Um schema que introspecciona bem e não compõe é a
- * falha que este teste existe para pegar.
- *
- * <h2>É o guarda de três coisas que falham em silêncio</h2>
- * <ul>
- *   <li>a federação <b>ligada</b> — desligada, o SDL sai íntegro, sem {@code _entities}, e só a
- *       composição reclama, longe daqui;</li>
- *   <li>o {@code @link} com a versão <b>fixada</b> — sem ele o subgraph é lido como Federação 1;</li>
- *   <li>os {@code import} do {@code @link} — sem eles as diretivas saem como
- *       {@code @federation__key}, que compõe igual e não se lê igual.</li>
- * </ul>
- */
 @QuarkusTest
 class FederationSchemaTest {
-
     private static final String FEDERATION_SPEC = "https://specs.apollo.dev/federation/v2.7";
 
     private static String subgraphSdl() {
@@ -79,7 +60,6 @@ class FederationSchemaTest {
 
     @Test
     void theEntityUnionListsExactlyTheResolvableTypes() {
-        // o _Entity é montado pelo transform a partir de quem tem @key; se um @key sumir, some daqui
         assertThat(subgraphSdl())
                 .contains("union _Entity = Author | Post | Reader | Tag")
                 .contains("_entities(representations: [_Any!]!): [_Entity]!")
@@ -100,8 +80,6 @@ class FederationSchemaTest {
 
     @Test
     void theServedSdlSaysTheSameThingAsTheServiceField() {
-        // o arquivo versionado na raiz sai de /graphql/schema.graphql; ele só descreve o mesmo subgraph
-        // se schema-include-directives E schema-include-schema-definition estiverem ligados
         assertThat(servedSdl())
                 .contains("schema @link(")
                 .contains(FEDERATION_SPEC)

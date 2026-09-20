@@ -32,20 +32,6 @@ import { cn } from '@/lib/utils';
 
 import { MeQuery } from '../query';
 
-/**
- * O fragmento que exige `possibleTypes` no cache — e a razão de ele existir no `codegen.ts`.
- *
- * `me` devolve a INTERFACE `User`. `Author` e `Reader` a implementam, e só o `Author` tem `bio` e
- * `posts`. Sem o mapa de tipos possíveis, o `InMemoryCache` faria o casamento de `... on Author`
- * heuristicamente: ele veria um objeto com `__typename: "Reader"` e, não sabendo que `Reader` NÃO é
- * `Author`, aplicaria o fragmento assim mesmo — em silêncio.
- *
- * <h2>E por que a lista de contas é o campo mais interessante desta página</h2>
- * Porque ela é a prova do <i>account linking</i>. Identidade fica em `users`, credencial em
- * `accounts`, uma linha por provedor. A mesma pessoa que entrou pelo Keycloak e depois pelo Cognito
- * tem UM usuário e DUAS contas — foi isso que a migração para o Cognito cobrou, e o que a
- * `V6__cognito_provider.sql` resolveu.
- */
 export const IdentityPanel_user = graphql(`
   fragment IdentityPanel_user on User {
     __typename
@@ -69,12 +55,6 @@ export const IdentityPanel_user = graphql(`
 
 export function IdentityPanel() {
   const { session } = useSession();
-  /*
-   * `skipToken` e não `{ skip: true }`: numa query que suspende, "pular" precisa ser expresso no
-   * TIPO — com `skipToken` o TypeScript sabe que `data` pode não existir, e o hook não suspende
-   * esperando um resultado que nunca virá. Deslogado, a página mostra o aviso abaixo sem tocar a
-   * rede.
-   */
   const { data, error } = useSuspenseQuery(
     MeQuery,
     session ? { errorPolicy: 'all' as const } : skipToken,

@@ -1,14 +1,3 @@
-# Editor configuration, see http://editorconfig.org
-#
-# ESTE ARQUIVO É A FONTE DA INDENTAÇÃO, e não só para o editor: o Prettier 3 o lê por PADRÃO, e o
-# que está aqui vence o default dele. Medido — com `indent_size = 8`, o Prettier indenta 8. Por isso
-# o `.prettierrc.mjs` não declara `tabWidth`: seria a mesma regra em dois arquivos.
-#
-# O BLOCO `[*]` NÃO PODE SER O ÚNICO. Ele valia para tudo — inclusive para os 153 arquivos Java e os
-# 12 `pom.xml`, que são de 4 espaços e que o Prettier não formata. Um `.editorconfig` que declara 2
-# onde o código tem 4 não é uma convenção: é uma discordância que o editor resolve sozinho, e ele
-# resolve ADIVINHANDO pelo conteúdo do arquivo. Era essa a origem do "ele insiste em dar um gap".
-
 root = true
 
 [*]
@@ -18,16 +7,9 @@ indent_size = 2
 insert_final_newline = true
 trim_trailing_whitespace = true
 
-# O lado Java é de 4 espaços nos 153 arquivos, e continua sendo: o Spotless roda ali e NÃO formata,
-# por decisão medida (ver *O LADO JAVA* no CLAUDE.md) — um formatter reescreveria os 153 para impor
-# a régua dele e levaria o `git blame` junto. O Prettier não fala Java nem XML, então quem descreve
-# essas duas é só este bloco.
 [*.{java,xml}]
 indent_size = 4
 
-# As migrations também são de 4, e há um motivo mais forte que estilo para não mexer nelas: o Flyway
-# grava o CHECKSUM do conteúdo, e reformatar uma já aplicada derruba a aplicação na partida. Elas
-# estão no `.prettierignore` pela mesma razão.
 [*.sql]
 indent_size = 4
 

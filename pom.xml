@@ -11,43 +11,6 @@
   <name>quarkus-axon-graphql</name>
   <description>Agregador: a aplicação e a extensão de suporte a native</description>
 
-  <!--
-      POR QUE ESTE PROJETO É MULTI-MÓDULO
-      ===================================
-      Por uma razão só: `@BuildStep` não pode morar na aplicação. O Quarkus só carrega build steps de um
-      artefato de *deployment*, declarado no `META-INF/quarkus-extension.properties` do artefato de
-      runtime (`deployment-artifact=`) e catalogado no `META-INF/quarkus-build-steps.list` que o
-      quarkus-extension-processor gera. Não há anotação, propriedade ou caminho de classpath que faça o
-      augmentation olhar para `app/src/main/java`.
-
-      E a aplicação precisa de build steps porque a extensão do Axon (`at.meks...:2.0.0-alpha6`) não
-      registra NADA para native: nem reflexão, nem provedores de serviço. Sem isso o binário compila e
-      morre na partida — ou pior, sobe e responde `no-handler-for-command`.
-
-      A alternativa era um `reachability-metadata.json` escrito à mão. Foi o que provou que native
-      funciona, mas é uma LISTA NOMINAL: ela envelhece em silêncio a cada handler novo, e a falha
-      aparece só em runtime. O build step troca a lista por uma regra sobre o índice Jandex.
-
-      O código de `axon-native-support/` está escrito para ser copiado para a extensão upstream: ele
-      consome os build items que o `AxonExtensionProcessor` já produz. Enquanto a PR não existir, ele
-      vive aqui.
-    -->
-  <!--
-      A FORMA DO MONOREPO, E A REGRA QUE A DECIDE
-      ===========================================
-      `libs/` tem DOMÍNIO e INFRAESTRUTURA. `apps/` tem APLICAÇÃO e APRESENTAÇÃO.
-
-      A linha não é entre serviços, é entre camadas — e é isso que torna um módulo reutilizável. Domínio
-      é regra e infraestrutura é como a regra persiste: as duas são do MÓDULO (posts, users), e mais de
-      um app pode importá-las. Aplicação é fluxo — qual command existe, qual query responde o quê, que
-      evento encadeia no próximo passo — e fluxo é de QUEM O EXECUTA.
-
-      O que isso resolve na prática: o serviço de tagueamento importa `libs/posts` e ganha o `Post`, os
-      eventos, as regras e os repositórios. Não ganha o GraphQL, não ganha a projeção e não ganha os
-      command handlers do outro app — que o Axon descobriria em build time e ligaria contra tabelas que
-      ele não tem. Antes desta divisão as duas saídas eram importar tudo ou redeclarar o evento do lado
-      de cá; as duas foram tentadas, e as duas eram erradas.
-    -->
   <modules>
     <module>libs/platform</module>
     <module>libs/users</module>
@@ -73,13 +36,6 @@
     <quarkus-axon.version>2.0.0-alpha6</quarkus-axon.version>
     <axon.version>5.3.1</axon.version>
 
-    <!-- Quarkus Amazon Services (Quarkiverse). A 3.22.1 declara
-    <quarkus.version>3.39.2</quarkus.version>
-             — a MESMA linha de cima, e foi o que se conferiu antes de adotá-la: o versionamento deste
-             conjunto é próprio e NÃO acompanha o número do Quarkus, então "3.22 < 3.39" não diz nada.
-             Dela vêm o conector SQS (smallrye-sqs) e o cliente do SNS. O conector do SNS não vem: não
-             existe `quarkus-messaging-amazon-sns`, e ele é adicionado como JAR do SmallRye em
-             libs/axon-aws. -->
     <quarkus-amazon.version>3.22.1</quarkus-amazon.version>
 
     <mapstruct.version>1.6.3</mapstruct.version>
@@ -107,15 +63,6 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
-      <!--
-              DEPOIS do quarkus-bom, e a ordem é o que torna isto seguro: em `dependencyManagement` a
-              PRIMEIRA declaração vence, então nada que o Quarkus já gerencia é alterado por este
-              import. O que ele acrescenta é o que ninguém gerenciava — os artefatos do
-              `software.amazon.awssdk` e as extensões do Quarkiverse —, e é o que mantém o cliente HTTP
-              do SDK na mesma versão dos clientes de SNS e SQS. Sem isso cada uma das três teria de
-              trazer um número escrito à mão, e a divergência apareceria como NoSuchMethodError em
-              runtime.
-            -->
       <dependency>
         <groupId>io.quarkiverse.amazonservices</groupId>
         <artifactId>quarkus-amazon-services-bom</artifactId>
@@ -128,22 +75,6 @@
 
   <build>
     <plugins>
-      <!--
-        O ERROR PRONE — o segundo eixo do lint, e o que o Spotless NÃO cobre.
-
-        A divisão é essa: o Spotless pega o que é ARRUMÁVEL (import morto, espaço no fim da linha)
-        e este pega o que é DEFEITO — comparação de referência onde se queria `equals`, retorno
-        ignorado, `equals`/`hashCode` inconsistentes. Um `spotless:apply` conserta o primeiro grupo;
-        o segundo exige ler o código, que é justamente por que ele falha o BUILD e não um alvo à
-        parte. É a mesma escolha que o CLAUDE.md já registra para o MapStruct
-        (`unmappedTargetPolicy=ERROR`): o gate de qualidade deste projeto é o compilador.
-
-        As duas linhas de `XDcompilePolicy` e `should-stop` não são afinamento: sem elas o javac
-        roda o plugin numa política incompatível e o Error Prone nem carrega.
-
-        Os `add-exports` que ele exige do JDK 16+ estão em `.mvn/jvm.config`, e não aqui, porque
-        são do processo que RODA o javac e não do javac.
-      -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
@@ -159,39 +90,11 @@
           <compilerArgs>
             <arg>-XDcompilePolicy=simple</arg>
             <arg>--should-stop=ifError=FLOW</arg>
-            <!--
-                 AS TRÊS CHECAGENS DESLIGADAS SÃO DE JAVADOC, e as três brigam com o estilo que este
-                 projeto adotou por escrito: Javadoc longo, em português, explicando POR QUÊ. Foram
-                 medidas antes de desligar — dos 17 achados do primeiro reator inteiro, 8 eram delas:
-
-                   InvalidParam   FALSO POSITIVO. Em Post.java ele acusa `{@code authors}` de ser o
-                                  parâmetro `author` escrito errado; `authors` ali é o nome da TABELA,
-                                  numa frase sobre a chave estrangeira.
-                   EscapedEntity  acusa `<b>` e companhia dentro de `{@code}`. É como a prosa daqui é
-                                  escrita, e o Javadoc gerado não é publicado em lugar nenhum.
-                   MissingSummary exige primeira frase-resumo. Os Javadoc daqui abrem com o contexto
-                                  da decisão, que é o que se quer ler primeiro.
-
-                 Um lint que grita onde não há defeito é um lint que se aprende a ignorar INTEIRO —
-                 e o que sobrou (MissingOverride, StringCaseLocaleUsage, StringSplitter) é sobre
-                 CÓDIGO, que é para o que o Error Prone está aqui.
-            -->
             <arg>-Xplugin:ErrorProne -Xep:InvalidParam:OFF -Xep:EscapedEntity:OFF -Xep:MissingSummary:OFF</arg>
           </compilerArgs>
         </configuration>
       </plugin>
 
-      <!--
-        A COBERTURA DAS LIBS — e por que ela não é o `quarkus-jacoco`.
-
-        Os dois apps usam a extensão do Quarkus, que instrumenta o que o augmentation produz e escreve
-        em `target/jacoco-report`. As libs não são aplicações Quarkus: são JARs comuns, e para elas o
-        agente é o plugin de sempre. Misturar os dois no mesmo módulo é contraindicado pela própria
-        documentação do Quarkus — dois agentes, dois `.exec`, números que não somam.
-
-        Por isso este plugin é declarado aqui e DESLIGADO nos dois apps (`<skip>` no pom de cada um).
-        Sem ele, `libs/` — onde mora o domínio inteiro deste projeto — não reportava uma linha.
-      -->
       <plugin>
         <groupId>org.jacoco</groupId>
         <artifactId>jacoco-maven-plugin</artifactId>
@@ -210,8 +113,6 @@
               <goal>report</goal>
             </goals>
             <configuration>
-              <!-- O mesmo caminho que a extensão do Quarkus usa nos apps, para que ler cobertura
-                   seja o mesmo gesto em qualquer módulo. -->
               <outputDirectory>${project.build.directory}/jacoco-report</outputDirectory>
               <formats>
                 <format>HTML</format>
@@ -223,37 +124,12 @@
         </executions>
       </plugin>
 
-      <!--
-        O LINT DO JAVA — e o que ele deliberadamente NÃO faz.
-
-        Não há formatter aqui. Foi medido antes de decidir: 227 arquivos, indentação de 4 espaços e
-        DEZ linhas acima de 120 colunas — o código já é consistente. Um `google-java-format` ou um
-        `palantir` reescreveria os 227 para impor a régua dele, requebrando o Javadoc longo em
-        português e levando o `git blame` junto. O ganho seria formatação determinística; o preço,
-        um commit que apaga a história de tudo. Não vale para um repositório que já está formatado.
-
-        O que ficou são os quatro passos que ninguém revisa à mão e que nenhum compilador pega:
-        import não usado, ordem dos imports, espaço no fim da linha e newline final. São
-        ARRUMÁVEIS — `spotless:apply` conserta todos —, o que é o que separa um lint útil de um
-        lint que só reclama.
-
-        SEM <executions> DE PROPÓSITO: fora do ciclo de vida, o `package` e o `test` não pagam por
-        ele, e quem o roda é o alvo `lint` do Nx. (O `@nx/maven` ainda infere `spotless:check` e
-        `spotless:apply` como alvos de GOAL — conferido. Eles carregam o `dependsOn: ^install` que é
-        a armadilha do `nx-build-state.json`, e é por isso que o alvo do Nx se chama `lint` e roda o
-        `./mvnw` direto, em vez de depender deles.)
-      -->
       <plugin>
         <groupId>com.diffplug.spotless</groupId>
         <artifactId>spotless-maven-plugin</artifactId>
         <version>${spotless-plugin.version}</version>
         <configuration>
           <java>
-            <!-- NÃO há `importOrder` aqui, e a ausência foi medida. A ordem dos grupos de import
-                 NÃO é consistente neste código: uns arquivos começam por `dev`, outros por `java`,
-                 outros por `org`. Não existindo convenção a preservar, ligar a regra não estaria
-                 arrumando nada — estaria ESCOLHENDO uma, e reescrevendo quase todos os 227 arquivos
-                 para impô-la. É a mesma razão de não haver formatter. -->
             <removeUnusedImports />
             <trimTrailingWhitespace />
             <endWithNewline />
@@ -263,54 +139,12 @@
     </plugins>
   </build>
 
-  <!--
-      ================================================================================
-      OS PERFIS DE BUILD NATIVO — na RAIZ porque valem para os DOIS apps
-      ================================================================================
-      Eles viviam só em `apps/posts-api/pom.xml`, e isso bastava enquanto só aquele app era
-      compilado. Quando `apps/tagging` entrou no mesmo caminho, `-Dnative -Pnative-container`
-      simplesmente NÃO TINHA EFEITO nele: sem o perfil declarado, o Maven ignora a flag e o módulo
-      sai em JVM. O zip fica com um `quarkus-run.jar` e a função, declarada `provided.al2023`, não
-      acha o `bootstrap` — falha na primeira invocação, não no build.
-
-      SÓ o `native-container` está aqui, e a ausência do `native` é deliberada. `-pl` não funciona
-      para goals de build neste reator (a validação da extensão `axon-native-support` exige o
-      artefato de deployment presente), então TODA invocação do Maven percorre os dois apps. Com um
-      perfil `native` global, um build nativo compilaria OITO binários em vez de quatro — meia
-      hora a mais para jogar fora sete deles.
-
-      Por isso cada app tem o SEU gatilho: `-Dnative` liga o do `posts-api`, `-Dnative.tagging` liga
-      o do `apps/tagging`. O que é comum — construir dentro do builder image — fica aqui.
-    -->
   <profiles>
-    <!--
-          O build DENTRO do builder image do Mandrel. Num Mac isto não é conveniência: o
-          `native-image` produz um executável do sistema onde roda, e o Lambda precisa de ELF/Linux.
-          GraalVM instalada localmente não resolve.
-
-          MEDIDO: com 7,75 GiB de Docker o build morre com `exit 137` no `[1/8] Initializing`, sem
-          mencionar memória. Precisa de ~12 GiB. Com 13,6 GiB, um binário leva ~7 min e o pico de uso
-          fica em 7,1 GB no `[5/8] Inlining methods`.
-        -->
     <profile>
       <id>native-container</id>
       <properties>
         <quarkus.native.container-build>true</quarkus.native.container-build>
         <quarkus.native.native-image-xmx>10g</quarkus.native.native-image-xmx>
-        <!--
-              A PLATAFORMA É DECLARADA, e não herdada do host.
-
-              O builder image do Mandrel é multi-arch (`linux/arm64` e `linux/amd64`) e o Docker
-              escolhe a variante pela arquitetura de QUEM RODA, sem dizer nada. As seis funções
-              declaram `architectures: ['arm64']`, então um build num host x86_64 produzia um
-              `bootstrap` amd64 que o deploy publicava e a função recusava executar
-              (`Runtime.InvalidEntrypoint`) — verde no build, morto na invocação.
-
-              Com o pino, um host arm64 (o Mac e o runner do deploy) não paga nada: é a variante que
-              ele já escolheria. Um host x86_64 passa a precisar de binfmt/QEMU e falha ALTO se não
-              tiver — que é a direção certa, porque o artefato errado não falha em lugar nenhum até
-              a AWS.
-            -->
         <quarkus.native.container-runtime-options>--platform=linux/arm64</quarkus.native.container-runtime-options>
       </properties>
     </profile>

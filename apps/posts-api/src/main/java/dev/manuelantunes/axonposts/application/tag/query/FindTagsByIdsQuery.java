@@ -14,19 +14,8 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/**
- * Várias tags por id, numa consulta só.
- *
- * <h2>Por que a Tag ganhou consulta por id agora</h2>
- * Dentro deste schema a tag só é alcançada a partir de um post, e
- * {@link dev.manuelantunes.axonposts.application.post.query.FindTagsByPostIdsQuery} dá conta disso. A
- * federação inverte o sentido: um subgraph vizinho que guarde, digamos, estatísticas por tag referencia
- * {@code Tag} pela chave e o roteador volta aqui pedindo {@code _entities} — sem passar por post nenhum.
- * É por isso que a tag precisa ser resolvível sozinha, e é o que a torna uma entidade de verdade.
- */
 @ApplicationScoped
 public class FindTagsByIdsQuery {
-
     @Query(namespace = "tags", name = "FindTagsByIds", version = "1.0.0")
     public record FindTagsByIds(List<String> tagIds) {
     }

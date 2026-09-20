@@ -1,12 +1,5 @@
 import { Skeleton } from '@/components/ui/skeleton';
 
-/**
- * O que o `Suspense` mostra enquanto o resultado do `PreloadQuery` não atravessou o stream.
- *
- * Na prática ele aparece por muito pouco tempo — o servidor começou a query ANTES de mandar o HTML —,
- * mas ele tem de existir: `useSuspenseQuery` suspende, e suspender sem fronteira sobe até a fronteira
- * mais próxima, que seria o layout inteiro.
- */
 export function FeedSkeleton() {
   return (
     <div className="space-y-5">

@@ -15,71 +15,32 @@
     <name>tagging</name>
     <description>O serviço de tagueamento: decide a primeira tag de um post, pela coreografia</description>
 
-    <!--
-      O QUE ESTA APP IMPORTA, E ONDE A LINHA FOI DESENHADA
-      ====================================================
-      Ela importa o DOMÍNIO de posts (`libs/posts-domain`) e trabalha com o `Post` de verdade, os
-      eventos de verdade e as regras de verdade — `Post.complete(...)` é a MESMA classe que o serviço de
-      posts usa.
-
-      Uma versão anterior deste módulo redeclarava `PostPreCreatedEvent` como record próprio, com o
-      argumento de que "o contrato entre serviços é o envelope no fio, não a classe Java". O argumento
-      não é falso, e é a saída errada num monorepo que já separa domínio em biblioteca: evento de
-      domínio escrito duas vezes é a mesma regra em dois lugares, e o primeiro campo novo faz as duas
-      divergirem em silêncio. Se compartilhar classe é um risco de acoplamento, a resposta é versionar o
-      módulo de domínio — não copiar o arquivo.
-
-      O QUE ELA NÃO IMPORTA: `libs/posts`, a camada de APLICAÇÃO.
-      ==========================================================
-      Ela traria o GraphQL, a projeção, as views e todo command handler de lá — e o Axon descobre
-      handlers em build time, então este serviço subiria com a projeção de posts ligada contra um banco
-      que não tem as tabelas dela. A fronteira útil é domínio/aplicação, não serviço/serviço: domínio é
-      regra, e regra se compartilha; aplicação é fluxo, e fluxo é de quem o executa.
-
-      Daí o `quarkus.hibernate-orm.packages` no application.properties: as entidades vêm no classpath
-      com o domínio, e este serviço não tem (nem quer) as tabelas delas.
-    -->
     <dependencies>
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-arc</artifactId>
         </dependency>
 
-        <!-- ==== Axon: este serviço tem agregado, event store e token store próprios ============ -->
         <dependency>
             <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
             <artifactId>quarkus-axon</artifactId>
             <version>${quarkus-axon.version}</version>
         </dependency>
-        <!-- O begin-or-join no JTA do Quarkus. Sem ele o `NoTransactionManager` não commitaria a linha
-             do inbox junto com o append — e uma reentrega duplicaria o evento no stream. -->
         <dependency>
             <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
             <artifactId>quarkus-axon-transaction</artifactId>
             <version>${quarkus-axon.version}</version>
         </dependency>
-        <!-- SEM `quarkus-axon-tokenstore-jpa`, ao contrário do outro serviço, e a ausência é a
-             configuração: os dois módulos JPA do Axon declaram CADA UM uma classe
-             `QuarkusAxonEntityManagerProvider`, e ter os dois derruba a partida com
-             `AmbiguousResolutionException`. Lá isso é resolvido por `quarkus.arc.exclude-types`; aqui
-             não precisa ser resolvido, porque token store é para processor STREAMING — e este serviço
-             tem um subscribing só, que lê da publicação e não de uma posição.
-             A tabela `tokenentry` fica na migration de propósito: o dia em que um processor daqui virar
-             streaming, o que falta é a dependência, não o schema. -->
         <dependency>
             <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
             <artifactId>quarkus-axon-jpa-eventstore</artifactId>
             <version>${quarkus-axon.version}</version>
         </dependency>
-        <!-- @EventSourcedEntity, @EntityCreator, @EventTag -->
         <dependency>
             <groupId>org.axonframework</groupId>
             <artifactId>axon-eventsourcing</artifactId>
         </dependency>
 
-        <!-- ==== Persistência: SÓ o que o Axon precisa ========================================== -->
-        <!-- Nenhuma entidade JPA é deste serviço. O Hibernate está aqui porque o event store e o token
-             store são JPA, e o Flyway porque as tabelas deles precisam existir. Não há read model. -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-hibernate-orm</artifactId>
@@ -97,7 +58,6 @@
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
-        <!-- ==== A integração ==================================================================== -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-messaging-rabbitmq</artifactId>
@@ -112,75 +72,27 @@
             <artifactId>axonposts-platform</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!-- O suporte a GraalVM native do Axon, como extensão local. Em JVM não faz nada.
-
-             ELA FALTAVA AQUI, e a ausência só apareceu no primeiro binário nativo deste serviço: o
-             `TaggingMigrate` subiu e morreu com
-
-               No suitable constructor found for entity of type
-                 [AnnotationBasedEventSourcedEntityFactoryDefinition] with zero arguments
-
-             que é literalmente a primeira das três falhas descritas no Javadoc do
-             `AxonNativeImageProcessor`. O `apps/posts-api` a declarava desde sempre; este serviço
-             usa o MESMO Axon, pelas mesmas libs, e precisava dos mesmos registros.
-
-             REGRA: serviço que usa Axon e é compilado nativo declara esta extensão. Sem ela o build
-             passa, o binário é gerado, e a falha é na PARTIDA — onde ninguém está olhando. -->
         <dependency>
             <groupId>dev.manuelantunes</groupId>
             <artifactId>axon-native-support</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <!-- O DOMÍNIO e a INFRAESTRUTURA de posts: o `Post`, os eventos, a regra de como um post se
-             completa, e os repositórios. Traz `axonposts-users` com ele, porque um Post tem autor.
-             O que ela NÃO traz é a camada de APLICAÇÃO — commands, queries, views e projeção moram nos
-             apps. É isso que faz este serviço importar o módulo sem herdar o outro app. -->
         <dependency>
             <groupId>dev.manuelantunes</groupId>
             <artifactId>axonposts-posts</artifactId>
             <version>${project.version}</version>
         </dependency>
 
-        <!-- ==== Observabilidade: OpenTelemetry ======================================== -->
-        <!-- Entra aqui pelo motivo INVERSO do que a põe no `posts-api`. Lá o argumento é o router na
-             frente; aqui é que este serviço é o único lugar onde a primeira tag é decidida — e é o
-             lado da saga que, sem isto, não aparece em trace nenhum. Uma latência entre
-             `PostPreCreated` e `PostCreated` ficava sem dono: o `posts-api` mostrava o publish e
-             depois um silêncio de duração desconhecida.
-             O elo entre os dois processos sai de graça: `tracing.enabled` já é `true` por default nos
-             dois lados do conector do RabbitMQ, então o span do publish lá vira o pai do span do
-             consume aqui, e o trace atravessa o broker.
-             NÃO traz porta HTTP — `quarkus-opentelemetry` depende de `quarkus-vertx`, não de
-             `quarkus-vertx-http`. Este serviço continua sem uma linha de HTTP, e sem disputar o 8080
-             com o outro app no `pnpm dev`.
-             O que ele NÃO instrumenta, aqui como lá: o que o Axon faz por dentro do command/event bus
-             (a extensão não publica spans). O trabalho aparece DENTRO do span do consume, sem
-             sub-spans. -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-opentelemetry</artifactId>
         </dependency>
-        <!-- Dev Services do stack LGTM, `provided` como no outro app: ferramenta de desenvolvimento,
-             não vai para o runner de produção. As DUAS aplicações declaram porque o container é
-             COMPARTILHADO (`quarkus.observability.lgtm.shared` é `true` por default) — quem sobe é
-             quem partir primeiro, e no `pnpm dev` os dois partem juntos. -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-observability-devservices-lgtm</artifactId>
             <scope>provided</scope>
         </dependency>
 
-        <!--
-          O TESTE DESTE SERVIÇO — e ele não tinha nenhum até aqui.
-
-          `axon-test` é o que importa: o serviço inteiro cabe num command handler, e o
-          `AxonTestFixture` o exercita reidratando o `Post` dos eventos dados, sem broker, sem banco e
-          sem Quarkus. É o mesmo formato dos `*CommandTest` do outro app, de propósito.
-
-          O conector IN-MEMORY substitui o RabbitMQ em teste (ver os `%test.` no
-          application.properties). Ele é o que permite empurrar uma mensagem no canal de entrada e
-          LER o que saiu pelo de saída — o caminho inteiro do serviço, sem um broker no meio.
-        -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-junit</artifactId>
@@ -202,29 +114,21 @@
             <artifactId>smallrye-reactive-messaging-in-memory</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- A decisão acontece no AFTER_COMMIT, noutra volta: afirmar sem esperar seria corrida. -->
         <dependency>
             <groupId>org.awaitility</groupId>
             <artifactId>awaitility</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- A cobertura deste serviço era ZERO; sem isto ela continuaria sendo invisível. -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-jacoco</artifactId>
             <scope>test</scope>
         </dependency>
-        <!--
-          `quarkus-junit5-mockito` e não `mockito-core` puro: ele traz o `@InjectMock`, que SUBSTITUI
-          um bean do CDI dentro de um `@QuarkusTest` em vez de só criar um objeto solto. É a
-          diferença entre testar o grafo de verdade com uma peça trocada e testar uma peça sozinha.
-        -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-junit5-mockito</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- `DevServicesSchema`: o guarda da lista de migrations. `test` o mantém fora do artefato. -->
         <dependency>
             <groupId>dev.manuelantunes</groupId>
             <artifactId>axonposts-test-support</artifactId>
@@ -235,14 +139,6 @@
 
     <build>
         <plugins>
-            <!-- O mesmo script de inicialização do serviço de posts, pela mesma razão: `migrate-at-start`
-                 perdeu a corrida contra o init do Axon, então em dev e teste quem cria o schema é o
-                 `initdb` do container do Dev Services. Ver o comentário no pom do outro serviço. -->
-            <!--
-              O MESMO bloco do `posts-api`, e a linha do LogManager não é cosmética: sem ela o JBoss
-              LogManager é acessado depois de a JVM já ter fixado o default, e o Quarkus avisa em toda
-              execução que "results may be unexpected".
-            -->
 <plugin>
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>quarkus-maven-plugin</artifactId>
@@ -262,24 +158,6 @@
     </build>
 
     <profiles>
-        <!--
-          O SYSROOT DOS COMMAND LINE TOOLS — a única coisa que sobrou do antigo `build-env.sh`.
-
-          MEDIDO nesta máquina, depois de trocar o `xcode-select` para /Library/Developer/CommandLineTools:
-          o `cc` do sistema voltou a funcionar (o PATH deixou de ser necessário), mas o `xcrun` passou a
-          entregar o SDK 27 por default, e o `ld` das CLT não o digere:
-
-            /Library/Developer/CommandLineTools/SDKs/MacOSX27.0.sdk/usr/lib/libSystem.B.tbd:4:20:
-            error: unknown architecture
-
-          `MacOSX.sdk` é o SYMLINK (hoje → 26.5), e é ele que se aponta de propósito: pinar uma versão
-          fixa aqui quebraria no dia em que as CLT forem atualizadas.
-
-          Ele é ATIVADO PELO ALVO DO NX (`-Pnative-clt-toolchain` na configuração `native`), e não por
-          `<activation>` automática — porque `native-container` compila DENTRO do builder image do
-          Mandrel, onde este caminho não existe. É a mesma razão de não ser uma variável de ambiente:
-          a decisão é por MODO de build, e quem conhece o modo é o alvo.
-        -->
         <profile>
             <id>native-clt-toolchain</id>
             <properties>
@@ -288,38 +166,6 @@
             </properties>
         </profile>
 
-        <!--
-          ================================================================================
-          AWS LAMBDA: A MESMA APLICAÇÃO, DUAS FUNÇÕES
-          ================================================================================
-          Um perfil só, e duas funções saindo do mesmo zip — porque o que as distingue não é código, é
-          a fila que as aciona e a variável de ambiente que diz para qual canal entregar:
-
-            ./mvnw package -Plambda
-
-            função axonposts-tagging-precreated  AXONPOSTS_LAMBDA_SQS_CHANNEL=post-precreated-in
-            função axonposts-tagging-changes     AXONPOSTS_LAMBDA_SQS_CHANNEL=post-changes-in
-
-          São duas e não uma pela MESMA razão que as filas são duas, e que já está escrita no
-          application.properties deste módulo: uma mensagem de atualização envenenada não pode ser
-          rejeitada junto com as decisões pendentes, e escalar um fluxo não pode mexer no outro. Numa
-          função só, os dois fluxos voltariam a dividir concorrência, DLQ e throttle.
-
-          `quarkus.profile` tem duas entradas de propósito: `lambda` traz o
-          application-lambda.properties e `prod` mantém valendo as linhas `%prod.` deste arquivo (o
-          datasource e o endpoint do OTLP). E precisa ser repetido em runtime, como
-          QUARKUS_PROFILE=lambda,prod na função: o que se fixa aqui é build time.
-        -->
-        <!--
-          ./mvnw package -DskipTests -Plambda -Dnative.tagging -Pnative-container
-
-          O gatilho é `native.tagging` e não `native` DE PROPÓSITO: como `-pl` não funciona neste
-          reator, um gatilho compartilhado faria este módulo compilar um binário em toda invocação
-          que pede native para o outro app — e são quatro artefatos, logo quatro invocações do Maven.
-
-          O que o build em container precisa (`-Pnative-container`) está na raiz, porque é comum aos
-          dois.
-        -->
         <profile>
             <id>native-tagging</id>
             <activation>
@@ -338,24 +184,15 @@
                 <quarkus.profile>lambda,prod</quarkus.profile>
             </properties>
             <dependencies>
-                <!-- Acha o único RequestHandler do índice, que é o AxonSqsLambda de libs/axon-aws.
-                     A extensão fica AQUI e não na lib porque empacotamento é escolha da aplicação:
-                     o posts-api tem um perfil que usa `quarkus-amazon-lambda-http` no lugar dela, e
-                     as duas não convivem. -->
                 <dependency>
                     <groupId>io.quarkus</groupId>
                     <artifactId>quarkus-amazon-lambda</artifactId>
                 </dependency>
-                <!-- SnsAddressing na saída, SqsChannelIngress na entrada. O @AxonOutbox deste serviço
-                     não muda: continua dizendo channel = "post-events-out", namespaces = "posts". -->
                 <dependency>
                     <groupId>dev.manuelantunes</groupId>
                     <artifactId>axonposts-axon-aws</artifactId>
                     <version>${project.version}</version>
                 </dependency>
-                <!-- O handler e a ponte SQSEvent -> canal, num módulo à parte de propósito: ele
-                     carrega o `RequestHandler`, e onde há `quarkus-amazon-lambda-http` isso derruba
-                     o build. Aqui a extensão é a outra, então ele entra. -->
                 <dependency>
                     <groupId>dev.manuelantunes</groupId>
                     <artifactId>axonposts-axon-lambda</artifactId>

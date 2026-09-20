@@ -13,21 +13,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-/**
- * A query <b>FindPostsByAuthorIds</b>: os posts de vários autores de uma vez, mais recentes primeiro.
- * <p>
- * O par do DataLoader do campo {@code Author.posts}, pelo mesmo motivo do {@code FindTagsByPostIds}: uma
- * resposta com N autores não pode virar N consultas, e o acesso a dados pertence à aplicação e não ao
- * controller.
- */
 @ApplicationScoped
 public class FindPostsByAuthorIdsQuery {
-
     @Query(namespace = "posts", name = "FindPostsByAuthorIds", version = "1.0.0")
     public record FindPostsByAuthorIds(List<String> authorIds) {
     }
 
-    /** @param byAuthorId autor → posts, mais recentes primeiro. Autores sem post não aparecem */
     public record PostsByAuthor(Map<String, List<PostView>> byAuthorId) {
     }
 

@@ -9,27 +9,19 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
-/**
- * Input GraphQL de {@code updatePost}; {@code title}/{@code content} nulos significam "manter".
- * <p>
- * O "nulo pode, vazio não" é expresso com {@code @Pattern}: constraints de Bean Validation são
- * <b>ignoradas quando o valor é {@code null}</b>, então o padrão "pelo menos um caractere não-branco"
- * só é cobrado de quem realmente mandou o campo. {@code @NotBlank} aqui deixaria de aceitar a omissão,
- * que é justamente a semântica de update parcial.
- */
 @Input("UpdatePostInput")
 public record UpdatePostInput(
 
         @Id
         @NonNull
-        @NotBlank(message = "id não pode ser vazio")
+        @NotBlank(message = "id must not be blank")
         String id,
 
-        @Pattern(regexp = ".*\\S.*", message = "title, quando informado, não pode ser vazio")
-        @Size(max = PostTitle.MAX_LENGTH, message = "title excede {max} caracteres")
+        @Pattern(regexp = ".*\\S.*", message = "title, when provided, must not be blank")
+        @Size(max = PostTitle.MAX_LENGTH, message = "title exceeds {max} characters")
         String title,
 
-        @Pattern(regexp = "(?s).*\\S.*", message = "content, quando informado, não pode ser vazio")
+        @Pattern(regexp = "(?s).*\\S.*", message = "content, when provided, must not be blank")
         String content
 ) {
 }

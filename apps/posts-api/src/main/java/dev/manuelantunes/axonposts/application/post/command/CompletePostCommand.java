@@ -22,40 +22,10 @@ import jakarta.enterprise.context.ApplicationScoped;
 
 import static dev.manuelantunes.axonposts.infrastructure.axon.AppendingDomainEventPublisher.appendingTo;
 
-/**
- * O command <b>CompletePost</b>: fecha a criação de um post pré-criado, com a primeira tag.
- *
- * <h2>Onde ele fica na coreografia</h2>
- * É o último passo da saga, e o único que escreve no agregado Post. A decisão de <i>qual</i> tag é de
- * outro serviço e chega como evento; este command é a tradução dessa decisão em fato do Post. Ele não
- * sabe de onde a decisão veio — nem precisa, e é isso que permite o serviço vizinho ser substituído sem
- * tocar aqui.
- *
- * <h2>Chegar duas vezes é SUCESSO</h2>
- * E é este handler que decide isso, não o agregado. A distinção importa:
- * <ul>
- *   <li>para o <b>agregado</b>, completar um post completo é violação de invariante — e
- *       {@code Post.complete} lança;</li>
- *   <li>para <b>este handler</b>, receber a mesma decisão duas vezes é o comportamento normal de um
- *       broker que entrega ao menos uma vez. Falhar faria a mensagem ser nacked e reentregue, para
- *       falhar de novo, para sempre.</li>
- * </ul>
- * Daí o {@code isComplete()} antes de decidir: sai calado, a mensagem é confirmada, e a saga para onde
- * tinha de parar. É a terceira das três guardas contra duplicação (origem, inbox, agregado) — e a
- * única que ainda funciona se o inbox for limpo.
- */
 @ApplicationScoped
 public class CompletePostCommand {
-
     private static final Logger log = LoggerFactory.getLogger(CompletePostCommand.class);
 
-    /**
-     * A mensagem: este post recebe esta tag e passa a estar completo.
-     * <p>
-     * Só os dois ids. O nome da tag não vem: quem grava o vínculo é o Post, e a Tag precisa existir
-     * localmente de qualquer forma — quem a cria, se preciso, é quem reage à decisão, antes de
-     * despachar isto.
-     */
     @Command(namespace = "posts", name = "CompletePost", version = "1.0.0")
     public record CompletePost(
             @TargetEntityId PostId postId,

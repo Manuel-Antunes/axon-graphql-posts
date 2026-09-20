@@ -16,25 +16,10 @@ import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.infrastructure.Infrastructure;
 import jakarta.enterprise.context.ApplicationScoped;
 
-/**
- * O resolvedor de referência de {@code Tag}. Gêmeo do {@link PostEntityApi}, com uma diferença que vale
- * registrar.
- *
- * <h2>A tag só ganhou caminho próprio por causa da federação</h2>
- * Dentro deste schema não existe {@code Query.tag(id:)}: a tag é sempre alcançada a partir de um post,
- * pelo campo paginado {@code Post.tags}. Isso bastava enquanto o schema era um só. Com a federação, um
- * subgraph vizinho pode referenciar {@code Tag} pela chave sem nunca ter visto um post — e o roteador
- * volta aqui pedindo {@code _entities}, não {@code posts}.
- * <p>
- * É a diferença entre <i>ter id</i> e <i>ser entidade</i>: a chave só vale se houver como resolvê-la
- * isolada. Sem este método o {@code @Key} da {@code Tag} seria uma promessa que a composição aceita e o
- * runtime quebra.
- */
 @GraphQLApi
 @ApplicationScoped
 @TranslatesErrors
 public class TagEntityApi {
-
     private static final Logger log = Logger.getLogger(TagEntityApi.class);
 
     private final QueryGateway queryGateway;

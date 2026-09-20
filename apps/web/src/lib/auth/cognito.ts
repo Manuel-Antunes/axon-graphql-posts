@@ -1,26 +1,5 @@
 import 'server-only';
 
-/**
- * O cliente do Cognito — e ele é um `fetch`, não um SDK.
- *
- * <h2>Por que não o `@aws-sdk/client-cognito-identity-provider`</h2>
- * Porque as duas operações usadas aqui (`InitiateAuth` com `USER_PASSWORD_AUTH` e com
- * `REFRESH_TOKEN_AUTH`) são <b>não autenticadas</b>: não assinam com SigV4, não precisam de
- * credencial nenhuma. O SDK traria ~2 MB para dentro do bundle da função do Lambda — que é o mesmo
- * bundle cujo cold start já é o número que dói nesta stack — para montar um POST com dois cabeçalhos.
- *
- * <h2>Por que só no SERVIDOR (`server-only`)</h2>
- * Não é o client id que é segredo — ele é público por definição num client sem secret. É que o
- * <b>token</b> não deve passar pelo JavaScript da página: ele nasce aqui, vai para um cookie
- * `httpOnly` e só volta ao navegador quando uma server action o entrega, já em memória. O import de
- * `server-only` transforma "alguém importou isto num componente de cliente" em erro de BUILD.
- *
- * <h2>A senha NÃO vai por `/oauth2/token`</h2>
- * O endpoint OAuth2 do Cognito aceita `authorization_code`, `client_credentials` e `refresh_token` —
- * e não `password`. Senha vai pela API própria do serviço, que é esta. É o mesmo caminho que o
- * `infra/scripts/e2e.sh` usa com `aws cognito-idp initiate-auth`.
- */
-
 const REGION = process.env.COGNITO_REGION ?? 'us-east-1';
 const CLIENT_ID = process.env.COGNITO_CLIENT_ID ?? '';
 
@@ -31,7 +10,6 @@ export interface AuthTokens {
   expiresIn: number;
 }
 
-/** O erro que chega ao formulário. `code` é o `__type` do Cognito, e é o que distingue os casos. */
 export class CognitoError extends Error {
   constructor(
     readonly code: string,
@@ -94,9 +72,6 @@ async function initiateAuth(
     );
   }
 
-  // Um challenge não é erro de HTTP: o Cognito responde 200 pedindo o próximo passo. Os três
-  // usuários semeados têm senha PERMANENTE (`infra/aws/identity/index.ts` usa `password`, não
-  // `temporaryPassword`), então isto só acontece se alguém criar um usuário à mão pelo console.
   if (!payload.AuthenticationResult) {
     throw new CognitoError(
       payload.ChallengeName ?? 'ChallengeRequired',
@@ -123,10 +98,6 @@ export function signInWithPassword(
   });
 }
 
-/**
- * Renova o ID token. O Cognito NÃO devolve um refresh token novo aqui — o antigo continua valendo
- * pelos 30 dias do default, e por isso quem chama preserva o cookie que já tem.
- */
 export function refreshTokens(refreshToken: string): Promise<AuthTokens> {
   return initiateAuth('REFRESH_TOKEN_AUTH', { REFRESH_TOKEN: refreshToken });
 }

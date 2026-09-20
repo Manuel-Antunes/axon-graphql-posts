@@ -12,9 +12,7 @@ import java.time.Instant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** Testes puros do agregado Tag. */
 class TagTest {
-
     private static final Instant T0 = Instant.parse("2026-09-05T12:00:00Z");
 
     private final RecordingDomainEvents events = new RecordingDomainEvents();
@@ -45,15 +43,6 @@ class TagTest {
         assertThat(TagName.of("Untagged").sameAs(TagName.of("outra"))).isFalse();
     }
 
-    /**
-     * Trava o literal que a migration {@code V5__default_tag.sql} semeia contra a derivação do domínio.
-     *
-     * <h3>Por que existe</h3>
-     * Porque SQL não deriva UUID versão 3: a linha da tag padrão é semeada com o id escrito à mão. São
-     * duas fontes para o mesmo valor, e sem este teste elas divergiriam em silêncio no dia em que
-     * {@link Tag#DEFAULT_NAME} mudasse — o sintoma seria {@code Tag não encontrada} no primeiro post
-     * criado depois da mudança, sem nada apontando para a migration.
-     */
     @Test
     void theDefaultTagIdIsDerivedFromTheName() {
         assertThat(Tag.DEFAULT_ID.value())

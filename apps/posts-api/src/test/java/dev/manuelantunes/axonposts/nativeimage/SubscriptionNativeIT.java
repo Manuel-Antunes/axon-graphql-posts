@@ -14,21 +14,9 @@ import dev.manuelantunes.axonposts.support.RequiresNativeArtifact;
 import io.quarkus.test.junit.QuarkusIntegrationTest;
 import io.restassured.RestAssured;
 
-/**
- * As subscriptions nos <b>dois</b> transportes, contra o binário nativo.
- *
- * <h2>Por que cada teste manda MAIS DE UM evento</h2>
- * Porque um só não prova nada. O {@code Publisher} do {@code subscriptionQuery} não honra demanda
- * incremental, e tanto o assinante do SmallRye quanto o de SSE pedem <b>um item por vez</b>: sem o
- * {@code .onOverflow().buffer(...)} depois do {@code publisher(...)}, o primeiro evento chega, a
- * conexão fica aberta e nunca mais vem nada. É falha silenciosa, e um teste de um evento passa por
- * cima dela. Os irmãos deste arquivo na JVM são {@code NewsletterSubscriptionE2ETest} e
- * {@code SseSubscriptionE2ETest}.
- */
 @QuarkusIntegrationTest
 @RequiresNativeArtifact
 class SubscriptionNativeIT {
-
     private static final String ON_CREATED = "subscription { onPostCreated { title version } }";
     private static final String ON_UPDATED = "subscription { onPostUpdated { title version } }";
     private static final Duration WAIT = Duration.ofSeconds(10);
@@ -65,11 +53,6 @@ class SubscriptionNativeIT {
         }
     }
 
-    /**
-     * As duas versões vêm de caminhos diferentes do Axon: a v2 é a tag padrão sendo atribuída pelo
-     * {@code onAfterCommit}, a v3 é o update explícito reidratando o agregado. Se só a v2 chegar, a
-     * projeção está emitindo mas a reidratação não.
-     */
     @Test
     void onPostUpdatedEmitsBothTheDefaultTagAndTheExplicitEdit() {
         GraphQl author = GraphQl.asAuthor();

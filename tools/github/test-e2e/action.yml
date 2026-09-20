@@ -9,11 +9,6 @@ runs:
   using: composite
   steps:
     - name: Run end-to-end tests
-      # UM comando para os DOIS níveis, e é o desenho: `test:e2e` é
-      # `nx run-many -t test-e2e --parallel=1`, e os dois projetos que declaram esse alvo são o
-      # `apps/posts-api` (os *E2ETest, com Dev Services) e o `apps/posts-api-e2e` (a saga, com o
-      # compose). O `--parallel=1` não é afinamento: os perfis do Maven escrevem todos no mesmo
-      # `target/`, e os dois alvos em paralelo se apagariam.
       run: pnpm test:e2e
       shell: bash
       env:
@@ -24,8 +19,6 @@ runs:
       uses: actions/upload-artifact@v4
       with:
         name: e2e-reports
-        # Os logs das duas aplicações entram junto porque, quando a saga não fecha, a resposta está
-        # no log do `tagging` — que não tem porta, não tem endpoint e não aparece em lugar nenhum.
         path: |
           apps/*/target/surefire-reports/**
           apps/posts-api-e2e/target/test-results/**
@@ -34,9 +27,6 @@ runs:
         retention-days: 7
 
     - name: Tear down the compose stack
-      # O `globalSetup` do Vitest derruba os PROCESSOS; os containers ficam de pé de propósito, para
-      # quem roda na máquina não pagar a subida de novo. Num runner efêmero isso não vale nada, e um
-      # volume sobrevivente entre jobs valeria menos ainda.
       if: ${{ always() }}
       run: docker compose down -v
       shell: bash

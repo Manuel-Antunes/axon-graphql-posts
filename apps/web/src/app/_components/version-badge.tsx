@@ -1,13 +1,6 @@
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
-/**
- * A versão do post — que neste sistema não é um número de auditoria, é o ESTADO da saga.
- *
- * `PostPreCreated` nasce na v1, sem tag: o post existe e não está completo. Quem decide a primeira
- * tag é o outro serviço, e o `PostCreated` que volta leva o agregado à v2. Mostrar "v1" e "v2" sem
- * dizer isso esconderia justamente o que estas páginas existem para observar.
- */
 export function VersionBadge({
   version,
   className,

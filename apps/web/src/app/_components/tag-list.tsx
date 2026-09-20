@@ -2,13 +2,6 @@ import type { FragmentType } from '@/gql';
 import { TagChip } from '@/app/_components/tag-chip';
 import { getFragmentData, graphql } from '@/gql';
 
-/**
- * As tags de um post, como cursor connection.
- *
- * O fragmento é sobre `Post` e não sobre `TagConnection` porque quem decide QUANTAS tags mostrar é
- * este componente — é ele quem escreve `first: 10`. A página que o usa não precisa saber disso, e é
- * essa a promessa do padrão: o componente é dono do que pede.
- */
 export const TagList_post = graphql(`
   fragment TagList_post on Post {
     id

@@ -18,31 +18,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-/**
- * Assina uma subscription GraphQL por <b>Server-Sent Events</b>, no modo <i>distinct connections</i> do
- * protocolo {@code graphql-sse} — o transporte que {@code interfaces.graphql.sse} acrescenta.
- *
- * <h2>O cliente é um POST comum</h2>
- * É exatamente esse o ponto do SSE: não há handshake de subprotocolo, não há quadro de controle, não há
- * biblioteca. Um {@code HttpRequest} com {@code Accept: text/event-stream}, e a resposta vai chegando.
- * O {@link WebSocketSubscriptions} ao lado precisa negociar {@code graphql-transport-ws},
- * mandar {@code connection_init}, esperar o {@code connection_ack} e só então assinar.
- *
- * <h2>Ler o fio</h2>
- * {@code BodyHandlers.fromLineSubscriber} entrega o corpo linha a linha enquanto ele chega — é o que
- * permite ler uma resposta que nunca termina. Um evento acaba na primeira linha em branco; até lá
- * acumulam-se {@code event:} e {@code data:}. Linhas que começam com {@code :} são comentário (o
- * keep-alive) e não viram evento, o que é justamente o que se quer afirmar sobre elas.
- *
- * <h2>A corrida da assinatura, e o que a fecha</h2>
- * O {@code emit} do Axon só alcança quem já está registrado no query bus, então o teste precisa ter
- * certeza de que o servidor abriu o stream <b>antes</b> de provocar o evento. Esperar o {@code 200} não
- * basta: os cabeçalhos saem antes de a execução começar. O que se espera aqui é a <b>primeira linha</b>
- * vinda do servidor — em teste o keep-alive é de 250&nbsp;ms ({@code %test} em
- * {@code application.properties}), então essa linha chega logo e com folga de sobra sobre a execução.
- */
 public final class SseSubscriptions implements AutoCloseable {
-
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Duration OPENS = Duration.ofSeconds(20);
 
@@ -65,17 +41,10 @@ public final class SseSubscriptions implements AutoCloseable {
         awaitFirstLine();
     }
 
-    /** Abre a subscription e devolve o cliente já assinado. */
     public static SseSubscriptions subscribe(int port, String document, Map<String, Object> variables) {
         return new SseSubscriptions(port, document, variables);
     }
 
-    /**
-     * O próximo evento {@code next}, como caminho dentro de {@code data} — por exemplo
-     * {@code onPostCreated.title}.
-     *
-     * @return o valor, ou {@code null} se nada chegar dentro do tempo
-     */
     public <T> T next(String path, Class<T> type, Duration timeout) {
         try {
             JsonNode event = events.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
@@ -97,7 +66,6 @@ public final class SseSubscriptions implements AutoCloseable {
         }
     }
 
-    /** {@code true} se <b>nenhum evento</b> chegou no tempo dado. Comentário de keep-alive não conta. */
     public boolean silentFor(Duration window) {
         try {
             return events.poll(window.toMillis(), TimeUnit.MILLISECONDS) == null;
@@ -107,7 +75,6 @@ public final class SseSubscriptions implements AutoCloseable {
         }
     }
 
-    /** Fechar a conexão é como se cancela uma subscription em SSE: não há mensagem de "pare". */
     @Override
     public void close() {
         Flow.Subscription subscription = lines.getAndSet(null);
@@ -140,9 +107,7 @@ public final class SseSubscriptions implements AutoCloseable {
         }
     }
 
-    /** Monta um evento SSE a partir das linhas: {@code event:}, {@code data:} e a linha em branco. */
     private final class Frames implements Flow.Subscriber<String> {
-
         private String event;
         private final StringBuilder data = new StringBuilder();
 
@@ -162,7 +127,6 @@ public final class SseSubscriptions implements AutoCloseable {
             } else if (line.startsWith("data:")) {
                 data.append(line.substring("data:".length()).trim());
             }
-            // linha começando com ':' é comentário (keep-alive): conta como sinal de vida, nada mais
         }
 
         @Override

@@ -6,13 +6,6 @@ import { PreloadQuery } from '@/lib/apollo/rsc';
 import { LiveConsole } from './_components/live-console';
 import { LIVE_SNAPSHOT_SIZE, RecentPostsQuery } from './query';
 
-/**
- * Só UMA das três operações desta página é prefetchável, e isso é o assunto da página.
- *
- * `RecentPostsQuery` é o retrato inicial do polling — dado de página, e portanto vem do servidor. As
- * duas subscriptions não: um `PreloadQuery` executa uma operação que TERMINA, e uma subscription não
- * termina. Elas começam no navegador, quando alguém liga o interruptor.
- */
 export default function LivePage() {
   return (
     <div className="space-y-5">

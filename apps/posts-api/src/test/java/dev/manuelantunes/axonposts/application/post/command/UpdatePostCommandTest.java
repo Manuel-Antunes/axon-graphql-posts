@@ -24,9 +24,7 @@ import static dev.manuelantunes.axonposts.support.PostCommandFixtures.NOW;
 import static dev.manuelantunes.axonposts.support.PostCommandFixtures.hasCause;
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Given-when-then do {@link UpdatePostCommand}, e só dele. */
 class UpdatePostCommandTest {
-
     private InMemoryPostRepository posts;
     private AxonTestFixture fixture;
 
@@ -69,7 +67,6 @@ class UpdatePostCommandTest {
                 .then()
                 .success();
 
-        // v1 criação + v2 update anterior + este = 3, com autor e createdAt vindos do stream
         assertThat(posts.findById(id)).hasValueSatisfying(post -> {
             assertThat(post.title()).isEqualTo(PostTitle.of("título v2"));
             assertThat(post.content()).isEqualTo(PostContent.of("conteúdo v3"));

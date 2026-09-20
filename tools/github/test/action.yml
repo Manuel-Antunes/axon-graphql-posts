@@ -9,37 +9,14 @@ runs:
   using: composite
   steps:
     - name: Lint the Java reactor
-      # ANTES dos testes, e de propósito: o Spotless leva segundos e falha por import morto ou
-      # espaço no fim da linha. Pagar 30s de suíte para só então descobrir isso é desperdício.
-      #
-      # `-p` porque `web` e `posts-api-e2e` também declaram `lint`, e o deles é ESLint — esses rodam
-      # no job do cliente. O alvo daqui cobre os OITO módulos Maven, não só este app.
       run: npx nx run "dev.manuelantunes:quarkus-axon-graphql-posts:lint"
       shell: bash
 
     - name: Run unit and wiring tests
-      # `pnpm test` e não `./mvnw test` DE PROPÓSITO: quem sabe o que este nível é, e como cacheá-lo,
-      # é o alvo `test-unit` do Nx. A esteira roda o mesmo comando que alguém roda na máquina.
-      #
-      # E ele NÃO lista ninguém: `nx run-many -t test` resolve os projetos do grafo. Foi assim que o
-      # `web:test` entrou neste job no dia em que o `@nx/vitest` passou a inferi-lo, sem uma linha
-      # aqui — que é o mesmo motivo pelo qual o alvo do Vitest se chama `test` e não `test-web`.
-      #
-      # Precisa de Docker mesmo neste nível: AxonWiringTest, OutboxRoutingTest e os três de schema
-      # são @QuarkusTest, e o Dev Services levanta Postgres e Keycloak para eles. O runner
-      # ubuntu-latest já tem o daemon de pé.
       run: pnpm test
       shell: bash
 
     - name: Upload test reports
-      # `always()` porque o artefato só vale a pena quando o passo acima FALHOU — é onde está o
-      # relatório do teste que quebrou.
-      #
-      # `libs/**` junto com `apps/*`, e não é simetria: neste nível a MAIORIA dos testes é das libs
-      # — 79 de 151, medido —, porque o teste mora no módulo que ele testa. Com o padrão só de
-      # `apps/`, o artefato do job saía sem o relatório de mais da metade da suíte, que é
-      # justamente o que se vem procurar aqui. O `**` no meio é porque `axon-native-support` tem os
-      # dois módulos dele um nível mais fundo.
       if: ${{ always() && inputs.upload_reports == 'true' }}
       uses: actions/upload-artifact@v4
       with:

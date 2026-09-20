@@ -1,15 +1,3 @@
-/**
- * A SAGA COREOGRAFADA, ponta a ponta e ENTRE PROCESSOS.
- *
- * Por que isto não é um `@QuarkusTest`: porque o que ele prova é justamente o que um `@QuarkusTest`
- * não consegue montar — dois PROCESSOS, com event stores separados, conversando por um broker de
- * verdade. Dentro de uma JVM só, "dois serviços" seria dublagem, e a dublagem é exatamente o que a
- * suíte do `posts-api` já faz (`InProcessTagAssignment`), de propósito e declaradamente.
- *
- * Os testes são ORDENADOS e compartilham estado, e isso é o desenho: uma saga é uma narrativa, e
- * afirmar o passo 4 sem ter feito o 1 não afirma nada. O Vitest roda um arquivo em ordem de
- * declaração — é o que sustenta a forma.
- */
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import type { AuthenticatedApi, SseSubscription } from '../support/posts-api';
@@ -28,7 +16,6 @@ interface Post {
 const tagsOf = (post: Post): string[] =>
   post.tags.edges.map((edge) => edge.node.name);
 
-/** O que o `posts-api` publica e o que ele recebe de volta — os dois nomes de fio da saga. */
 const PRE_CREATED = 'posts.PostPreCreated';
 const CREATED = 'posts.PostCreated';
 const UPDATED = 'posts.PostUpdated';
@@ -44,8 +31,6 @@ describe('a saga coreografada entre posts-api e tagging', () => {
     subscription = await stack.api.subscribe<{ onPostCreated: Post }>(
       'subscription { onPostCreated { id version tags { edges { node { name } } } } }',
     );
-    // O primeiro evento só é entregue a quem já estava no fio: dar à conexão o tempo de se
-    // estabelecer antes da mutation é o que separa "não emitiu" de "emitiu antes de eu ouvir".
     await sleep(500);
   });
 
@@ -56,8 +41,6 @@ describe('a saga coreografada entre posts-api e tagging', () => {
     );
     postId = createPost.id;
 
-    // A ASSINATURA de que o tagueamento saiu do fluxo da escrita. Se respondesse 2, o trabalho
-    // estaria sendo feito em processo e a coreografia seria decorativa.
     expect(
       createPost.version,
       'v2 aqui significa tagueamento em processo',
@@ -66,8 +49,6 @@ describe('a saga coreografada entre posts-api e tagging', () => {
   });
 
   it('a subscription recebe o post COMPLETO depois da volta da saga', async () => {
-    // A volta INTEIRA: posts-api -> RabbitMQ -> tagging -> RabbitMQ -> posts-api -> SSE.
-    // Quando ela não fecha, a resposta está no log do `tagging` — por isso ele vai na mensagem.
     completed = await subscription.awaitMatching(
       (event) =>
         event.onPostCreated?.id === postId &&
@@ -80,14 +61,6 @@ describe('a saga coreografada entre posts-api e tagging', () => {
   });
 
   it('o event store de CADA serviço tem exatamente os eventos esperados', () => {
-    /*
-     * Os DOIS serviços têm os mesmos dois eventos, e cada um produziu UM deles:
-     *   posts-api  produziu o PostPreCreated e INGERIU o PostCreated
-     *   tagging    INGERIU o PostPreCreated e produziu o PostCreated
-     *
-     * É essa simetria que prova a integração — o evento que chega é APENDADO, não só processado.
-     * E é aqui que um laço de reenvio apareceria, como contagem crescendo.
-     */
     const expected = `${PRE_CREATED},${CREATED}`;
     expect(stack.postsStore.streamOf(postId)).toBe(expected);
     expect(
@@ -123,18 +96,11 @@ describe('a saga coreografada entre posts-api e tagging', () => {
     expect(routing.routed, 'o broker não roteou: o binding mudou').toBe(true);
 
     await sleep(4000);
-    // As três guardas cobrem coisas diferentes, e esta afirmação passa pelas duas que sobrevivem
-    // a um inbox limpo: o inbox descarta a reentrega, e o agregado descarta a decisão repetida.
     expect(stack.taggingStore.countEvents(postId, CREATED)).toBe(1);
     expect(stack.taggingStore.inboxRowsFor(identity.identifier)).toBe(1);
   });
 
   it('o canal de RÉPLICA mantém o stream do Post completo no outro serviço', async () => {
-    /*
-     * O serviço de tagueamento não REAGE a PostUpdated — mas precisa TER o evento, porque ele
-     * escreve no stream do Post e a posição de um append vem de ter lido o stream antes. Um canal
-     * só para isso, com routing keys próprias, é o que a versão de canal único não expressava.
-     */
     const { updatePost } = await author.mutate<{
       updatePost: { version: number };
     }>(

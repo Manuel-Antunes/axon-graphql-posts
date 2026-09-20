@@ -1,33 +1,7 @@
-# Composição do supergraph — a entrada do `rover supergraph compose`.
-#
-#   ./mvnw quarkus:dev                       # este subgraph, em 8080
-#   rover supergraph compose --config docker/federation/supergraph.yaml > docker/federation/supergraph.graphql
-#
-# `subgraph_url` e não `file`: o rover faz a introspecção de federação (`{ _service { sdl } }`) na
-# aplicação de pé. É de propósito — um arquivo aqui seria uma terceira cópia do schema, atrás do
-# `schema.graphql` da raiz, e cópia de schema diverge em silêncio. Quem quiser compor sem subir nada
-# aponta o `file` para o `schema.graphql` da raiz, que carrega o mesmo `@link` e os mesmos `@key`.
-#
-# A versão da composição é fixada pelo mesmo motivo que o `@link` do FederatedSchemaApi: o algoritmo de
-# composição muda entre versões, e um supergraph que muda porque o rover se atualizou sozinho não é um
-# artefato reproduzível.
 federation_version: =2.9.3
 
 subgraphs:
   posts:
-    # routing_url é o endereço que o ROUTER vai chamar, e ele roda em container: daí o
-    # host.docker.internal. schema.subgraph_url é quem o ROVER introspecciona, daqui do host — e ele vai
-    # ANINHADO em `schema:`. Solto no nível de cima o rover não reclama: descarta o subgraph inteiro em
-    # silêncio e falha com "No subgraphs were found in the supergraph config".
     routing_url: http://host.docker.internal:8080/graphql
     schema:
       subgraph_url: http://localhost:8080/graphql
-
-  # Descomente junto com `rover supergraph compose --config supergraph-example.yaml` para ver o que um
-  # vizinho consegue fazer com as chaves que este subgraph publica. Não há serviço por trás: é SDL, e o
-  # que se exercita é a COMPOSIÇÃO.
-  #
-  # comments:
-  #   routing_url: http://localhost:8090/graphql
-  #   schema:
-  #     file: ./comments-example.graphql

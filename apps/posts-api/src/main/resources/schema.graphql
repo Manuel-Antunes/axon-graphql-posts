@@ -106,9 +106,9 @@ directive @specifiedBy(
     url: String!
   ) on SCALAR
 
-"Quem tem conta. Interface porque a hierarquia do domínio é polimórfica"
+"Whoever has an account. An interface because the domain hierarchy is polymorphic"
 interface User @key(fields : "id") {
-  "As credenciais deste usuário, uma por provedor"
+  "This user's credentials, one per provider"
   accounts: [Account]!
   email: String!
   id: ID!
@@ -117,45 +117,45 @@ interface User @key(fields : "id") {
 
 union _Entity = Author | Post | Reader | Tag
 
-"Uma credencial. Identidade em `users`, credencial em `accounts`, uma linha por provedor"
+"A credential. Identity in `users`, credential in `accounts`, one row per provider"
 type Account {
-  "Se dá para entrar com senha por esta conta. Falso para toda conta federada"
+  "Whether this account can sign in with a password. False for every federated account"
   hasPassword: Boolean!
   "ISO-8601"
   linkedAt: DateTime!
   provider: AuthProvider!
-  "O identificador da conta NO provedor (o `sub` do token). Não é o e-mail"
+  "The account's identifier AT the provider (the token's `sub`). Not the e-mail"
   subject: String!
 }
 
-"Usuário que escreve. Subclasse table-per-type de User: linha em `users` + linha em `authors`"
+"A user who writes. A table-per-type subclass of User: a row in `users` + a row in `authors`"
 type Author implements User @key(fields : "id") {
   accounts: [Account]!
-  "Campo que só a subclasse tem, e por isso pode ser NOT NULL em `authors`"
+  "A field only the subclass has, which is why it can be NOT NULL in `authors`"
   bio: String!
   email: String!
   id: ID!
   name: String!
-  "Posts deste autor, mais recentes primeiro, como Relay cursor connection"
+  "This author's posts, newest first, as a Relay cursor connection"
   posts(
-    "Cursor do último post já visto; ausente = do começo"
+    "Cursor of the last post already seen; absent = from the start"
     after: String,
-    "Quantos posts trazer; ausente = 20"
+    "How many posts to fetch; absent = 20"
     first: Int
   ): PostConnection!
 }
 
 "Mutation root"
 type Mutation {
-  "Despacha o command CreatePost e devolve o Post já projetado"
+  "Dispatches the CreatePost command and returns the already-projected Post"
   createPost(input: CreatePostInput!): Post! @rolesAllowed(value : "author")
-  "Apaga a própria conta (exclusão lógica). Exige apenas estar autenticado"
+  "Deletes your own account (logical deletion). Requires only being authenticated"
   deleteMe: Boolean!
-  "Exclusão lógica: o post some das consultas, mas a linha e o stream continuam lá"
+  "Logical deletion: the post disappears from queries, but the row and the stream stay"
   deletePost(id: ID!): Boolean! @rolesAllowed(value : "author")
-  "Desfaz a exclusão lógica. Funciona porque o agregado é reidratado dos eventos"
+  "Undoes the logical deletion. It works because the aggregate is rehydrated from the events"
   restorePost(id: ID!): Post! @rolesAllowed(value : "author")
-  "Despacha o command UpdatePost e devolve o Post já projetado"
+  "Dispatches the UpdatePost command and returns the already-projected Post"
   updatePost(input: UpdatePostInput!): Post! @rolesAllowed(value : "author")
 }
 
@@ -166,19 +166,19 @@ type PageInfo @shareable {
   startCursor: String
 }
 
-"Um post publicado, com o estado resultante de todos os eventos aplicados a ele"
+"A published post, with the state resulting from every event applied to it"
 type Post @key(fields : "id") {
-  "Quem escreveu. Resolvido em lote: N posts de M autores custam UMA consulta"
+  "Who wrote it. Resolved in batch: N posts from M authors cost ONE query"
   author: Author!
   content: String!
   "ISO-8601"
   createdAt: DateTime!
   id: ID!
-  "Tags do post, como Relay cursor connection. Resolvidas em lote"
+  "The post's tags, as a Relay cursor connection. Resolved in batch"
   tags(
-    "Cursor da última tag já vista; ausente = do começo"
+    "Cursor of the last tag already seen; absent = from the start"
     after: String,
-    "Quantas tags trazer; ausente = 20"
+    "How many tags to fetch; absent = 20"
     first: Int
   ): TagConnection!
   title: String!
@@ -188,16 +188,16 @@ type Post @key(fields : "id") {
 }
 
 type PostConnection {
-  "Os itens desta página, cada um com a sua posição"
+  "The items on this page, each with its position"
   edges: [PostEdge]!
-  "Se existe página seguinte/anterior, e os cursores das pontas desta"
+  "Whether there is a next/previous page, and the cursors at this one's ends"
   pageInfo: PageInfo!
 }
 
 type PostEdge {
-  "Posição opaca deste item; devolva-a em `after` para continuar daqui"
+  "This item's opaque position; pass it back in `after` to continue from here"
   cursor: String!
-  "O item desta posição da conexão"
+  "The item at this position in the connection"
   node: Post!
 }
 
@@ -205,20 +205,20 @@ type PostEdge {
 type Query {
   _entities(representations: [_Any!]!): [_Entity]!
   _service: _Service!
-  "Quem está logado. Exige Authorization: Bearer <token emitido pelo Keycloak>"
+  "Who is signed in. Requires Authorization: Bearer <token issued by Keycloak>"
   me: User!
-  "Um Post pelo id; null se não existir"
+  "A Post by id; null if it does not exist"
   post(id: ID!): Post
-  "Posts em ordem de criação, como Relay cursor connection"
+  "Posts in creation order, as a Relay cursor connection"
   posts(
-    "Cursor do último post já visto; ausente = do começo"
+    "Cursor of the last post already seen; absent = from the start"
     after: String,
-    "Quantos posts trazer; ausente = 20"
+    "How many posts to fetch; absent = 20"
     first: Int
   ): PostConnection!
 }
 
-"Usuário que só lê. É o `User` do Java sem linha na tabela `authors`"
+"A user who only reads. It is Java's `User` with no row in the `authors` table"
 type Reader implements User @key(fields : "id") {
   accounts: [Account]!
   email: String!
@@ -228,29 +228,29 @@ type Reader implements User @key(fields : "id") {
 
 "Subscription root"
 type Subscription {
-  "Emite a cada PostCreated. authorId filtra por tópico (null = todos)"
+  "Emits on every PostCreated. authorId filters by topic (null = all)"
   onPostCreated(authorId: ID): Post!
-  "Emite a cada PostUpdated. Os dois filtros combinam (AND); null em ambos = tudo"
+  "Emits on every PostUpdated. The two filters combine (AND); null in both = everything"
   onPostUpdated(authorId: ID, postId: ID): Post!
 }
 
-"Uma tag. Agregado próprio: tem id e stream de eventos independentes do post"
+"A tag. An aggregate of its own: it has an id and an event stream independent of the post"
 type Tag @key(fields : "id") {
   id: ID!
   name: String!
 }
 
 type TagConnection {
-  "Os itens desta página, cada um com a sua posição"
+  "The items on this page, each with its position"
   edges: [TagEdge]!
-  "Se existe página seguinte/anterior, e os cursores das pontas desta"
+  "Whether there is a next/previous page, and the cursors at this one's ends"
   pageInfo: PageInfo!
 }
 
 type TagEdge {
-  "Posição opaca deste item; devolva-a em `after` para continuar daqui"
+  "This item's opaque position; pass it back in `after` to continue from here"
   cursor: String!
-  "O item desta posição da conexão"
+  "The item at this position in the connection"
   node: Tag!
 }
 
@@ -259,6 +259,7 @@ type _Service {
 }
 
 enum AuthProvider {
+  COGNITO
   CREDENTIAL
   GITHUB
   GOOGLE

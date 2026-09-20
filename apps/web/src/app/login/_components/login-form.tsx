@@ -11,10 +11,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
-/**
- * Os três usuários que `infra/aws/identity/index.ts` semeia — os MESMOS do realm do Keycloak, com os
- * mesmos e-mails, nomes, senhas e grupos. É o que faz este roteiro valer contra os dois emissores.
- */
 const seeded = [
   { email: 'manuel@example.com', label: 'Manuel', role: 'author' },
   { email: 'promovido@example.com', label: 'Promovido', role: 'author' },
@@ -33,24 +29,6 @@ export function LoginForm() {
   const [password, setPassword] = useState('segredo123');
   const [leaving, setLeaving] = useState(false);
 
-  /**
-   * A ação é chamada À MÃO, e a navegação acontece na linha seguinte ao `await`. Custa uma
-   * explicação, porque `useActionState` + `<form action={…}>` seria o idiomático.
-   *
-   * O que aquele caminho tem de diferente: o Next re-renderiza a rota atual depois de toda server
-   * action e entrega esse render JUNTO com o resultado. Com o `useActionState`, a navegação ficaria
-   * num `useEffect` — que só roda depois do commit, ou seja, depois de o React já ter aplicado o
-   * novo render. Se aquele render decidir navegar (era o caso enquanto `/login/page.tsx` tinha um
-   * `redirect`), o formulário some antes de o efeito existir.
-   *
-   * Chamando a ação diretamente, a recarga é disparada no mesmo <i>tick</i> em que a resposta
-   * chega. Não há render intermediário para competir com ela.
-   *
-   * E por que RECARGA e não `router.push`: a sessão vive num cookie que o `layout.tsx` lê no
-   * servidor, e em produção o Next já buscou o payload anônimo desse layout ao fazer prefetch dos
-   * links do cabeçalho. Uma navegação suave o reaproveitaria — cabeçalho dizendo "Entrar" com o
-   * cookie gravado. Sessão nova é documento novo.
-   */
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);

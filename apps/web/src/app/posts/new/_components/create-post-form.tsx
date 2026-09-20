@@ -15,15 +15,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { graphql } from '@/gql';
-import { cn } from '@/lib/utils';
+import { cn, errorShownByHookState } from '@/lib/utils';
 
-/**
- * `createPost` devolve o post JÁ PROJETADO — e na versão 1.
- *
- * Isto não é um detalhe de implementação que vazou: é o ciclo de vida do agregado. `PostPreCreated`
- * diz "o post existe"; `PostCreated`, que vem depois e de OUTRO serviço, diz "o post está completo".
- * A mutation responde o primeiro. Quem quiser ver o segundo espera — e é o que a página `/saga` faz.
- */
 const CreatePostMutation = graphql(`
   mutation CreatePost($input: CreatePostInput!) {
     createPost(input: $input) {
@@ -42,8 +35,6 @@ export function CreatePostForm() {
   const [createPost, { data, loading, error, reset }] = useMutation(
     CreatePostMutation,
     {
-      // O feed é uma cursor connection fundida pelo cache; um post novo não aparece nela sozinho.
-      // Refazer a query é mais honesto que inventar uma posição para ele na página 1.
       refetchQueries: ['FeedPosts'],
     },
   );
@@ -98,9 +89,7 @@ export function CreatePostForm() {
                 setContent('');
               }
             })
-            .catch(() => {
-              /* o erro já está em `error`; o catch existe para não vazar unhandled */
-            });
+            .catch(errorShownByHookState);
         }}
       >
         <div className="space-y-2">
@@ -146,16 +135,8 @@ export function CreatePostForm() {
           <p className="text-sm font-medium">
             Resposta da mutation — versão {created.version}
           </p>
-          {/* `created` carrega a REFERÊNCIA ao fragmento, não os campos: quem os lê é o
-                        próprio PostCard. Por isso ele é passado inteiro, sem desmascarar aqui. */}
           <PostCard post={created} />
           <div className="flex gap-2">
-            {/* Um `Link` com as classes do botão, e NÃO `<Button render={<Link/>}>`. O
-                            Base UI marca o elemento renderizado com `role="button"` quando ele não é
-                            um `<button>` nativo — o que descreve errado uma NAVEGAÇÃO: leitor de tela
-                            anuncia "botão", o menu de contexto perde "abrir em nova aba", e quem
-                            procura por `role=link` não acha. `buttonVariants` dá a mesma aparência
-                            sem mentir sobre o papel. */}
             <Link
               href={`/posts/${created.id}`}
               className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}

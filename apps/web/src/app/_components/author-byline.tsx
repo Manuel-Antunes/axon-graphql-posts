@@ -10,11 +10,6 @@ export const AuthorByline_author = graphql(`
   }
 `);
 
-/**
- * A assinatura do post. Note o que ela NÃO pede: `bio` e `posts` existem em `Author` e não entram
- * aqui — resolver `posts` do autor em toda linha do feed seria o N+1 que o `@Source List<T>` do
- * servidor foi escrito para evitar, disparado pelo cliente.
- */
 export function AuthorByline({
   author,
   className,

@@ -1,152 +1,155 @@
 # quarkus-axon-graphql-posts
 
-Conversão para **Quarkus** da POC [axon-graphql-posts](https://github.com/Manuel-Antunes/axon-graphql-posts),
-escrita em Spring Boot.
+A **Quarkus** conversion of the [axon-graphql-posts](https://github.com/Manuel-Antunes/axon-graphql-posts)
+proof of concept, originally written in Spring Boot.
 
-O objetivo não foi "fazer compilar no Quarkus": foi manter **as mesmas decisões de arquitetura** —
-Axon Framework 5 com entidades anotadas e DCB, DDD com value objects `@Embeddable`, Keycloak como único
-provedor de identidade, MapStruct em todas as fronteiras, cursor connections do Relay — e trocar cada
-peça de infraestrutura do Spring pela peça equivalente do Quarkus, usando o que cada uma tem de melhor em
-vez de imitar a outra.
+The goal was not "make it compile on Quarkus": it was to keep **the same architecture decisions** —
+Axon Framework 5 with annotated entities and DCB, DDD with `@Embeddable` value objects, Keycloak as the
+single identity provider, MapStruct on every boundary, Relay cursor connections — and to swap each piece
+of Spring infrastructure for the equivalent Quarkus piece, using what each one does best instead of
+imitating the other.
 
 ```bash
-./mvnw quarkus:dev     # http://localhost:8080/q/graphql-ui/  — só precisa de Docker ligado
-./mvnw test            # 144 testes, incluindo ponta a ponta com Postgres e Keycloak de verdade
+./mvnw quarkus:dev     # http://localhost:8080/q/graphql-ui/  — only needs Docker running
+./mvnw test            # 144 tests, including end-to-end with a real Postgres and Keycloak
 ```
 
 ---
 
-## O que mudou, peça por peça
+## What changed, piece by piece
 
-| Papel | Spring Boot | Quarkus |
+| Role | Spring Boot | Quarkus |
 |---|---|---|
-| GraphQL | Spring for GraphQL, schema-first (`posts.graphqls`) | SmallRye GraphQL, **code-first** (o schema sai das classes) |
-| Assíncrono | Reactor (`Mono`/`Flux`) + extensão `axon-reactor` | **Mutiny** (`Uni`/`Multi`) sobre os gateways do núcleo do Axon |
-| Cursor connections | `ScrollSubrange` + `Window<T>` + `ConnectionTypeDefinitionConfigurer` | `interfaces/graphql/relay`: `Connection<N, E>` e `Edge<N>` genéricos |
-| Config do Axon | `axon-spring-boot-starter` | extensão de Quarkus de terceiros (`at.meks`), descoberta em build time |
-| Persistência | Spring Data JPA (interfaces geradas) | Hibernate ORM + **Panache** |
-| Transações | `PlatformTransactionManager` | **JTA/Narayana**, via `quarkus-axon-transaction` |
-| Segurança | `SecurityWebFilterChain` + `@PreAuthorize` + conversor de roles | **quarkus-oidc** + `@RolesAllowed`, sem conversor |
-| Senha | `BCryptPasswordEncoder` | `BcryptUtil` |
+| GraphQL | Spring for GraphQL, schema-first (`posts.graphqls`) | SmallRye GraphQL, **code-first** (the schema comes out of the classes) |
+| Async | Reactor (`Mono`/`Flux`) + the `axon-reactor` extension | **Mutiny** (`Uni`/`Multi`) over Axon's core gateways |
+| Cursor connections | `ScrollSubrange` + `Window<T>` + `ConnectionTypeDefinitionConfigurer` | `interfaces/graphql/relay`: generic `Connection<N, E>` and `Edge<N>` |
+| Axon config | `axon-spring-boot-starter` | a third-party Quarkus extension (`at.meks`), discovered at build time |
+| Persistence | Spring Data JPA (generated interfaces) | Hibernate ORM + **Panache** |
+| Transactions | `PlatformTransactionManager` | **JTA/Narayana**, via `quarkus-axon-transaction` |
+| Security | `SecurityWebFilterChain` + `@PreAuthorize` + a role converter | **quarkus-oidc** + `@RolesAllowed`, no converter |
+| Password | `BCryptPasswordEncoder` | `BcryptUtil` |
 | Mappers | `@Mapper(componentModel = "spring")` | `-Amapstruct.defaultComponentModel=jakarta-cdi` |
-| Infra de teste | Testcontainers à mão (3 classes) | **Dev Services** (zero classes) |
-| Subscriptions | GraphQL over SSE | WebSocket (`graphql-transport-ws`, de fábrica) **+ SSE** (`interfaces/graphql/sse`, escrito aqui) |
-| Federação | — | **subgraph Apollo Federation 2** (`@key`/`@shareable`/`@Resolver` do SmallRye) |
+| Test infrastructure | hand-written Testcontainers (3 classes) | **Dev Services** (zero classes) |
+| Subscriptions | GraphQL over SSE | WebSocket (`graphql-transport-ws`, out of the box) **+ SSE** (`interfaces/graphql/sse`, written here) |
+| Federation | — | **Apollo Federation 2 subgraph** (SmallRye's `@key`/`@shareable`/`@Resolver`) |
 
-O domínio (`domain/`) atravessou **quase intacto**: mudou uma anotação (`@EventSourced` do módulo Spring
-virou `@EventSourcedEntity` do núcleo do Axon) e o `Role`, que perdeu o prefixo `ROLE_` porque o Quarkus
-não usa nenhum. Isso é o resultado que a arquitetura hexagonal promete e raramente se tem a chance de
-medir: as portas (`PostRepository`, `DomainEventPublisher`, `AuthenticatedUser`, `PasswordVerifier`)
-absorveram a troca inteira de plataforma.
+The domain (`domain/`) crossed over **almost untouched**: one annotation changed (`@EventSourced` from
+the Spring module became `@EventSourcedEntity` from Axon's core) and `Role`, which lost the `ROLE_`
+prefix because Quarkus uses none. That is the result hexagonal architecture promises and that you rarely
+get the chance to measure: the ports (`PostRepository`, `DomainEventPublisher`, `AuthenticatedUser`,
+`PasswordVerifier`) absorbed an entire platform swap.
 
 ---
 
-## Os pacotes, e a seta que eles desenham
+## The packages, and the arrow they draw
 
-A conversão começou com três pacotes na raiz agrupados **por papel** — `dto/`, `mapper/`, `exceptions/` —
-com a justificativa de "um lugar só para procurar todo input, todo mapeamento, toda tradução de erro".
-Funcionava para achar arquivo e escondia a única coisa que um pacote deveria mostrar: **a camada**. Um
-pacote de mappers na raiz enxerga domínio e protocolo no mesmo arquivo, e nada no projeto dizia se isso
-era permitido ou apenas tolerado.
+The conversion started with three root packages grouped **by role** — `dto/`, `mapper/`, `exceptions/` —
+justified as "one place to look for every input, every mapping, every error translation". It worked for
+finding files and hid the one thing a package should show: **the layer**. A root mappers package sees
+domain and protocol in the same file, and nothing in the project said whether that was allowed or merely
+tolerated.
 
-Hoje cada tipo mora na camada que o possui:
+Today every type lives in the layer that owns it:
 
 ```
-application/<agregado>/view/     PostView, TagView, UserView…, PostPage, *ViewMapper
-interfaces/graphql/api/          os @GraphQLApi — só resolver
+application/<aggregate>/view/    PostView, TagView, UserView…, PostPage, *ViewMapper
+interfaces/graphql/api/          the @GraphQLApi classes — resolvers only
 interfaces/graphql/dto/          CreatePostInput, UpdatePostInput
 interfaces/graphql/mapper/       PostInputMapper (input → command)
 interfaces/graphql/relay/        Connection/Edge/PageInfo/Connections/Cursors + Post/TagConnection/Edge
-interfaces/graphql/error/        GraphQlErrors, @TranslatesErrors, as 4 exceções com @ErrorCode
-interfaces/graphql/sse/          a porta de Server-Sent Events — transporte puro, o SmallRye não a tem
+interfaces/graphql/error/        GraphQlErrors, @TranslatesErrors, the 4 exceptions with @ErrorCode
+interfaces/graphql/sse/          the Server-Sent Events endpoint — pure transport, SmallRye does not have it
 ```
 
-### A regra que decidiu cada caso
+### The rule that decided every case
 
-**Quem atravessa o bus é da aplicação; quem só existe no schema é da apresentação.**
+**What crosses the bus belongs to the application; what only exists in the schema belongs to presentation.**
 
-Os `*View` não são "DTOs de saída do controller": são o **resultado das queries**. `FindPost` devolve
-`PostView`, `FindAllPosts` devolve `PostPage`, as subscriptions emitem `PostView` — tudo isso acontece
-antes de existir um resolver. Deixá-los em `interfaces` faria a aplicação importar a apresentação, que é a
-seta ao contrário. Os `*ViewMapper` (entidade → view) foram junto, porque quem os chama são os query
-handlers.
+The `*View` types are not "controller output DTOs": they are the **result of the queries**. `FindPost`
+returns `PostView`, `FindAllPosts` returns `PostPage`, the subscriptions emit `PostView` — all of that
+happens before a resolver exists. Leaving them in `interfaces` would make the application import
+presentation, which is the arrow backwards. The `*ViewMapper` classes (entity → view) went with them,
+because the query handlers are what call them.
 
-Os `*Input` são o oposto: nunca saem da borda. O `PostInputMapper` os transforma em command antes de
-qualquer coisa, e depois disso eles não existem mais. Ficaram na apresentação, e o mapper deles também.
+The `*Input` types are the opposite: they never leave the edge. `PostInputMapper` turns them into a
+command before anything else, and after that they no longer exist. They stayed in presentation, and so
+did their mapper.
 
-### As duas dívidas, anotadas onde elas estão
+### The two debts, annotated where they live
 
-- **Os `*View` carregam anotações do MicroProfile GraphQL** (`@Name("Post")`, `@Id`, `@Description`). É a
-  aplicação sabendo de protocolo. Separar isso significa duas views por agregado — uma da aplicação, uma do
-  schema — e um mapper a mais entre elas; para o tamanho desta POC, é ceremônia sem decisão nova. Se um dia
-  valer, a fronteira a mexer é o `*ViewMapper`, e nada além dele.
-- **`DataIntegrityTranslator` conhece o Hibernate e mora em `error/`.** Ele traduz violação de constraint
-  em exceção de domínio, e quem precisa disso é o `GraphQlErrors`, uma linha acima. Em `infrastructure` ele
-  criaria a única dependência de apresentação → infraestrutura do projeto, para não ganhar nada.
+- **The `*View` types carry MicroProfile GraphQL annotations** (`@Name("Post")`, `@Id`,
+  `@Description`). That is the application knowing about protocol. Separating it means two views per
+  aggregate — one for the application, one for the schema — and one more mapper between them; at the
+  size of this proof of concept, that is ceremony with no new decision. If it ever pays off, the
+  boundary to move is `*ViewMapper`, and nothing beyond it.
+- **`DataIntegrityTranslator` knows Hibernate and lives in `error/`.** It translates a constraint
+  violation into a domain exception, and the one who needs that is `GraphQlErrors`, one line above. In
+  `infrastructure` it would create the project's only presentation → infrastructure dependency, and gain
+  nothing.
 
-O `domain/` não foi tocado — de novo. É o segundo rearranjo de pacotes que ele atravessa sem uma linha
-alterada.
+`domain/` was not touched — again. That is the second package rearrangement it has crossed without a
+line changed.
 
 ---
 
-## Connection e Edge genéricos
+## Generic Connection and Edge
 
-Era o pedido mais concreto: *"queria que connection e edge fossem tipos genéricos, que eu passasse a
-classe com que quero trabalhar e simplesmente funcionasse"*.
+This was the most concrete request: *"I wanted connection and edge to be generic types, so I could pass
+the class I want to work with and it would simply work"*.
 
 ```java
-// escrito uma vez, em interfaces/graphql/relay
+// written once, in interfaces/graphql/relay
 public abstract class Edge<N>                              { N node; String cursor; }
 public abstract class Connection<N, E extends Edge<N>>     { List<E> edges; PageInfo pageInfo; }
 
-// uma linha por tipo paginado
+// one line per paginated type
 public final class PostEdge       extends Edge<PostView> { }
 public final class PostConnection extends Connection<PostView, PostEdge> { }
 ```
 
 ```java
-// no resolver
+// in the resolver
 ConnectionArgs args = ConnectionArgs.of("post", first, after);
 return Connections.page(page.items(), page.hasNext(), args, PostEdge::new, PostConnection::new);
 ```
 
-### Por que a subclasse de uma linha, e não `Connection<PostView, PostEdge>` direto
+### Why the one-line subclass, and not `Connection<PostView, PostEdge>` directly
 
-Porque o SmallRye nomeia um genérico instanciado pelo tipo **mais um sufixo por argumento**:
-`Connection<PostView>` vira `Connection_Post` no schema. É legal, é estável, e não se parece com nenhum
-cliente Relay do mundo.
+Because SmallRye names an instantiated generic after the type **plus a suffix per argument**:
+`Connection<PostView>` becomes `Connection_Post` in the schema. That is legal, it is stable, and it looks
+like no Relay client in the world.
 
-Uma classe **sem parâmetros de tipo próprios** é, para o construtor de schema, um tipo comum — e um tipo
-comum leva o nome da classe. O que ela não perde é a resolução dos genéricos: o SmallRye sobe a
-hierarquia, encontra `Edge<PostView>` e resolve `N` para `PostView` ao montar o campo `node`.
+A class **with no type parameters of its own** is, to the schema builder, an ordinary type — and an
+ordinary type takes the class's name. What it does not lose is generic resolution: SmallRye walks up the
+hierarchy, finds `Edge<PostView>` and resolves `N` to `PostView` when building the `node` field.
 
-O segundo parâmetro (`E extends Edge<N>`) não é redundância: é ele que faz o schema sair com
-`edges: [PostEdge]!` em vez de `[Edge_Post]!`. Declarado como `List<Edge<N>>`, o construtor de schema
-veria um genérico instanciado ali dentro e desfaria o que a subclasse conseguiu.
+The second parameter (`E extends Edge<N>`) is not redundancy: it is what makes the schema come out with
+`edges: [PostEdge]!` instead of `[Edge_Post]!`. Declared as `List<Edge<N>>`, the schema builder would see
+an instantiated generic in there and undo what the subclass achieved.
 
-Duas declarações de uma linha por tipo paginado, e nenhuma lógica de paginação duplicada. É o mais perto
-que dá para chegar do `ConnectionTypeDefinitionConfigurer` do Spring — com a diferença de que os tipos
-existem em Java, o compilador os confere e o IDE navega até eles. O `RelaySchemaTest` guarda o mecanismo:
-ele lê o SDL gerado e falha se `Connection_` voltar a aparecer.
+Two one-line declarations per paginated type, and no duplicated pagination logic. It is as close as you
+can get to Spring's `ConnectionTypeDefinitionConfigurer` — with the difference that the types exist in
+Java, the compiler checks them and the IDE navigates to them. `RelaySchemaTest` guards the mechanism: it
+reads the generated SDL and fails if `Connection_` comes back.
 
-**O que ganhamos de quebra**, e o Spring não tinha:
+**What we got for free**, and Spring did not have:
 
-- **teto de página** (`ConnectionArgs.MAX_LIMIT`): `posts(first: 100000)` é recusado, em vez de descer até
-  o `Limit` do Spring Data;
-- **cursor com prefixo de tipo**: o cursor de `tags` é recusado em `posts`. O `CursorStrategy` do Spring
-  codificava `O_<offset>` sem prefixo, e um cursor servia em qualquer conexão.
+- **a page ceiling** (`ConnectionArgs.MAX_LIMIT`): `posts(first: 100000)` is refused, instead of going
+  all the way down to Spring Data's `Limit`;
+- **a type-prefixed cursor**: a `tags` cursor is refused in `posts`. Spring's `CursorStrategy` encoded
+  `O_<offset>` with no prefix, and one cursor worked in any connection.
 
 ---
 
-## O lote: onde o Quarkus ficou mais simples
+## Batching: where Quarkus got simpler
 
-No projeto Spring, `Post.tags` e `Author.posts` **não podiam** usar `@BatchMapping`: ele não enxerga
-`@Argument` nem `ScrollSubrange`, e os dois campos são paginados. A saída eram duas classes de cinquenta
-linhas — registrar a função no `BatchLoaderRegistry` pelo construtor, nomear o loader numa constante,
-buscar o `DataLoader` no `DataFetchingEnvironment` dentro de um `@SchemaMapping`.
+In the Spring project, `Post.tags` and `Author.posts` **could not** use `@BatchMapping`: it does not see
+`@Argument` or `ScrollSubrange`, and both fields are paginated. The way out was two fifty-line classes —
+registering the function in `BatchLoaderRegistry` through the constructor, naming the loader in a
+constant, fetching the `DataLoader` out of `DataFetchingEnvironment` inside a `@SchemaMapping`.
 
-O `BatchDataFetcher` do SmallRye passa os argumentos do campo junto com as chaves no contexto do lote,
-então um `@Source` em lote **pode** ter argumentos:
+SmallRye's `BatchDataFetcher` passes the field's arguments along with the keys in the batch context, so a
+batched `@Source` **can** have arguments:
 
 ```java
 @Name("tags")
@@ -155,139 +158,142 @@ public Uni<List<TagConnection>> tags(@Source List<PostView> posts,
                                      @Name("after") String after) { … }
 ```
 
-Duas classes viraram dois métodos. O `BatchLoadingE2ETest` mede que a simplificação não custou o lote:
-uma resposta com 5 posts gasta **o mesmo número de statements** que uma com 1.
+Two classes became two methods. `BatchLoadingE2ETest` measures that the simplification did not cost the
+batch: a response with 5 posts spends **the same number of statements** as one with 1.
 
 ---
 
-## Axon 5: a configuração que deixou de existir
+## Axon 5: the configuration that ceased to exist
 
-Este projeto começou sem starter. `axon-spring-boot-starter` monta a configuração a partir do
-`ApplicationContext`, não há equivalente para Quarkus, e o `EventSourcingConfigurer` é API **do núcleo** —
-então um produtor CDI de 284 linhas fazia explicitamente o que o starter faz por dentro: descobrir
-handlers varrendo o `BeanManager`, registrar entidades, publicar os gateways como beans, montar os
-processors. Mais 164 linhas de `AxonHandlerLookup` e 91 de `JtaTransactionManager`.
+This project started without a starter. `axon-spring-boot-starter` builds the configuration from the
+`ApplicationContext`, there is no Quarkus equivalent, and `EventSourcingConfigurer` is **core** API — so a
+284-line CDI producer explicitly did what the starter does internally: discover handlers by scanning the
+`BeanManager`, register entities, publish the gateways as beans, assemble the processors. Plus 164 lines of
+`AxonHandlerLookup` and 91 of `JtaTransactionManager`.
 
-**Alguém já tinha escrito esse starter.**
+**Somebody had already written that starter.**
 [`meks77/quarkus-axonframework-extension`](https://github.com/meks77/quarkus-axonframework-extension)
-(`at.meks.quarkiverse.axonframework-extension`, Apache-2.0) é uma extensão de Quarkus de verdade —
-descoberta em *build time*, não em runtime. O projeto foi migrado para ela:
+(`at.meks.quarkiverse.axonframework-extension`, Apache-2.0) is a real Quarkus extension — discovered at
+*build time*, not at runtime. The project was migrated to it:
 
-| | antes | depois |
+| | before | after |
 |---|---|---|
-| `AxonProducer` | 284 linhas | — |
-| `AxonHandlerLookup` | 164 linhas | — |
-| `JtaTransactionManager` | 91 linhas | — (`quarkus-axon-transaction`) |
-| `EventSourcedEntities` | — | 53 linhas |
-| `ApplicationClock` | — | 25 linhas |
-| **total em `infrastructure/axon`** | **539** | **78** |
+| `AxonProducer` | 284 lines | — |
+| `AxonHandlerLookup` | 164 lines | — |
+| `JtaTransactionManager` | 91 lines | — (`quarkus-axon-transaction`) |
+| `EventSourcedEntities` | — | 53 lines |
+| `ApplicationClock` | — | 25 lines |
+| **total in `infrastructure/axon`** | **539** | **78** |
 
-O schema GraphQL saiu byte a byte idêntico e os 131 testes passam. O domínio e a aplicação não souberam
-de nada: a troca inteira ficou dentro de `infrastructure`.
+The GraphQL schema came out byte for byte identical and the 131 tests pass. The domain and the
+application never found out: the whole swap stayed inside `infrastructure`.
 
-### O que a extensão descobre sozinha
+### What the extension discovers on its own
 
-Entidades (`@EventSourcedEntity` na classe), command handlers, query handlers e event handlers, todos por
-índice Jandex em build time. O log da partida lista cada um. Os gateways e buses viram beans injetáveis
-comuns, e com eles vêm o `Repository<ID, T>` tipado, interceptadores de dispatch e de handler, o
-`quarkus.axon.command-gateway.retry.scheduling`, uma carta no Dev UI e um health check dos event
-processors em `/q/health` (`Axon eventprocessors: UP`).
+Entities (`@EventSourcedEntity` on the class), command handlers, query handlers and event handlers, all
+through the Jandex index at build time. The startup log lists each one. The gateways and buses become
+ordinary injectable beans, and with them come the typed `Repository<ID, T>`, dispatch and handler
+interceptors, `quarkus.axon.command-gateway.retry.scheduling`, a Dev UI card and an event processor
+health check at `/q/health` (`Axon eventprocessors: UP`).
 
-Além do core, a linha do Axon 5 tem publicados `quarkus-axon-transaction`, `quarkus-axon-server`,
-`quarkus-axon-jpa-eventstore`, `quarkus-axon-tokenstore-jpa` e `quarkus-axon-metrics`. **O event store em
-memória é o default** — que é justamente a escolha deste projeto, então trocar por Postgres é acrescentar
-uma dependência e nada mais.
+Besides the core, the Axon 5 line has `quarkus-axon-transaction`, `quarkus-axon-server`,
+`quarkus-axon-jpa-eventstore`, `quarkus-axon-tokenstore-jpa` and `quarkus-axon-metrics` published. **The
+in-memory event store is the default** — which is exactly this project's choice, so switching to Postgres
+means adding a dependency and nothing else.
 
-### O que ela não descobre, e por isso ainda está escrito
+### What it does not discover, and so is still written down
 
-**O tipo do id de cada entidade.** No Axon 5 o par (tipo do id, entidade) é argumento de
-`EventSourcedEntityModule.autodetected(...)`, não um atributo de anotação. A extensão resolve com uma
-anotação própria, `@IdType(PostId.class)`, caindo em `String` quando ela não está lá — e é aí que este
-projeto discorda: pôr uma anotação de uma extensão de Quarkus dentro de `domain` seria a primeira
-dependência do domínio para uma biblioteca de plataforma, exatamente o que a conversão provou ser
-desnecessário. Implementar o `EventSourcedEntityConfigurer` custa um mapa de três linhas e mantém
-`domain` como estava.
+**Each entity's id type.** In Axon 5 the (id type, entity) pair is an argument to
+`EventSourcedEntityModule.autodetected(...)`, not an annotation attribute. The extension solves it with an
+annotation of its own, `@IdType(PostId.class)`, falling back to `String` when it is absent — and that is
+where this project disagrees: putting a Quarkus extension's annotation inside `domain` would be the
+domain's first dependency on a platform library, exactly what the conversion proved unnecessary.
+Implementing `EventSourcedEntityConfigurer` costs a three-line map and keeps `domain` as it was.
 
-**Qual processor roda cada pacote de event handler**, em linhas de `application.properties`:
+**Which processor runs each event-handler package**, in lines of `application.properties`:
 
 ```properties
 quarkus.axon.subscribingprocessor.namespaces=dev.manuelantunes.axonposts.application.post.projection
 quarkus.axon.pooledprocessor.post-subscriptions.namespaces=dev.manuelantunes.axonposts.application.post.event
 ```
 
-São dois porque as duas reações ao mesmo evento precisam de entregas opostas: a projeção grava uma vez,
-na transação do append; os `*EventHandler` avisam os assinantes em TODO container, lendo o event store.
-O código dos dois lados é o mesmo `@EventHandler` de sempre — a diferença inteira está nestas linhas.
+There are two because the two reactions to the same event need opposite deliveries: the projection writes
+once, in the append's transaction; the `*EventHandler` classes notify subscribers in EVERY container,
+reading the event store. The code on both sides is the same old `@EventHandler` — the entire difference is
+in these lines.
 
-O valor é o **nome do pacote**. A extensão agrupa event handlers por `@Namespace` lido *da classe*, e cai
-no pacote quando não há anotação — então o `@Namespace` que ficava no `package-info.java` deixou de ter
-efeito e saiu, junto com a constante que existia só para casar os dois lados.
+The value is the **package name**. The extension groups event handlers by `@Namespace` read *from the
+class*, and falls back to the package when there is no annotation — so the `@Namespace` that used to sit
+in `package-info.java` stopped having any effect and was removed, along with the constant that existed
+only to match the two sides.
 
-A regra que importava continua valendo — **handler novo neste pacote entra sem tocar em configuração** —,
-mas ela agora tem uma borda: vale *dentro* dos pacotes listados. Um event handler de outro agregado, num
-pacote novo, precisa do pacote na lista, e esquecer disso **não dá erro**:
+The rule that mattered still holds — **a new handler in this package goes in without touching
+configuration** — but it now has an edge: it holds *inside* the listed packages. An event handler of
+another aggregate, in a new package, needs the package on the list, and forgetting that **does not
+error**:
 
 ```
 INFO  registering pooled event processor for namespaces …application.tag.event
 INFO  Starting PooledStreamingEventProcessor […]. Initializing (16) segments
 ```
 
-A aplicação sobe, o handler roda, e a projeção daquele agregado vira **eventualmente consistente sem
-ninguém ter pedido** — a mutation passa a responder antes da projeção. É exatamente o tipo de coisa que
-este projeto prefere transformar em teste vermelho, então
-`AxonWiringTest.everyPackageWithAnEventHandlerRunsInTheSubscribingProcessor` varre o `BeanManager` atrás
-de `@EventHandler` e falha se algum pacote ficou de fora da propriedade. Verificado nos dois sentidos:
-com um handler plantado num pacote novo, ele fica vermelho.
+The application comes up, the handler runs, and that aggregate's projection becomes **eventually
+consistent with nobody having asked for it** — the mutation starts answering before the projection. That
+is exactly the kind of thing this project prefers to turn into a red test, so
+`AxonWiringTest.everyPackageWithAnEventHandlerRunsInTheSubscribingProcessor` sweeps the `BeanManager` for
+`@EventHandler` and fails if any package was left out of the property. Verified in both directions: with a
+handler planted in a new package, it goes red.
 
-O erro simétrico é barulhento e vale saber por causa da **ordem**: um namespace listado sem nenhum handler
-faz a aplicação **não subir**, com `NullPointerException` na partida — `getEventhandlers` faz
-`map(mapa::get).flatMap(Collection::stream)` sobre um `null`. Ou seja: escreva o primeiro handler do
-pacote, *depois* acrescente o pacote à propriedade. Não dá para declarar antes.
+The symmetric error is loud and worth knowing because of the **order**: a namespace listed with no handler
+at all makes the application **fail to start**, with a `NullPointerException` at startup —
+`getEventhandlers` does `map(map::get).flatMap(Collection::stream)` over a `null`. In other words: write
+the package's first handler, *then* add the package to the property. You cannot declare it upfront.
 
-As duas substituições funcionam por **ausência**: a extensão declara beans `@DefaultBean` e cede a vez.
-Apagar qualquer uma delas não quebra compilação nenhuma — a extensão volta ao padrão dela, que é
-`NoTransactionManager` (o evento e a linha param de commitar juntos) e `String` como id. `AxonWiringTest`
-existe só para isso: afirma que o `TransactionManager` da configuração é o do Quarkus e que cada entidade
-responde pelo seu próprio tipo de id.
+Both substitutions work by **absence**: the extension declares `@DefaultBean` beans and steps aside.
+Deleting either one breaks no compilation — the extension falls back to its default, which is
+`NoTransactionManager` (the event and the row stop committing together) and `String` as the id.
+`AxonWiringTest` exists only for this: it asserts that the configuration's `TransactionManager` is the
+Quarkus one and that each entity answers with its own id type.
 
-### As três armadilhas que sumiram junto
+### The three traps that disappeared along with it
 
-O produtor à mão tinha três linhas que, se esquecidas, faziam a aplicação **subir, listar os handlers no
-log e não processar evento nenhum**: o `ClientProxy.unwrap` em cada componente, o
-`.customized(… eventSource(EventStore.class))` no processor subscribing e o `.build()` no módulo. Foi o
-`PostLifecycleE2ETest` que as encontrou, uma a uma. Nenhuma das três é mais nossa.
+The hand-written producer had three lines that, if forgotten, made the application **start, list the
+handlers in the log and process no events at all**: the `ClientProxy.unwrap` on each component, the
+`.customized(… eventSource(EventStore.class))` on the subscribing processor and the `.build()` on the
+module. It was `PostLifecycleE2ETest` that found them, one at a time. None of the three is ours any more.
 
-A do `ClientProxy` tem um detalhe medido: a extensão registra os beans **com o proxy do ArC**, sem
-desembrulhar, e funciona — todos os commands e todas as projeções rodam. O que era armadilha aqui não é
-armadilha lá.
+The `ClientProxy` one has a measured detail: the extension registers the beans **with the ArC proxy**,
+without unwrapping, and it works — every command and every projection runs. What was a trap here is not a
+trap there.
 
-### O que piorou, honestamente
+### What got worse, honestly
 
-**O live reload ficou menos confiável.** Numa sessão, depois de um `touch` numa classe de command, a
-projeção parou de rodar em silêncio: o `createPost` passou a responder versão 1, sem a tag padrão, e nada
-apareceu no log — que mostrou `shutdown axon` → `starting axon` → `Live reload total time: 1.4s`, limpo.
-Não reproduziu depois, nem com a espera de shutdown aumentada (`quarkus.axon.live-reload.shutdown.wait-duration.amount`,
-o botão que a própria extensão documenta para um sintoma vizinho), então **a causa continua desconhecida**
-e a propriedade não entrou no projeto para não virar superstição. Ao ver um post nascer na versão 1 em
-dev, reiniciar o `quarkus:dev` resolve.
+**Live reload became less reliable.** In one session, after a `touch` on a command class, the projection
+silently stopped running: `createPost` started answering version 1, with no default tag, and nothing showed
+up in the log — which showed `shutdown axon` → `starting axon` → `Live reload total time: 1.4s`, clean. It
+did not reproduce afterwards, not even with a longer shutdown wait
+(`quarkus.axon.live-reload.shutdown.wait-duration.amount`, the knob the extension itself documents for a
+neighbouring symptom), so **the cause remains unknown** and the property did not enter the project so as
+not to become superstition. When you see a post born at version 1 in dev, restarting `quarkus:dev` fixes
+it.
 
-**As exceções voltam embrulhadas.** `quarkus.axon.exception-handling.wrap-on-command-handler` é `true` por
-default, então uma exceção de domínio chega ao resolver dentro de uma `CommandExecutionException` — como
-era no Spring, e não como era aqui antes. Não quebrou nada porque tanto o `GraphQlErrors` quanto o
-`PostCommandFixtures.hasCause` já percorriam a cadeia de causas em vez da raiz.
+**Exceptions come back wrapped.** `quarkus.axon.exception-handling.wrap-on-command-handler` is `true` by
+default, so a domain exception reaches the resolver inside a `CommandExecutionException` — as it was in
+Spring, and not as it was here before. Nothing broke because both `GraphQlErrors` and
+`PostCommandFixtures.hasCause` already walked the cause chain instead of the root.
 
-**E uma dependência a mais para vigiar.** `2.0.0-alpha6` (ago/2026) está declarada como compatível com
-Quarkus 3.38.1 + Axon 5.3.0; aqui roda em 3.39.2 + 5.3.1, com a versão do Axon fixada pelo BOM **daqui**,
-e a suíte inteira passa. É alpha, de um mantenedor, e a documentação está atrás do código em pelo menos um
-ponto (o aviso de que só ids `String` funcionam, que a `@IdType` desmente). Snapshots e upcasters estão
-marcados como quebrados desde a subida para o AF 5 — este projeto não usa nenhum dos dois.
+**And one more dependency to watch.** `2.0.0-alpha6` (Aug 2026) is declared compatible with Quarkus
+3.38.1 + Axon 5.3.0; here it runs on 3.39.2 + 5.3.1, with the Axon version pinned by **this** project's
+BOM, and the whole suite passes. It is alpha, from a single maintainer, and the documentation is behind
+the code in at least one place (the warning that only `String` ids work, which `@IdType` contradicts).
+Snapshots and upcasters are marked broken since the move to AF 5 — this project uses neither.
 
-## Mutiny, e onde o trabalho bloqueante acontece
+## Mutiny, and where the blocking work happens
 
-O `SimpleCommandBus` e o `SimpleQueryBus` executam o handler **na thread que despacha**, e lá dentro tem
-JPA bloqueante. Um resolver que devolve `Uni` roda no event-loop do Vert.x, e bloquear um event-loop trava
-todas as requisições que ele serve. É a mesma armadilha que o projeto Spring resolve com
-`subscribeOn(boundedElastic())`, e a mesma resposta, escrita no resolver:
+`SimpleCommandBus` and `SimpleQueryBus` execute the handler **on the dispatching thread**, and inside it
+there is blocking JPA. A resolver returning `Uni` runs on the Vert.x event loop, and blocking an event
+loop stalls every request it serves. It is the same trap the Spring project solves with
+`subscribeOn(boundedElastic())`, and the same answer, written in the resolver:
 
 ```java
 return Uni.createFrom()
@@ -295,56 +301,57 @@ return Uni.createFrom()
         .runSubscriptionOn(Infrastructure.getDefaultWorkerPool());
 ```
 
-O `Supplier` é o detalhe que decide: a sobrecarga que recebe o `CompletableFuture` **pronto** exigiria que
-ele já existisse — ou seja, o `gateway.send(...)` teria rodado no event-loop. É a diferença entre offload
-de verdade e offload aparente.
+The `Supplier` is the detail that decides: the overload taking a **ready** `CompletableFuture` would
+require it to already exist — meaning `gateway.send(...)` would have run on the event loop. It is the
+difference between real offloading and apparent offloading.
 
-Isto já foi um utilitário (`interfaces/graphql/support/Dispatch`, um método de duas linhas). Saiu: são
-duas chamadas do Mutiny, e escondê-las atrás de um nome próprio custava uma classe e uma indireção para
-economizar nada — no WebFlux a gente chamava direto. O *porquê* do `Supplier`, que é a única coisa ali que
-não é óbvia, ficou no `package-info` da camada, onde vale para todos os resolvers em vez de um só.
+This was once a utility (`interfaces/graphql/support/Dispatch`, a two-line method). It went away: these
+are two Mutiny calls, and hiding them behind a name of their own cost a class and an indirection to save
+nothing — in WebFlux we called it directly. The *why* of the `Supplier`, which is the only non-obvious
+thing there, stayed in the layer's `package-info`, where it applies to every resolver instead of one.
 
-**A extensão `axon-reactor` não foi usada.** O `QueryGateway` do núcleo do Axon 5 já devolve
-`CompletableFuture` e, para subscriptions, um `Publisher` de Reactive Streams — que
-`Multi.createFrom().publisher(FlowAdapters.toFlowPublisher(…))` consome direto. Uma dependência a menos, e
-o contrato é o padrão da JVM.
+**The `axon-reactor` extension was not used.** Axon 5's core `QueryGateway` already returns a
+`CompletableFuture` and, for subscriptions, a Reactive Streams `Publisher` — which
+`Multi.createFrom().publisher(FlowAdapters.toFlowPublisher(…))` consumes directly. One less dependency,
+and the contract is the JVM standard.
 
-### A subscription que entregava um evento só
+### The subscription that delivered exactly one event
 
-O `Publisher` do `subscriptionQuery` **não honra demanda incremental**. Medido nas duas pontas, com o
-mesmo Axon e os mesmos três posts:
+The `subscriptionQuery` `Publisher` **does not honour incremental demand**. Measured on both ends, with
+the same Axon and the same three posts:
 
 ```java
 publisher.subscribe(...)                  // request(Long.MAX_VALUE)  → [um, dois, tres]
-publisher.subscribe(umDeCadaVez)          // request(1) a cada onNext → [um]
+publisher.subscribe(oneAtATime)           // request(1) per onNext    → [um]
 ```
 
-E `request(1)` a cada item é **exatamente** o que o `SubscriptionSubscriber` do SmallRye faz. Resultado: o
-handshake completa, o primeiro evento chega, a conexão fica aberta e silenciosa para sempre, e nada no log
-reclama. Os quatro testes de subscription que já existiam passavam, porque cada um afirmava sobre **um**
-evento.
+And `request(1)` per item is **exactly** what SmallRye's `SubscriptionSubscriber` does. Result: the
+handshake completes, the first event arrives, the connection stays open and silent forever, and nothing in
+the log complains. The four existing subscription tests all passed, because each one asserted about **one**
+event.
 
 ```java
 return Multi.createFrom()
         .publisher(FlowAdapters.toFlowPublisher(queryGateway.subscriptionQuery(…)))
-        .onOverflow().buffer(UPDATE_BUFFER);   // ← separa as duas demandas
+        .onOverflow().buffer(UPDATE_BUFFER);   // ← separates the two demands
 ```
 
-O operador faz o Mutiny pedir ilimitado ao Axon e servir o assinante de baixo a partir do próprio buffer.
-O teto existe para a falha ser barulhenta se um assinante travar de vez — melhor um `BackPressureFailure`
-do que memória crescendo em silêncio. O `theSameSubscriptionKeepsReceivingEventAfterEvent` é o teste que
-teria pego isso, e agora pega.
+The operator makes Mutiny request unbounded from Axon and serve the downstream subscriber out of its own
+buffer. The ceiling exists so the failure is loud if a subscriber stalls for good — better a
+`BackPressureFailure` than memory growing silently. `theSameSubscriptionKeepsReceivingEventAfterEvent` is
+the test that would have caught this, and now does.
 
-### A terceira porta: GraphQL over SSE
+### The third endpoint: GraphQL over SSE
 
-A tabela de conversão lá em cima dizia que o projeto Spring servia subscriptions por SSE e este serve por
-WebSocket. A primeira metade era uma escolha do Spring for GraphQL; a segunda era uma **limitação**: o
-SmallRye GraphQL 2.18.5 e a extensão do Quarkus 3.39 não têm uma linha de `text/event-stream`. Procurar
-por `event-stream` nos jars não acha nada, e `SmallRyeGraphQLConfig` só conhece `websocketSubprotocols`.
+The conversion table above said the Spring project served subscriptions over SSE and this one serves them
+over WebSocket. The first half was a Spring for GraphQL choice; the second was a **limitation**: SmallRye
+GraphQL 2.18.5 and the Quarkus 3.39 extension have not one line of `text/event-stream`. Searching the jars
+for `event-stream` finds nothing, and `SmallRyeGraphQLConfig` only knows `websocketSubprotocols`.
 
-`interfaces/graphql/sse` é a porta que faltava, em três classes e ~250 linhas, no modo *distinct
-connections* do protocolo [`graphql-sse`](https://github.com/enisdenjo/graphql-sse/blob/master/PROTOCOL.md):
-uma requisição por operação, cada resultado vira `event: next`, o fim vira `event: complete`.
+`interfaces/graphql/sse` is the missing endpoint, in three classes and ~250 lines, in the *distinct
+connections* mode of the
+[`graphql-sse`](https://github.com/enisdenjo/graphql-sse/blob/master/PROTOCOL.md) protocol: one request
+per operation, each result becomes `event: next`, the end becomes `event: complete`.
 
 ```bash
 curl -N -X POST http://localhost:8080/graphql \
@@ -355,28 +362,30 @@ event: next
 data: {"data":{"onPostCreated":{"title":"primeira","version":1}}}
 ```
 
-**Por que valeu escrever.** Não é performance — é infraestrutura. SSE é uma resposta HTTP comum que nunca
-termina: atravessa proxy e balanceador que não sabem fazer `Upgrade`; o token vai no `Authorization` da
-própria requisição, em vez de viajar no `connection_init` ou na query string; o navegador reconecta
-sozinho; e `curl -N` depura. O que se perde é o canal de volta, que numa subscription não custa nada.
-Como o `GET` também é aceito e o navegador manda `Accept: text/event-stream` sozinho, um
-`new EventSource('/graphql?query=subscription{onPostCreated{title}}')` funciona sem biblioteca nenhuma.
+**Why it was worth writing.** It is not performance — it is infrastructure. SSE is an ordinary HTTP
+response that never ends: it crosses proxies and load balancers that cannot do an `Upgrade`; the token
+goes in the request's own `Authorization` header instead of travelling in `connection_init` or the query
+string; the browser reconnects by itself; and `curl -N` debugs it. What you lose is the back channel,
+which in a subscription costs nothing. Since `GET` is also accepted and the browser sends
+`Accept: text/event-stream` on its own, a
+`new EventSource('/graphql?query=subscription{onPostCreated{title}}')` works with no library at all.
 
-**O que NÃO foi reescrito.** O handler herda de `SmallRyeGraphQLAbstractHandler`, a mesma classe de que
-descendem o handler HTTP e o de WebSocket do Quarkus. É ela que ativa o contexto de requisição do ArC,
-publica a `SecurityIdentity` e — o mais fácil de esquecer — carrega o estado do contexto no `metaData`,
-que é como os data fetchers assíncronos o reativam na thread de worker. Herdar é o que faz as três portas
-se comportarem **igual**: mesmo schema, mesmo `@RolesAllowed`, mesmo `ErrorTranslationInterceptor`, mesmo
-teto de profundidade. Medido: `createPost` sem token pela porta de SSE devolve o mesmo
-`extensions.code: UNAUTHORIZED` com a mesma mensagem que pela porta HTTP. O preço é a dependência de uma
-classe do pacote `runtime` de uma extensão, que não é API pública — anotado onde ela é usada.
+**What was NOT rewritten.** The handler inherits from `SmallRyeGraphQLAbstractHandler`, the same class
+Quarkus's HTTP handler and WebSocket handler descend from. It is what activates ArC's request context,
+publishes the `SecurityIdentity` and — the easiest one to forget — carries the context state in
+`metaData`, which is how asynchronous data fetchers reactivate it on the worker thread. Inheriting is what
+makes the three endpoints behave **the same**: same schema, same `@RolesAllowed`, same
+`ErrorTranslationInterceptor`, same depth ceiling. Measured: `createPost` without a token through the SSE
+endpoint returns the same `extensions.code: UNAUTHORIZED` with the same message as through the HTTP one.
+The price is a dependency on a class from an extension's `runtime` package, which is not public API —
+noted where it is used.
 
-E o `onOverflow().buffer(...)` da seção anterior conserta as duas portas de uma vez: o assinante de SSE
-também pede um item de cada vez, então sem ele a subscription por SSE falharia exatamente do mesmo jeito.
-`SseSubscriptionE2ETest` é o irmão do teste de WebSocket, e prova isso.
+And the `onOverflow().buffer(...)` from the previous section fixes both endpoints at once: the SSE
+subscriber also requests one item at a time, so without it the SSE subscription would fail in exactly the
+same way. `SseSubscriptionE2ETest` is the WebSocket test's sibling, and proves it.
 
-**A GraphiQL não usa esta porta, e não é sintoma de nada.** A UI em `/q/graphql-ui/` continua abrindo
-WebSocket porque o `render.js` que o Quarkus serve manda, literalmente:
+**GraphiQL does not use this endpoint, and that is not a symptom of anything.** The UI at
+`/q/graphql-ui/` still opens a WebSocket because the `render.js` Quarkus serves says, literally:
 
 ```js
 var defaultHeaders = { Accept: 'application/json', 'Content-Type': 'application/json' };
@@ -387,28 +396,28 @@ const fetcher = createGraphiQLFetcher({
 });
 ```
 
-As duas linhas explicam tudo: o `Accept: application/json` faz a rota de SSE devolver a requisição com
-`ctx.next()` — que é o comportamento correto e o que o
-`theSamePathStillAnswersJsonToWhoDidNotAskForAStream` trava —, e o `subscriptionUrl` em `ws://` faz o
-`createGraphiQLFetcher` montar um cliente `graphql-ws`. Sem `subscriptionUrl` ele não cai em SSE: **lança**
-("not properly configured for websocket subscriptions"). Não há configuração do Quarkus que mude isso: o
-`updateUrl` do `SmallRyeGraphQLProcessor` só reescreve as linhas `const api` e `const logo` do
-`render.js`; a do `subscriptionUrl` vem fixa do webjar.
+Those two lines explain everything: the `Accept: application/json` makes the SSE route hand the request
+back with `ctx.next()` — which is the correct behaviour and what
+`theSamePathStillAnswersJsonToWhoDidNotAskForAStream` locks down — and the `ws://` `subscriptionUrl` makes
+`createGraphiQLFetcher` build a `graphql-ws` client. Without `subscriptionUrl` it does not fall back to
+SSE: it **throws** ("not properly configured for websocket subscriptions"). No Quarkus configuration
+changes this: `SmallRyeGraphQLProcessor`'s `updateUrl` only rewrites the `const api` and `const logo` lines
+of `render.js`; the `subscriptionUrl` one comes hard-coded from the webjar.
 
-Para exercitar a porta de SSE à mão, `curl -N` (o exemplo lá em cima) ou, no console do navegador:
+To exercise the SSE endpoint by hand, use `curl -N` (the example above) or, in the browser console:
 
 ```js
 new EventSource('/graphql?query=subscription{onPostCreated{title}}')
     .onmessage = e => console.log(e.data);
 ```
 
-Uma GraphiQL que falasse SSE exigiria servir uma página própria com um fetcher de `graphql-sse` — dá,
-mas é uma UI a manter em paralelo à do Quarkus, e não é o que uma POC precisa provar.
+A GraphiQL that spoke SSE would require serving a page of our own with a `graphql-sse` fetcher — doable,
+but that is a UI to maintain alongside Quarkus's, and it is not what a proof of concept needs to prove.
 
-**A armadilha, que é a ordem das rotas.** A porta de SSE é a *mesma* rota `/graphql`, decidida pelo
-`Accept` — o que exige registrá-la entre os handlers de segurança e o de execução do GraphQL. O reflexo é
-escolher um número alto e seguro para o `order`; e é errado. O Quarkus numera as rotas da aplicação **em
-sequência**, com um dígito:
+**The trap, which is route ordering.** The SSE endpoint is the *same* `/graphql` route, chosen by
+`Accept` — which requires registering it between the security handlers and the GraphQL execution handler.
+The reflex is to pick a high, safe number for `order`; and it is wrong. Quarkus numbers the application's
+routes **sequentially**, with a single digit:
 
 ```
 order=-99  SmallRyeGraphQLOverWebSocketHandler   /graphql
@@ -416,40 +425,41 @@ order=  2  SmallRyeGraphQLSchemaHandler          /graphql/schema.graphql
 order=  4  SmallRyeGraphQLExecutionHandler       /graphql
 ```
 
-Com `order=1000` a rota de SSE cai *depois* da de execução, que responde `406 Not Acceptable` a quem
-pediu `text/event-stream` — e o handler novo nunca roda. O número certo é ancorado na mesma constante que
-o Quarkus usa (`-SecurityHandlerPriorities.AUTHORIZATION + 2`), uma casa depois do WebSocket. Um segundo
-detalhe do Vert.x na mesma linha: o Vert.x Web **pausa** a requisição ao começar a rotear, e quem a solta é
-o `BodyHandler`. Como esta rota não tem um — de propósito, para não ler o corpo duas vezes nas requisições
-que ela devolve com `ctx.next()` —, falta um `request.resume()`, e sem ele o POST fica pendurado até o
-cliente desistir.
+With `order=1000` the SSE route lands *after* the execution one, which answers `406 Not Acceptable` to
+whoever asked for `text/event-stream` — and the new handler never runs. The right number is anchored to
+the same constant Quarkus uses (`-SecurityHandlerPriorities.AUTHORIZATION + 2`), one notch after the
+WebSocket. A second Vert.x detail on the same line: Vert.x Web **pauses** the request when it starts
+routing, and what resumes it is the `BodyHandler`. Since this route has none — on purpose, so as not to
+read the body twice on the requests it hands back with `ctx.next()` — a `request.resume()` is missing, and
+without it the POST hangs until the client gives up.
 
 ---
 
-## Segurança: o que sumiu
+## Security: what disappeared
 
-O `SecurityConfig` do projeto Spring tinha cadeia de filtros, `JwtAuthenticationConverter` e um
-`KeycloakRealmRolesConverter` de setenta linhas — este último só porque o conversor de fábrica do Spring
-não lê claim aninhada e porque o Spring exige o prefixo `ROLE_`.
+The Spring project's `SecurityConfig` had a filter chain, a `JwtAuthenticationConverter` and a
+seventy-line `KeycloakRealmRolesConverter` — the last one only because Spring's stock converter does not
+read a nested claim and because Spring requires the `ROLE_` prefix.
 
-Nada disso tem equivalente aqui. O `quarkus-oidc` descobre o JWKS pelo `auth-server-url`, valida
-assinatura/`exp`/`iss` e põe as roles de `realm_access.roles` no `SecurityIdentity` **como estão**. Sobrou
-um produtor de uma linha (`PasswordVerifier` sobre o `BcryptUtil`).
+None of that has an equivalent here. `quarkus-oidc` discovers the JWKS from `auth-server-url`, validates
+signature/`exp`/`iss` and puts the `realm_access.roles` roles into the `SecurityIdentity` **as they are**.
+What is left is a one-line producer (`PasswordVerifier` over `BcryptUtil`).
 
-A divisão continua a mesma, e é a que um endpoint GraphQL exige: a aplicação **não** autentica toda
-requisição (`quarkus.http.auth.proactive=false`), porque `post`/`posts` são públicas e `me`/`createPost`
-não, e as duas chegam pelo mesmo `POST /graphql`. Quem autoriza é o método.
+The split is still the same, and it is the one a GraphQL endpoint demands: the application does **not**
+authenticate every request (`quarkus.http.auth.proactive=false`), because `post`/`posts` are public and
+`me`/`createPost` are not, and both arrive through the same `POST /graphql`. The method is what
+authorizes.
 
-Uma diferença real de comportamento, e para melhor: o Quarkus distingue **`unauthorized`** (sem token) de
-**`forbidden`** (com token, sem a role). No Spring as duas chegavam como `FORBIDDEN`.
+One real behavioural difference, and for the better: Quarkus distinguishes **`unauthorized`** (no token)
+from **`forbidden`** (token, no role). In Spring both arrived as `FORBIDDEN`.
 
 ---
 
-## Dev Services: três classes de teste viraram três linhas de configuração
+## Dev Services: three test classes became three lines of configuration
 
-O projeto Spring precisava de `Containers` (o `static` que subia Postgres e Keycloak em paralelo),
-`KeycloakContainerConfig` (o container com o realm) e `KeycloakTokens` (o grant `password`). E de
-`docker compose up -d` antes de `spring-boot:run`.
+The Spring project needed `Containers` (the `static` block that brought up Postgres and Keycloak in
+parallel), `KeycloakContainerConfig` (the container with the realm) and `KeycloakTokens` (the `password`
+grant). Plus `docker compose up -d` before `spring-boot:run`.
 
 ```properties
 quarkus.keycloak.devservices.realm-path=realm-axon-posts.json
@@ -457,75 +467,75 @@ quarkus.keycloak.devservices.realm-name=axon-posts
 quarkus.keycloak.devservices.create-realm=false
 ```
 
-O Quarkus sobe os dois containers em dev e em teste, importa **o mesmo arquivo de realm** que o
-`docker-compose.yml` monta (ele entra no classpath pelo `<resources>` do `pom.xml`, sem cópia), e injeta
-as URLs. `./mvnw quarkus:dev` e `./mvnw test` só precisam do Docker ligado.
+Quarkus brings up both containers in dev and in test, imports **the same realm file** that
+`docker-compose.yml` mounts (it lands on the classpath through the `pom.xml` `<resources>` block, with no
+copy), and injects the URLs. `./mvnw quarkus:dev` and `./mvnw test` only need Docker running.
 
-O `docker-compose.yml` continua, para dois casos: rodar o JAR empacotado, e ter um console de
-administração do Keycloak para mexer no realm à mão.
+`docker-compose.yml` remains, for two cases: running the packaged JAR, and having a Keycloak admin console
+to edit the realm by hand.
 
 ---
 
-## Schema code-first, e o que ele resolveu
+## Code-first schema, and what it solved
 
-O projeto Spring mantinha, no fim do `posts.graphqls`, um bloco de SDL **gerado por um teste** com os
-tipos que o `ConnectionTypeDefinitionConfigurer` criaria — porque o schema era um arquivo e o que o Spring
-montava em memória não existia para o IDE nem para geradores de cliente.
+The Spring project kept, at the end of `posts.graphqls`, a block of SDL **generated by a test** with the
+types `ConnectionTypeDefinitionConfigurer` would create — because the schema was a file and what Spring
+assembled in memory did not exist for the IDE or for client generators.
 
-Aqui o schema **é** gerado, e o Quarkus o serve em `/graphql/schema.graphql`. Não há segunda definição
-para manter em dia. O que era um teste que reescrevia um arquivo virou um teste que lê a única definição
-que existe.
+Here the schema **is** generated, and Quarkus serves it at `/graphql/schema.graphql`. There is no second
+definition to keep in sync. What was a test that rewrote a file became a test that reads the only
+definition there is.
 
-O `schema.graphql` na raiz é uma **cópia** desse SDL, para gerador de cliente e para o diff da revisão
-mostrar o que uma mudança fez com o contrato. Ele não é lido por nada em runtime; para atualizá-lo:
+The root `schema.graphql` is a **copy** of that SDL, for client generators and so the review diff shows
+what a change did to the contract. Nothing reads it at runtime; to update it:
 
 ```bash
 curl -s http://localhost:8080/graphql/schema.graphql > schema.graphql
 ```
 
-### O teto de profundidade, que vem ligado e é baixo demais
+### The depth ceiling, which comes on and is too low
 
-O SmallRye liga um `MaxQueryDepthInstrumentation` **por padrão, com 10**, e não há nada a configurar para
-descobrir isso — só para consertar. Dez é menos do que este schema precisa em dois lugares:
+SmallRye turns on a `MaxQueryDepthInstrumentation` **by default, at 10**, and there is nothing to
+configure to find that out — only to fix it. Ten is less than this schema needs in two places:
 
-- a consulta de introspecção tem profundidade **15**, então a GraphiQL abre em branco com um único
-  `"maximum query depth exceeded 15 > 10"` — e nenhum gerador de cliente funciona;
-- `posts { edges { node { author { posts { edges { node { tags { edges { node { name` são **11**, ou seja,
-  um cliente Relay legítimo já é recusado.
+- the introspection query has depth **15**, so GraphiQL opens blank with a single
+  `"maximum query depth exceeded 15 > 10"` — and no client generator works;
+- `posts { edges { node { author { posts { edges { node { tags { edges { node { name` is **11**, which
+  means a legitimate Relay client is already refused.
 
-O sintoma engana porque quase tudo continua de pé: a aplicação sobe, o SDL em `/graphql/schema.graphql`
-é servido normalmente (é HTTP, não é query) e toda query rasa responde.
+The symptom misleads because almost everything stays up: the application starts, the SDL at
+`/graphql/schema.graphql` is served normally (it is HTTP, not a query) and every shallow query answers.
 
 ```properties
 quarkus.smallrye-graphql.instrumentation-query-depth=20
 ```
 
-Vinte mantém a defesa contra aninhamento patológico — que é o motivo de o teto existir — com folga para o
-mais fundo que o schema oferece. É o irmão do `ConnectionArgs.MAX_LIMIT`: um limite explícito e anotado, em
-vez de um default herdado. O `SchemaIntrospectionTest` guarda os dois casos.
+Twenty keeps the defence against pathological nesting — which is why the ceiling exists — with room for
+the deepest thing the schema offers. It is `ConnectionArgs.MAX_LIMIT`'s sibling: an explicit, annotated
+limit instead of an inherited default. `SchemaIntrospectionTest` guards both cases.
 
-Duas coisas o code-first cobra, e as duas estão anotadas nas classes:
+Two things code-first charges for, and both are annotated on the classes:
 
-- **os nomes**: `PostView` precisa de `@Name("Post")`, e `CreatePostInput` de `@Input("CreatePostInput")`
-  (senão o SmallRye o chamaria de `CreatePostInputInput`). É o mesmo problema que o
-  `ClassNameTypeResolver` resolvia num `@Bean` — agora a resposta está na própria classe;
-- **a interface polimórfica**: os acessores de `UserView` levam `@Name` porque o `InterfaceCreator` do
-  SmallRye só considera campo o método que parece um getter *ou* que traz `@Name`. Uma interface sem
-  campos é descartada em silêncio, e o erro aparece na partida como `type User not found in schema`.
-  O `RelaySchemaTest` guarda isso também.
+- **the names**: `PostView` needs `@Name("Post")`, and `CreatePostInput` needs
+  `@Input("CreatePostInput")` (otherwise SmallRye would call it `CreatePostInputInput`). It is the same
+  problem `ClassNameTypeResolver` solved in a `@Bean` — now the answer is on the class itself;
+- **the polymorphic interface**: `UserView`'s accessors carry `@Name` because SmallRye's
+  `InterfaceCreator` only counts as a field a method that looks like a getter *or* that carries `@Name`.
+  An interface with no fields is silently discarded, and the error shows up at startup as
+  `type User not found in schema`. `RelaySchemaTest` guards that too.
 
-Ganhos de contrato que vieram de graça: `createdAt` é `DateTime!` em vez de `String!`, e `provider` é o
-enum `AuthProvider!` — no SDL escrito à mão o campo era `AuthProvider!` enquanto o DTO carregava `String`,
-e ninguém era obrigado a notar.
+Contract gains that came for free: `createdAt` is `DateTime!` instead of `String!`, and `provider` is the
+`AuthProvider!` enum — in the hand-written SDL the field was `AuthProvider!` while the DTO carried a
+`String`, and nobody was obliged to notice.
 
 ---
 
-## Federação: este schema como subgraph do Apollo
+## Federation: this schema as an Apollo subgraph
 
-O schema deixou de ser um grafo inteiro e passou a ser **um subgraph de um supergraph**. Nada do que
-existia mudou de comportamento — `posts`, `me`, `createPost`, as subscriptions e a porta de SSE
-continuam idênticas para quem fala direto com esta aplicação. O que se acrescentou foi o contrato que o
-roteador lê, e os dois campos que ele chama.
+The schema stopped being a whole graph and became **a subgraph of a supergraph**. Nothing that existed
+changed behaviour — `posts`, `me`, `createPost`, the subscriptions and the SSE endpoint are still
+identical for anyone talking straight to this application. What was added is the contract the router
+reads, and the two fields it calls.
 
 ```graphql
 schema @link(import: ["@key", "@shareable"], url: "https://specs.apollo.dev/federation/v2.7")
@@ -538,78 +548,82 @@ type  Reader implements User @key(fields: "id")    { id: ID! ... }
 type  PageInfo @shareable                          { ... }
 ```
 
-Ligar isso foi **uma linha de configuração e um punhado de anotações** — o SmallRye já traz a Federação 2
-inteira, incluindo `_service`, `_entities` e as diretivas até a 2.7. O trabalho real não foi habilitar; foi
-decidir o que este serviço **é dono de** e escrever os resolvedores que pagam essa promessa.
+Wiring this up was **one configuration line and a handful of annotations** — SmallRye already ships the
+whole of Federation 2, including `_service`, `_entities` and the directives up to 2.7. The real work was
+not enabling it; it was deciding what this service **owns** and writing the resolvers that pay for that
+promise.
 
-### Chave não é id: é id mais um jeito de resolvê-lo sozinho
+### A key is not an id: it is an id plus a way to resolve it on your own
 
-Um `@key` diz ao roteador "pode me mandar de volta `{__typename, id}` que eu reconstruo o objeto". Isso é
-uma promessa que a **composição aceita sem nunca testar** — se não houver quem a cumpra, o supergraph
-compõe, sobe, e quebra na primeira query que pular de subgraph.
+A `@key` tells the router "send me back `{__typename, id}` and I will rebuild the object". That is a
+promise **composition accepts without ever testing it** — if nobody fulfils it, the supergraph composes,
+starts, and breaks on the first query that hops between subgraphs.
 
-Quem a cumpre são os `*EntityApi` em `interfaces/graphql/api/`, com `@Resolver`. O caso da `Tag` é o que
-deixa a diferença visível: dentro deste schema ela **nunca teve** consulta por id — só se chega a uma tag
-a partir de um post, por `Post.tags`. Isso bastava enquanto o schema era um só. Um vizinho que guarde
-estatísticas por tag referencia `Tag` pela chave sem nunca ter visto um post, e o roteador volta aqui
-pedindo `_entities` — não `posts`. Ter id não fazia dela uma entidade; ter como resolvê-la isolada, faz.
+The ones that fulfil it are the `*EntityApi` classes in `interfaces/graphql/api/`, with `@Resolver`. The
+`Tag` case is what makes the difference visible: inside this schema it **never had** a query by id — you
+only reach a tag from a post, through `Post.tags`. That was enough while the schema was a single one. A
+neighbour keeping statistics per tag references `Tag` by key without ever having seen a post, and the
+router comes back here asking for `_entities` — not `posts`. Having an id did not make it an entity;
+having a way to resolve it in isolation does.
 
-O `Post` é o oposto instrutivo: `Query.post(id:)` já existia e o SmallRye o encontraria sozinho — ele
-procura o resolvedor primeiro entre os `@Resolver` e **depois entre as queries**, casando por tipo de
-retorno e nome de argumento. O `@Resolver` do `Post` existe pela outra razão, a de lote.
+`Post` is the instructive opposite: `Query.post(id:)` already existed and SmallRye would find it on its
+own — it looks for the resolver first among the `@Resolver` methods and **then among the queries**,
+matching by return type and argument name. `Post`'s `@Resolver` exists for the other reason, batching.
 
-### `@Resolver` não é `@Query`, e o casamento é por assinatura
+### `@Resolver` is not `@Query`, and the match is by signature
 
-Um `@Resolver` **não aparece no schema**: ele entra num tipo sintético que o SmallRye monta à parte e
-serve só ao `_entities`. É o que evita publicar uma query por entidade só para o protocolo funcionar —
-`Query.post(id:)` continua sendo o que é, uma operação de cliente.
+A `@Resolver` **does not appear in the schema**: it goes into a synthetic type SmallRye assembles on the
+side and serves only `_entities`. That is what avoids publishing one query per entity just to make the
+protocol work — `Query.post(id:)` stays what it is, a client operation.
 
-A escolha do método não é pelo nome. Cada representação vira o par *(tipo, conjunto de nomes de
-argumento)* — `("Post", {"id"})` — e o SmallRye procura um campo que devolva `Post` e cujos argumentos
-sejam **exatamente** esse conjunto. Trocar `id` por `postId` compila, passa no `FederationSchemaTest` e
-só quebra quando alguém consulta `_entities`.
+Picking the method is not by name. Each representation becomes the pair *(type, set of argument names)* —
+`("Post", {"id"})` — and SmallRye looks for a field returning `Post` whose arguments are **exactly** that
+set. Renaming `id` to `postId` compiles, passes `FederationSchemaTest` and only breaks when someone
+queries `_entities`.
 
-É também por isso que o agregado de usuário tem **três** resolvedores para uma consulta só. O casamento é
-pelo tipo de retorno, e `List<UserView>`, `List<AuthorView>` e `List<ReaderView>` são o mesmo apagamento
-em Java e três tipos GraphQL diferentes — que é justamente o que o casamento usa.
+It is also why the user aggregate has **three** resolvers for a single query. The match is by return
+type, and `List<UserView>`, `List<AuthorView>` and `List<ReaderView>` are the same erasure in Java and
+three different GraphQL types — which is exactly what the match uses.
 
-### `@Id` no argumento em lote é a armadilha cara
+### `@Id` on the batched argument is the expensive trap
 
-O argumento de um resolvedor em lote é `List<String>` **sem `@Id`**, e a ausência custou uma sessão de
-depuração. O `ReferenceCreator` do SmallRye testa `@Id` **antes** de desembrulhar a coleção: com a
-anotação ele pede um scalar `ID` para `java.util.List`, o tipo esperado do argumento deixa de ser
-`String`, e cada id vira "um String onde se esperava um objeto" — que o SmallRye tenta ler como JSON.
+A batched resolver's argument is `List<String>` **without `@Id`**, and the absence cost a debugging
+session. SmallRye's `ReferenceCreator` tests for `@Id` **before** unwrapping the collection: with the
+annotation it asks for an `ID` scalar for `java.util.List`, the argument's expected type stops being
+`String`, and each id becomes "a String where an object was expected" — which SmallRye tries to read as
+JSON.
 
-O que chega ao cliente não diz nada disso. O erro de transformação vira um `DataFetcherResult` sem dados,
-que o `FederationDataFetcher` descarta, e a resposta é um `NullPointerException: resultList is null` sem
-menção a argumento nenhum. O tipo do argumento no schema é indiferente — o tipo `Resolver` não é
-publicado e o `_entities` entrega valores crus, sem coerção. Só o `FederationEntitiesE2ETest` pega isso.
+What reaches the client says none of this. The transformation error becomes a `DataFetcherResult` with no
+data, which `FederationDataFetcher` discards, and the response is a
+`NullPointerException: resultList is null` with no mention of any argument. The argument's type in the
+schema is irrelevant — the `Resolver` type is not published and `_entities` hands over raw values, with no
+coercion. Only `FederationEntitiesE2ETest` catches it.
 
-### Lote: o mesmo N+1, agora atravessando o roteador
+### Batching: the same N+1, now across the router
 
 ```properties
 quarkus.smallrye-graphql.federation.batch-resolving-enabled=true
 ```
 
-**Desligado por padrão**, e é a linha que separa uma chamada de `_entities` com N chaves de N idas ao
-banco. Ligada, o SmallRye procura primeiro um `@Resolver` que devolva **lista** do tipo e entrega o lote
-inteiro de uma vez; desligada, chama um método por representação. É o irmão, através do roteador, do que
-o `@Source List<T>` já fazia dentro do schema — e `FederationEntitiesE2ETest` o afere do mesmo jeito que
-o `BatchLoadingE2ETest`: cinco representações precisam custar o mesmo número de statements que uma.
+**Off by default**, and it is the line that separates one `_entities` call with N keys from N trips to the
+database. On, SmallRye first looks for a `@Resolver` returning a **list** of the type and hands over the
+whole batch at once; off, it calls one method per representation. It is the sibling, across the router, of
+what `@Source List<T>` already did inside the schema — and `FederationEntitiesE2ETest` measures it the
+same way `BatchLoadingE2ETest` does: five representations must cost the same number of statements as one.
 
-O contrato do lote é rígido e conferido em runtime: **uma posição por representação, na ordem em que
-chegaram**. Um id que não existe mais vira `null` *naquela* posição — devolver uma lista menor deslocaria
-tudo o que o roteador anexa depois. Por isso os resolvedores projetam a lista de ids pedida sobre um mapa,
-em vez de devolver o que veio do banco.
+The batch contract is strict and checked at runtime: **one position per representation, in the order they
+arrived**. An id that no longer exists becomes `null` at *that* position — returning a shorter list would
+shift everything the router appends afterwards. That is why the resolvers project the requested id list
+over a map, instead of returning what came out of the database.
 
-E o elemento da lista **não** pode levar `@NonNull`: com `[Post!]` o casamento por tipo de retorno falha —
-o `FederationDataFetcher` desembrulha a lista e espera um tipo *nomeado*, não um `NonNull` — e o lote
-deixa de ser usado sem uma linha de log.
+And the list element **cannot** carry `@NonNull`: with `[Post!]` the return-type match fails —
+`FederationDataFetcher` unwraps the list and expects a *named* type, not a `NonNull` — and the batch stops
+being used without a line of logging.
 
-### `interface User @key`: por que a interface também é entidade
+### `interface User @key`: why the interface is an entity too
 
-`User` é interface porque a hierarquia do domínio é polimórfica, e isso não mudou. O que o `@key` na
-interface acrescenta é a **interface de entidade** da Federação 2.3: um subgraph vizinho declara
+`User` is an interface because the domain hierarchy is polymorphic, and that did not change. What `@key`
+on the interface adds is Federation 2.3's **entity interface**: a neighbouring subgraph declares
 
 ```graphql
 type User @key(fields: "id") @interfaceObject {
@@ -618,361 +632,369 @@ type User @key(fields: "id") @interfaceObject {
 }
 ```
 
-e ganha `commentCount` em **toda** implementação — hoje `Author` e `Reader`, amanhã o que houver — sem
-saber que elas existem. Ele enxerga um tipo só. Sem isso, um campo novo para todo usuário exigiria
-declarar cada tipo concreto lá, e de novo a cada tipo novo aqui.
+and gains `commentCount` on **every** implementation — today `Author` and `Reader`, tomorrow whatever
+there is — without knowing they exist. It sees a single type. Without this, a new field for every user
+would require declaring each concrete type there, and again for every new type here.
 
-O `docker/federation/comments-example.graphql` é esse subgraph, escrito só como SDL, e
-`supergraph-example.yaml` o compõe junto: é a prova, feita por composição e não por prosa, de que as
-chaves publicadas aqui bastam para alguém estender o grafo.
+`docker/federation/comments-example.graphql` is that subgraph, written as SDL only, and
+`supergraph-example.yaml` composes it alongside: it is the proof, by composition and not by prose, that
+the keys published here are enough for someone to extend the graph.
 
-Pedir o tipo errado responde `null`, e não o outro tipo: o id de um leitor pedido como `Author` não vira
-um `Author`. Responder o `Reader` seria pior do que não responder — o roteador anexaria campos de
-`Author` a um objeto que não é um.
+Asking for the wrong type answers `null`, not the other type: a reader's id asked for as `Author` does not
+become an `Author`. Answering with the `Reader` would be worse than not answering — the router would
+append `Author` fields to an object that is not one.
 
-### `PageInfo` é o único tipo compartilhado
+### `PageInfo` is the only shared type
 
-Na Federação 2 um campo pertence a **um** subgraph e a composição recusa dois donos. `PageInfo` é a
-exceção estrutural: não é entidade, não tem dono, é a forma de uma página — e todo subgraph que pagina
-escreve a sua. `@shareable` é o que diz que essas definições são a mesma coisa.
+In Federation 2 a field belongs to **one** subgraph and composition refuses two owners. `PageInfo` is the
+structural exception: it is not an entity, it has no owner, it is the shape of a page — and every subgraph
+that paginates writes its own. `@shareable` is what says those definitions are the same thing.
 
-`PostConnection`, `PostEdge` e as irmãs **não** levam a anotação, e a omissão é a decisão: elas carregam
-`Post` e `Tag`, que são entidades daqui. Se outro subgraph as definisse, seria conflito de verdade — e
-recusar é o certo.
+`PostConnection`, `PostEdge` and their siblings do **not** carry the annotation, and the omission is the
+decision: they carry `Post` and `Tag`, which are entities from here. If another subgraph defined them, it
+would be a real conflict — and refusing is right.
 
-### O `@link`, e o que acontece sem os `import`
+### The `@link`, and what happens without the `import`s
 
-A versão da especificação está **fixada literalmente** em `FederatedSchemaApi`, e não vem da constante
-`Link.FEDERATION_SPEC_LATEST_URL` que a biblioteca oferece. A versão do `@link` determina quais diretivas
-o roteador aceita deste subgraph: é contrato, e contrato não muda por efeito colateral de um bump de
-dependência.
+The specification version is **pinned literally** in `FederatedSchemaApi`, and does not come from the
+`Link.FEDERATION_SPEC_LATEST_URL` constant the library offers. The `@link` version determines which
+directives the router accepts from this subgraph: it is contract, and contract does not change as a side
+effect of a dependency bump.
 
-Os `import` não são decoração. Sem nenhum `@Link`, o SmallRye emite as diretivas com nome curto. Com um
-`@Link` que **não** importe a diretiva usada, ela sai prefixada — `@federation__key`. As duas formas
-compõem; só a segunda obriga quem lê o SDL a saber o que é. É por isso que o `FederationSchemaTest` afirma
-as duas coisas: que `@key` sai curto, e que uma não-importada (`@federation__external`) continua
-prefixada — a segunda asserção é o que prova que a primeira não é coincidência.
+The `import`s are not decoration. With no `@Link` at all, SmallRye emits the directives with short names.
+With a `@Link` that does **not** import the directive in use, it comes out prefixed — `@federation__key`.
+Both forms compose; only the second forces whoever reads the SDL to know what it is. That is why
+`FederationSchemaTest` asserts both things: that `@key` comes out short, and that a non-imported one
+(`@federation__external`) stays prefixed — the second assertion is what proves the first is not a
+coincidence.
 
-O `@Link` mora sozinho numa classe `@GraphQLApi` sem operação nenhuma. É diretiva de `SCHEMA`, e o
-SmallRye só as recolhe em classes de API; ou ela mora numa das APIs existentes, sem relação com os
-resolvers ao lado, ou mora sozinha. E **só pode haver uma**: repetir o `@link` da Federação em outra
-classe derruba a aplicação na partida.
+The `@Link` lives alone in a `@GraphQLApi` class with no operations. It is a `SCHEMA` directive, and
+SmallRye only collects those on API classes; either it lives on one of the existing APIs, unrelated to the
+resolvers beside it, or it lives alone. And **there can only be one**: repeating the Federation `@link` in
+another class brings the application down at startup.
 
-### Os dois SDL, e qual deles compõe
+### The two SDLs, and which one composes
 
 | | `/graphql/schema.graphql` | `{ _service { sdl } }` |
 |---|---|---|
-| quem serve | o Quarkus, como arquivo | o campo da especificação de subgraph |
-| quem consome | gerador de cliente, IDE, o diff da revisão | o `rover`, o roteador |
-| contém | o schema + `@link` + `@key` | o mesmo, mais `_entities`/`_service`/`_Any` |
+| who serves it | Quarkus, as a file | the subgraph specification's field |
+| who consumes it | client generator, IDE, the review diff | `rover`, the router |
+| contains | the schema + `@link` + `@key` | the same, plus `_entities`/`_service`/`_Any` |
 
-São o mesmo contrato por duas portas, e o `schema.graphql` da raiz continua sendo a cópia versionada do
-primeiro. Para que ele continuasse **compondo**, duas linhas precisaram entrar:
+They are the same contract through two doors, and the root `schema.graphql` is still the committed copy of
+the first. For it to keep **composing**, two lines had to go in:
 
 ```properties
 quarkus.smallrye-graphql.schema-include-directives=true
 quarkus.smallrye-graphql.schema-include-schema-definition=true
 ```
 
-A primeira porque `@key` e `@shareable` deixaram de ser enfeite e passaram a ser o contrato. A segunda
-porque o bloco `schema { ... }` é o que carrega o `@link` — e **um subgraph sem `@link` é lido como
-Federação 1 na composição**. O preço é o arquivo dobrar de tamanho com definições de diretiva que nunca
-mudam; o que se compra é um SDL que o `rover` aceita direto do repositório, sem subir nada. O
-`FederationSchemaTest` confere que as duas linhas continuam lá.
+The first because `@key` and `@shareable` stopped being decoration and became the contract. The second
+because the `schema { ... }` block is what carries the `@link` — and **a subgraph without a `@link` is
+read as Federation 1 during composition**. The price is the file doubling in size with directive
+definitions that never change; what it buys is an SDL `rover` accepts straight from the repository,
+without starting anything. `FederationSchemaTest` checks that both lines are still there.
 
-### Rodando federado
+### Running federated
 
 ```bash
-# 1. o subgraph. O 0.0.0.0 NÃO é detalhe: em dev o Quarkus escuta só em 127.0.0.1, e o roteador roda
-#    em container — sem isto ele não alcança a aplicação.
+# 1. the subgraph. The 0.0.0.0 is NOT a detail: in dev Quarkus listens only on 127.0.0.1, and the router
+#    runs in a container — without this it cannot reach the application.
 ./mvnw quarkus:dev -Dquarkus.http.host=0.0.0.0
 
-# 2. compor. O rover faz a introspecção de federação (`{ _service { sdl } }`) na aplicação de pé
+# 2. compose. rover runs the federation introspection (`{ _service { sdl } }`) against the running app
 rover supergraph compose --config docker/federation/supergraph.yaml > docker/federation/supergraph.graphql
 
-# 3. o supergraph
+# 3. the supergraph
 docker compose --profile federation up -d router     # http://localhost:4000
 ```
 
 ```bash
-# a mutation atravessa o roteador com o token propagado, e o post nasce na versão 2 como sempre
+# the mutation crosses the router with the token propagated, and the post is born at version 2 as always
 curl -s localhost:4000/ -H 'content-type: application/json' -H "Authorization: Bearer $TOKEN" \
   -d '{"query":"mutation { createPost(input:{title:\"Via supergraph\",content:\"c\"}) { id version } }"}'
 ```
 
-Três coisas que custam tempo se ninguém as escrever:
+Three things that cost time if nobody writes them down:
 
-- **o roteador não repassa cabeçalho nenhum por padrão.** Sem o bloco `headers` do `router.yaml`, `me` e
-  `createPost` respondem `UNAUTHORIZED` atrás do supergraph e funcionam direto — quem autoriza continua
-  sendo o `@RolesAllowed`, o que muda é que agora existe um salto que pode comer o token em silêncio;
-- **a versão do roteador não é o `federation_version`.** Uma é o binário, a outra é o algoritmo de
-  composição. `v2.9.3` existe como composição e não existe como imagem: `manifest unknown` no pull;
-- **`subgraph_url` vai aninhado em `schema:`** no `supergraph.yaml`. Solto um nível acima, o rover não
-  reclama — descarta o subgraph e falha com `No subgraphs were found in the supergraph config`.
+- **the router forwards no headers by default.** Without the `headers` block in `router.yaml`, `me` and
+  `createPost` answer `UNAUTHORIZED` behind the supergraph and work directly — the one authorizing is
+  still `@RolesAllowed`; what changes is that there is now a hop that can silently eat the token;
+- **the router version is not the `federation_version`.** One is the binary, the other is the composition
+  algorithm. `v2.9.3` exists as a composition and does not exist as an image: `manifest unknown` on pull;
+- **`subgraph_url` goes nested under `schema:`** in `supergraph.yaml`. One level up, rover does not
+  complain — it discards the subgraph and fails with `No subgraphs were found in the supergraph config`.
 
-### Subscriptions atrás do roteador: licenciadas
+### Subscriptions behind the router: licensed
 
-`subscription.enabled: true` é feature do GraphOS. Sem `APOLLO_KEY`/`APOLLO_GRAPH_REF` o roteador não sobe
-degradado — ele **recusa a partida**:
+`subscription.enabled: true` is a GraphOS feature. Without `APOLLO_KEY`/`APOLLO_GRAPH_REF` the router does
+not start degraded — it **refuses to start**:
 
 ```
 license violation, the router is using features not available for your license: ["Federated subscriptions"]
 ```
 
-Por isso o bloco está comentado no `router.yaml`: deixá-lo ligado tornaria
-`docker compose --profile federation up` quebrado para quem só quer ver a POC federada.
+That is why the block is commented out in `router.yaml`: leaving it on would make
+`docker compose --profile federation up` broken for anyone who just wants to see the federated proof of
+concept.
 
-Com licença, o roteador falaria `graphql-transport-ws` com este subgraph, no mesmo `/graphql` que o
-SmallRye já serve — e vale registrar o que isso implica do outro lado: o cliente do supergraph **não abre
-WebSocket**; ele recebe a subscription por HTTP multipart, e o WebSocket existe só entre roteador e
-subgraph. A porta de SSE escrita em `interfaces/graphql/sse` continua sendo o que sempre foi, a forma de
-assinar **falando direto** com este serviço. O roteador não a usa, e isso não é defeito de nenhum dos dois.
+With a licence, the router would speak `graphql-transport-ws` to this subgraph, on the same `/graphql`
+SmallRye already serves — and it is worth recording what that implies on the other side: the supergraph's
+client **does not open a WebSocket**; it receives the subscription over HTTP multipart, and the WebSocket
+exists only between router and subgraph. The SSE endpoint written in `interfaces/graphql/sse` is still
+what it always was, the way to subscribe **talking directly** to this service. The router does not use it,
+and that is no defect of either.
 
-### O subgraph não é a fronteira
+### The subgraph is not the boundary
 
-`_entities` é público e resolve **qualquer** entidade pela chave, sem token. Isso não é descuido do
-SmallRye nem deste projeto: é a premissa de operação da Federação — o subgraph fica na rede interna e
-quem fica exposto é o roteador. Vale dizer o que isso muda aqui, porque muda:
+`_entities` is public and resolves **any** entity by key, without a token. That is neither SmallRye's nor
+this project's oversight: it is Federation's operating premise — the subgraph sits on the internal network
+and the router is what is exposed. It is worth saying what that changes here, because it does change
+things:
 
-- `Post`, `Tag` e `Author` já eram alcançáveis anonimamente por `post`/`posts` e `Post.author`;
-- **`Reader` não era.** Agora `_entities` devolve o e-mail e as contas de um leitor a quem souber o id.
+- `Post`, `Tag` and `Author` were already reachable anonymously through `post`/`posts` and `Post.author`;
+- **`Reader` was not.** Now `_entities` returns a reader's e-mail and accounts to anyone who knows the id.
 
-Publicar esta aplicação direto na internet, portanto, expõe mais do que antes. Atrás do roteador, não —
-e a autorização de campo continua valendo igual nas três portas, porque o `@RolesAllowed` roda no método.
+Publishing this application straight to the internet, therefore, exposes more than before. Behind the
+router, it does not — and field authorization still holds the same across all three endpoints, because
+`@RolesAllowed` runs on the method.
 
-O caminho oficial para autorização no próprio roteador são as diretivas `@authenticated`,
-`@requiresScopes` e `@policy`, que o SmallRye também expõe como anotações. Elas **não** foram usadas aqui
-por dois motivos: são avaliadas por features licenciadas do GraphOS, e duplicariam no schema uma decisão
-que já está no método — que é onde este projeto insiste em mantê-la.
+The official path for authorization in the router itself is the `@authenticated`, `@requiresScopes` and
+`@policy` directives, which SmallRye also exposes as annotations. They were **not** used here for two
+reasons: they are evaluated by licensed GraphOS features, and they would duplicate in the schema a
+decision that is already on the method — which is where this project insists on keeping it.
 
-### O que não foi feito, e por quê
+### What was not done, and why
 
-`@external`, `@requires`, `@provides` e `@override` existem no SmallRye e **não** aparecem em lugar
-nenhum. Elas servem a um subgraph que estende tipo alheio; este não estende nenhum — ele é dono de tudo
-o que declara. Anotação de federação escrita "para demonstrar" viraria ficção no SDL que o roteador lê.
-Quando houver um vizinho de verdade para estender, o `comments-example.graphql` mostra a forma.
+`@external`, `@requires`, `@provides` and `@override` exist in SmallRye and appear **nowhere**. They serve
+a subgraph that extends somebody else's type; this one extends none — it owns everything it declares. A
+federation annotation written "to demonstrate" would become fiction in the SDL the router reads. When
+there is a real neighbour to extend, `comments-example.graphql` shows the shape.
 
 ---
 
-## A tradução de erro
+## Error translation
 
-O Spring GraphQL tem `@GraphQlExceptionHandler`: um método, num bean, e toda exceção de todo controller
-passa por lá. O SmallRye não tem equivalente — o `EventingService` dele *observa* o erro, mas não o
-substitui.
+Spring GraphQL has `@GraphQlExceptionHandler`: one method, in a bean, and every exception from every
+controller goes through it. SmallRye has no equivalent — its `EventingService` *observes* the error, but
+does not replace it.
 
-O que o Quarkus tem é **CDI**, e isso basta. O SmallRye não instancia o `@GraphQLApi`: ele o pede ao
-`LookupService`, que aqui é o CDI, e o que volta é o *client proxy* do ArC — então a chamada do resolver
-entra pela cadeia de interceptadores como qualquer outra. É a mesma razão pela qual `@RolesAllowed` e
-`@Valid` já funcionavam ali.
+What Quarkus has is **CDI**, and that is enough. SmallRye does not instantiate the `@GraphQLApi`: it asks
+`LookupService` for it, which here is CDI, and what comes back is ArC's *client proxy* — so the resolver
+call enters the interceptor chain like any other. It is the same reason `@RolesAllowed` and `@Valid`
+already worked there.
 
 ```java
 @GraphQLApi
 @ApplicationScoped
-@TranslatesErrors           // uma anotação por classe; os resolvers não sabem que ela existe
+@TranslatesErrors           // one annotation per class; the resolvers do not know it exists
 public class PostQueryApi { … }
 ```
 
-O `ErrorTranslationInterceptor` chama o mesmo `GraphQlErrors` de antes — a classificação continua sendo um
-`if` por família percorrendo a **cadeia de causas**, porque uma exceção de dentro de um command chega
-embrulhada pelo `CompletableFuture` do gateway e pelo commit do `ProcessingContext`.
+`ErrorTranslationInterceptor` calls the same `GraphQlErrors` as before — the classification is still an
+`if` per family walking the **cause chain**, because an exception from inside a command arrives wrapped by
+the gateway's `CompletableFuture` and by the `ProcessingContext` commit.
 
-**O que o interceptador conserta**, e uma chamada no corpo do resolver não conseguia: o caminho
-**síncrono**. Um `@Valid` que estoura acontece *antes* de o método rodar, então nunca chegava ao
-`translating(…)` — um input inválido saía como `ValidationError` **sem `extensions.code`**, apesar de a
-decisão documentada ser `BAD_REQUEST`. Agora os dois caminhos convergem no mesmo lugar:
+**What the interceptor fixes**, and a call in the resolver body could not: the **synchronous** path. A
+`@Valid` that blows up happens *before* the method runs, so it never reached `translating(…)` — an invalid
+input came out as a `ValidationError` **with no `extensions.code`**, despite the documented decision being
+`BAD_REQUEST`. Now both paths converge in the same place:
 
 ```
 createPost(input: {title: "", content: "y"})
-  antes:  { classification: ValidationError, violations: [...] }          ← sem code
-  agora:  { code: BAD_REQUEST, message: "title não pode ser vazio" }
+  before: { classification: ValidationError, violations: [...] }          ← no code
+  now:    { code: BAD_REQUEST, message: "title must not be blank" }
 ```
 
-A contrapartida é que o `violations[]` detalhado do SmallRye deu lugar às mensagens juntadas por
-`GraphQlErrors.describe` — a mesma mensagem que uma violação de value object produziria, que é o ponto da
-validação em duas alturas.
+The trade-off is that SmallRye's detailed `violations[]` gave way to the messages joined by
+`GraphQlErrors.describe` — the same message a value object violation would produce, which is the point of
+validation at two heights.
 
-O `extensions.classification` do Spring virou `extensions.code`, alimentado por quatro exceções com
-`@ErrorCode` do SmallRye: `BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`.
+Spring's `extensions.classification` became `extensions.code`, fed by four exceptions with SmallRye's
+`@ErrorCode`: `BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`.
 
-### A segurança entrou junto, e foi o que arrumou a saída
+### Security came along with it, and that is what fixed the output
 
-Os interceptadores de segurança do Quarkus são `@Priority(150)`; deixar o nosso em `APPLICATION` (2000)
-significava rodar **por dentro** deles, e as recusas escapavam sem tradução. O resultado era ruim de três
-jeitos ao mesmo tempo:
+Quarkus's security interceptors are `@Priority(150)`; leaving ours at `APPLICATION` (2000) meant running
+**inside** them, and the refusals escaped untranslated. The result was bad in three ways at once:
 
 ```jsonc
-// sem token, antes
-{"message": null,                      // ← io.quarkus.security.UnauthorizedException não tem mensagem,
- "extensions": {"code": "unauthorized"}}  //   e listá-la em show-runtime-exception-message publicava o null
+// no token, before
+{"message": null,                      // ← io.quarkus.security.UnauthorizedException has no message,
+ "extensions": {"code": "unauthorized"}}  //   and listing it in show-runtime-exception-message published the null
 
-// sem token, agora
+// no token, now
 {"message": "credenciais inválidas ou ausentes",
  "extensions": {"code": "UNAUTHORIZED"}}
 ```
 
-1. **`"message": null`** — pior que "System Error", porque parece bug da aplicação;
-2. **`code` em minúsculas**, derivado do nome da classe do Quarkus, convivendo com os
-   `BAD_REQUEST`/`FORBIDDEN`/`NOT_FOUND` do projeto;
-3. e no log, a `AuthenticationFailedException` crua: a pilha inteira do Mutiny, uma `CompositeException`
-   e um `Caused by: [CIRCULAR REFERENCE: ...]` — cinquenta linhas para dizer "token inválido".
+1. **`"message": null`** — worse than "System Error", because it looks like an application bug;
+2. **a lowercase `code`**, derived from the Quarkus class name, living next to the project's
+   `BAD_REQUEST`/`FORBIDDEN`/`NOT_FOUND`;
+3. and in the log, the raw `AuthenticationFailedException`: Mutiny's entire stack, a `CompositeException`
+   and a `Caused by: [CIRCULAR REFERENCE: ...]` — fifty lines to say "invalid token".
 
-`@Priority(Interceptor.Priority.PLATFORM_BEFORE + 100)` põe a tradução por fora de tudo e resolve os três
-de uma vez: a recusa vira uma exceção classificada, com mensagem e código, e o log passa a mostrar **uma
-linha** (`SRGQL012000: ... ForbiddenException: sem permissão para esta operação`) porque a exceção
-traduzida é rasa e não tem causa. O que **não** é esperado continua subindo inteiro, com causa e pilha —
-`GraphQlErrors.translate` devolve o original quando nada casa.
+`@Priority(Interceptor.Priority.PLATFORM_BEFORE + 100)` puts the translation outside everything and solves
+all three at once: the refusal becomes a classified exception, with a message and a code, and the log
+starts showing **one line** (`SRGQL012000: ... ForbiddenException: sem permissão para esta operação`)
+because the translated exception is shallow and has no cause. What is **not** expected still comes up
+whole, with cause and stack — `GraphQlErrors.translate` returns the original when nothing matches.
 
-A distinção que o Quarkus dá de graça continua: sem token é `UNAUTHORIZED`, com token e sem a role é
-`FORBIDDEN`. Só os nomes ficaram consistentes com o resto.
+The distinction Quarkus gives for free still holds: no token is `UNAUTHORIZED`, token without the role is
+`FORBIDDEN`. Only the names became consistent with the rest.
 
-**O que não dá para arrumar por aqui**: token presente mas com assinatura inválida é recusado pelo
-`HttpAuthenticator` do Quarkus *antes* de qualquer resolver, e a resposta é **HTTP 401 com corpo vazio** —
-sem `errors`. Token ausente passa pelo `@Authenticated` e vira erro de GraphQL; token podre não chega lá.
-Mudar isso exigiria um `HttpAuthenticationMechanism` próprio, que é muita máquina para o que se ganha.
+**What cannot be fixed from here**: a token that is present but has an invalid signature is refused by
+Quarkus's `HttpAuthenticator` *before* any resolver, and the response is **HTTP 401 with an empty body** —
+no `errors`. An absent token goes through `@Authenticated` and becomes a GraphQL error; a rotten token
+never gets there. Changing that would require an `HttpAuthenticationMechanism` of our own, which is a lot
+of machinery for what it buys.
 
 ---
 
-## Testes
+## Tests
 
-131 testes, nas mesmas três alturas do projeto original:
+131 tests, at the same three heights as the original project:
 
-| | o que exercita |
+| | what it exercises |
 |---|---|
-| `domain/*` | domínio puro: sem Axon, sem CDI, sem JPA. O único colaborador é `RecordingDomainEvents` |
-| `application/*` | `AxonTestFixture` given-when-then, um por command, com repositório em memória |
-| `interfaces/graphql/relay/ConnectionsTest` | cursor ↔ offset, teto de página, montagem da connection |
-| `interfaces/graphql/relay/RelaySchemaTest` | o SDL gerado carrega `PostConnection`/`PostEdge` e a `interface User` |
-| `interfaces/graphql/SchemaIntrospectionTest` | a GraphiQL consegue introspectar, e a query Relay mais funda passa |
-| `e2e/SseSubscriptionE2ETest` | a mesma newsletter pela porta de SSE, e o guarda de que o POST JSON não mudou |
-| `e2e/*` | HTTP → token do realm → `@RolesAllowed` → Axon → domínio → JPA → projeção → JSON |
+| `domain/*` | pure domain: no Axon, no CDI, no JPA. The only collaborator is `RecordingDomainEvents` |
+| `application/*` | `AxonTestFixture` given-when-then, one per command, with an in-memory repository |
+| `interfaces/graphql/relay/ConnectionsTest` | cursor ↔ offset, page ceiling, connection assembly |
+| `interfaces/graphql/relay/RelaySchemaTest` | the generated SDL carries `PostConnection`/`PostEdge` and the `interface User` |
+| `interfaces/graphql/SchemaIntrospectionTest` | GraphiQL can introspect, and the deepest Relay query passes |
+| `e2e/SseSubscriptionE2ETest` | the same newsletter through the SSE endpoint, and the guard that the JSON POST did not change |
+| `e2e/*` | HTTP → realm token → `@RolesAllowed` → Axon → domain → JPA → projection → JSON |
 
-Os testes de domínio e de command atravessaram **sem uma linha alterada** — eles nunca souberam que
-existia Spring.
-
----
-
-## Event store em memória
-
-Como no projeto original: `InMemoryEventStorageEngine`, Postgres só com o read model, nenhuma tabela do
-Axon. **Cada reinício apaga os eventos enquanto as linhas continuam no Postgres.** Um post criado antes de
-um live reload segue respondendo em `post(id:)` e passa a dar `NOT_FOUND` no `updatePost`, que reidrata o
-agregado do stream. Não é bug; é a POC — e o live reload do Quarkus torna isso mais frequente do que o
-DevTools do Spring tornava.
-
-Trocar por um event store persistente é acrescentar a dependência `quarkus-axon-jpa-eventstore`.
+The domain and command tests crossed over **without a line changed** — they never knew Spring existed.
 
 ---
 
-## AWS Lambda: o mesmo sistema, outro alvo de implantação
+## In-memory event store
 
-Um segundo alvo, e ele é **aditivo**: nenhum arquivo que existia antes dele foi alterado. As mesmas
-duas aplicações, empacotadas por perfil Maven, viram quatro funções; o RabbitMQ vira um topic SNS FIFO
-com três filas SQS FIFO assinando por filter policy.
+As in the original project: `InMemoryEventStorageEngine`, Postgres only for the read model, no Axon
+tables. **Every restart wipes the events while the rows stay in Postgres.** A post created before a live
+reload still answers `post(id:)` and starts returning `NOT_FOUND` on `updatePost`, which rehydrates the
+aggregate from the stream. It is not a bug; it is the proof of concept — and Quarkus's live reload makes
+this more frequent than Spring's DevTools did.
 
-O que isto prova sobre as decisões tomadas até aqui é mais interessante do que a migração em si.
+Switching to a persistent event store means adding the `quarkus-axon-jpa-eventstore` dependency.
 
-**O `ChannelAddressing` pagou o que prometia.** O Javadoc dele dizia, desde antes de existir uma linha
-de AWS: *"Protocolo novo = uma `ChannelAddressing` a mais"*. Foi literalmente isso — `SnsAddressing` e
-`SqsAddressing`, uma classe cada, mais uma linha de `.properties` por canal. O `@AxonOutbox` das duas
-aplicações não mudou, porque o que um serviço publica é contrato dele e não muda por ambiente.
+---
 
-**A regra de camadas pagou também.** Os `@Incoming` continuam sendo a porta de entrada: o canal passa
-a `smallrye-in-memory` e o handler do Lambda empurra o registro para dentro dele, então
-`PostPreCreatedListener` e os irmãos rodam sem uma linha alterada — com o `@Blocking(ordered = false)`
-e a unidade de trabalho do Axon que já estavam medidos ali. O handler do Lambda não é a porta; é o
-transporte, o lugar equivalente ao conector do RabbitMQ.
+## AWS Lambda: the same system, another deployment target
 
-**E a chave de ordenação encontrou a razão de existir.** O `EventAddress.orderingKey()` era o terceiro
-segmento da routing key, e o próprio `application.properties` admitia por escrito que ele não
-desempatava nada. Numa fila FIFO ele é o `MessageGroupId` — ou seja, é o que faz a ordem existir. E
-ela não é opcional: `apps/tagging` escreve no stream do `Post`, e num event store em *aggregate mode*
-um evento fora de ordem faz o append seguinte cair em
-`duplicate key ... uk_aggregateevententry_aggregate`.
+A second target, and it is **additive**: no file that existed before it was changed. The same two
+applications, packaged by Maven profile, become four functions; RabbitMQ becomes an SNS FIFO topic with
+three SQS FIFO queues subscribing by filter policy.
 
-**O que regrediu, e é honesto dizer:** subscriptions não funcionam em Lambda — nem por WebSocket nem
-por SSE, e o transporte é a metade menor do problema, porque `SimpleQueryBus.emitUpdate` é em processo
-e quem apenda o `PostCreated` é outra função. O trace único também regride, porque na entrada não há
-conector para instrumentar e o conector de SNS não tem tracing. As duas coisas, com a medição que as
-sustenta e os caminhos que as resolveriam, estão em **[`infra/aws/README.md`](infra/aws/README.md)** —
-o documento dessa migração, decisão por decisão.
+What this proves about the decisions taken so far is more interesting than the migration itself.
+
+**`ChannelAddressing` paid off what it promised.** Its Javadoc said, from before a single line of AWS
+existed: *"A new protocol = one more `ChannelAddressing`"*. It was literally that — `SnsAddressing` and
+`SqsAddressing`, one class each, plus one `.properties` line per channel. The `@AxonOutbox` of both
+applications did not change, because what a service publishes is its own contract and does not change by
+environment.
+
+**The layering rule paid off too.** The `@Incoming` methods are still the entry point: the channel becomes
+`smallrye-in-memory` and the Lambda handler pushes the record into it, so `PostPreCreatedListener` and its
+siblings run without a line changed — with the `@Blocking(ordered = false)` and the Axon unit of work
+already measured there. The Lambda handler is not the entry point; it is the transport, the place
+equivalent to the RabbitMQ connector.
+
+**And the ordering key found its reason to exist.** `EventAddress.orderingKey()` was the third segment of
+the routing key, and `application.properties` itself admitted in writing that it broke no ties. On a FIFO
+queue it is the `MessageGroupId` — that is, it is what makes ordering exist. And it is not optional:
+`apps/tagging` writes to the `Post` stream, and in an event store in *aggregate mode* an out-of-order
+event makes the next append land on `duplicate key ... uk_aggregateevententry_aggregate`.
+
+**What regressed, and it is honest to say so:** subscriptions do not work on Lambda — neither over
+WebSocket nor over SSE, and the transport is the smaller half of the problem, because
+`SimpleQueryBus.emitUpdate` is in-process and the one appending the `PostCreated` is another function. The
+single trace regresses too, because on the inbound side there is no connector to instrument and the SNS
+connector has no tracing. Both, with the measurements backing them and the paths that would solve them,
+are in **[`infra/aws/README.md`](infra/aws/README.md)** — the document of that migration, decision by
+decision.
 
 ```bash
-npx sst deploy --stage dev                # o deploy CONSTRÓI os quatro zips: cada função declara
-                                          # em `code` o alvo do Nx que a constrói
-npx nx run "dev.manuelantunes:axonposts-tagging:lambda"   # ou um artefato só, à mão
+npx sst deploy --stage dev                # the deploy BUILDS the four zips: each function declares
+                                          # in `code` the Nx target that builds it
+npx nx run "dev.manuelantunes:axonposts-tagging:lambda"   # or one artifact by hand
 ```
 
-## Rodando
+## Running
 
 ```bash
-# dev: Dev Services sobem Postgres + Keycloak; só precisa de Docker
+# dev: Dev Services bring up Postgres + Keycloak; only Docker is needed
 ./mvnw quarkus:dev
 #   GraphiQL   http://localhost:8080/q/graphql-ui/
 #   SDL        http://localhost:8080/graphql/schema.graphql
-#   Dev UI     http://localhost:8080/q/dev/   (a URL do Keycloak aparece lá)
+#   Dev UI     http://localhost:8080/q/dev/   (the Keycloak URL shows up there)
 
-# testes (mesma coisa: só Docker)
+# tests (same thing: only Docker)
 ./mvnw test
-./mvnw test -Dtest=PostTest                      # uma classe
-./mvnw test -Dtest='*E2ETest'                    # só os ponta a ponta
+./mvnw test -Dtest=PostTest                      # one class
+./mvnw test -Dtest='*E2ETest'                    # end-to-end only
 
-# JAR empacotado, contra o docker-compose
-docker compose up -d                             # POSTGRES_PORT=5433 se a 5432 estiver ocupada
+# packaged JAR, against docker-compose
+docker compose up -d                             # POSTGRES_PORT=5433 if 5432 is taken
 ./mvnw package
 java -jar target/quarkus-app/quarkus-run.jar
-docker compose down -v                           # reset total
+docker compose down -v                           # full reset
 ```
 
-### O token precisa vir do Keycloak que a aplicação está validando
+### The token has to come from the Keycloak the application is validating against
 
-É a pegadinha mais fácil de cair, porque **existem dois Keycloak**: o do `docker-compose` (porta 8081,
-fixa) e o do Dev Services (porta aleatória, novo a cada `quarkus:dev`). Em dev mode a aplicação usa o do
-Dev Services — `quarkus.oidc.auth-server-url` só é configurado no perfil `prod`.
+This is the easiest trap to fall into, because **there are two Keycloaks**: the `docker-compose` one (port
+8081, fixed) and the Dev Services one (random port, new on every `quarkus:dev`). In dev mode the
+application uses the Dev Services one — `quarkus.oidc.auth-server-url` is only configured in the `prod`
+profile.
 
-Pegar o token no 8081 e mandar para o `quarkus:dev` dá isto no log, e `unauthorized` para o cliente:
+Taking the token from 8081 and sending it to `quarkus:dev` gives you this in the log, and `unauthorized`
+for the client:
 
 ```
 JWK with kid '…' is not available
-Request http://localhost:<porta-aleatória>/…/token/introspect has failed: 403 "Client not allowed."
+Request http://localhost:<random-port>/…/token/introspect has failed: 403 "Client not allowed."
 ```
 
-Não é erro de configuração: é uma assinatura que o emissor daquela aplicação não conhece. O Quarkus tenta
-a introspecção como plano B, e o realm não permite (é um cliente público, sem segredo).
+It is not a configuration error: it is a signature that application's issuer does not know. Quarkus tries
+introspection as a plan B, and the realm does not allow it (it is a public client, with no secret).
 
-Então pegue o issuer da própria aplicação:
+So take the issuer from the application itself:
 
 ```bash
 ISS=$(curl -s localhost:8080/q/dev-v1/io.quarkus.quarkus-oidc/provider | grep -o 'http[^"]*realms/axon-posts')
-# ou simplesmente: a URL aparece no /q/dev/ e no log da partida
+# or simply: the URL shows up in /q/dev/ and in the startup log
 
 TOKEN=$(curl -s -X POST $ISS/protocol/openid-connect/token \
   -d grant_type=password -d client_id=axon-posts-api \
   -d username=manuel@example.com -d password=segredo123 | jq -r .access_token)
 ```
 
-Com o JAR empacotado contra o compose, o issuer é fixo: `http://localhost:8081/realms/axon-posts`.
+With the packaged JAR against compose, the issuer is fixed: `http://localhost:8081/realms/axon-posts`.
 
-### E precisa ser um *access token*, não o cookie de sessão do Keycloak
+### And it has to be an *access token*, not the Keycloak session cookie
 
-O mesmo par de erros (`JWK ... is not available` + `introspect ... 403`) aparece por um segundo motivo, e
-esse é mais difícil de ver: quem faz login no console do Keycloak e copia o JWT que está lá copia o
-**cookie `KEYCLOAK_IDENTITY`**, que é um JWT legítimo, do issuer certo, e não serve para nada aqui.
+The same pair of errors (`JWK ... is not available` + `introspect ... 403`) shows up for a second reason,
+and that one is harder to see: whoever logs into the Keycloak console and copies the JWT sitting there
+copies the **`KEYCLOAK_IDENTITY` cookie**, which is a legitimate JWT, from the right issuer, and is useless
+here.
 
-Dá para distinguir sem adivinhar — decodifique o payload:
+You can tell them apart without guessing — decode the payload:
 
-| | cookie de sessão | access token |
+| | session cookie | access token |
 |---|---|---|
-| `alg` | `HS512` (simétrico, chave **interna** do realm) | `RS256` (a chave publicada no JWKS) |
+| `alg` | `HS512` (symmetric, the realm's **internal** key) | `RS256` (the key published in the JWKS) |
 | `typ` | `Serialized-ID` | `Bearer` |
 | claims | `sid`, `state_checker` | `azp`, `scope`, `realm_access.roles`, `preferred_username` |
-| validade | 10 horas | 30 minutos |
+| lifetime | 10 hours | 30 minutes |
 
-O `HS512` é a explicação do log: a chave HMAC do realm **nunca** vai para o JWKS, então o `kid` é
-genuinamente desconhecido. O Quarkus então tenta a introspecção, e o `axon-posts-api` é cliente público —
-403. Um token sem `realm_access.roles` também nunca passaria pelo `@RolesAllowed("author")`.
+The `HS512` is the explanation for the log: the realm's HMAC key **never** goes into the JWKS, so the `kid`
+is genuinely unknown. Quarkus then tries introspection, and `axon-posts-api` is a public client — 403. A
+token with no `realm_access.roles` would never get past `@RolesAllowed("author")` either.
 
-O access token sai do `grant_type=password` acima, e só de lá.
+The access token comes out of the `grant_type=password` above, and only from there.
 
-Usuários semeados (senha `segredo123`): `manuel@example.com` (role `author`), `leitor@example.com`
-(sem role), `promovido@example.com` (role `author`, existe para exercitar a promoção `Reader` → `Author`).
-O realm habilita `directAccessGrantsEnabled` só para esse grant `password`.
+Seeded users (password `segredo123`): `manuel@example.com` (role `author`), `leitor@example.com` (no
+role), `promovido@example.com` (role `author`, exists to exercise the `Reader` → `Author` promotion). The
+realm enables `directAccessGrantsEnabled` only for that `password` grant.

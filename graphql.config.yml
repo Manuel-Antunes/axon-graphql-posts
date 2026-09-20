@@ -1,24 +1,4 @@
-# Escopo do GraphQL para o plugin da IDE. Nada aqui é lido em runtime: o schema é CODE-FIRST, gerado
-# pelo SmallRye e servido em /graphql/schema.graphql — os dois arquivos abaixo são cópias versionadas
-# dele, e quem as atualiza é `curl` (posts-api) ou `pnpm --filter @axonposts/web schema:pull` (web).
-#
-# Por que existir, já que o plugin descobre .graphql sozinho: descoberta automática junta TODO arquivo
-# de schema do projeto num registro só. São DOIS schemas versionados aqui, mais o `supergraph.graphql`
-# e o subgraph de exemplo em docker/federation/ — juntos, viram "tipo redefinido", e o erro aparece
-# longe da causa. Aqui a lista é explícita: estes dois arquivos, cada um no seu escopo, e mais nenhum.
-#
-# DOIS PROJETOS PORQUE SÃO DOIS SCHEMAS, e eles JÁ DIVERGIRAM: `apps/web/schema.graphql` traz
-# `COGNITO` no enum `AuthProvider` e a cópia do posts-api não — um veio do emissor da AWS, o outro do
-# Keycloak do dev local. Apontar o cliente para a cópia do servidor faria a IDE marcar como erro
-# exatamente o valor que o `pnpm codegen` aceita. Cada projeto valida contra o SDL que ele consome.
-#
-# A ORDEM IMPORTA: um arquivo é casado contra os projetos na ordem em que eles aparecem aqui. Os dois
-# `include` abaixo são disjuntos de propósito, então a ordem não decide nada hoje — mas um projeto novo
-# com glob mais largo que o dos outros os engoliria daqui para baixo.
 projects:
-  # O SERVIDOR. Sem documentos: o schema é gerado do código Java, e não há um `.graphql` de operação
-  # em lugar nenhum. O `include` existe para o dia em que um teste injetar uma query com
-  # `//language=GraphQL` — hoje NENHUM injeta, e sem ele a injeção cairia no escopo do cliente.
   posts-api:
     schema: apps/posts-api/src/main/resources/schema.graphql
     include:
@@ -28,41 +8,19 @@ projects:
         local:
           url: http://localhost:8080/graphql
           headers:
-            # queries são abertas; para mutations, exporte um token ANTES de abrir a IDE:
-            #   export GRAPHQL_TOKEN=$(curl -s -X POST \
-            #     http://localhost:8081/realms/axon-posts/protocol/openid-connect/token \
-            #     -d grant_type=password -d client_id=axon-posts-api \
-            #     -d username=manuel@example.com -d password=segredo123 | jq -r .access_token)
-            #
-            # Esse 8081 é o Keycloak do `docker compose up -d`. Com `pnpm dev` quem sobe o realm é o
-            # Dev Services, em porta ALEATÓRIA (veja /q/dev/) — e o token de um NÃO vale no outro:
-            # sai `JWK with kid '…' is not available` e o cliente recebe `unauthorized`.
             Authorization: Bearer ${env:GRAPHQL_TOKEN}
-          # o schema vem do arquivo acima, não da introspecção: assim ele continua correto com a
-          # aplicação desligada, que é quando se edita o contrato
           introspect: false
 
-  # O CLIENTE. Os documentos moram junto dos componentes que os consomem — não há pasta de queries —,
-  # então o glob é a árvore inteira de `src`, igual ao `documents` do codegen.ts. É o que faz um
-  # `...PostCard_post` numa página resolver para o fragmento declarado dentro do componente.
   web:
     schema: apps/web/schema.graphql
     documents:
       - apps/web/src/**/*.{ts,tsx}
     include:
       - apps/web/src/**
-    # `src/gql/` FORA DO ESCOPO, e isto não é higiene — é o que impede a IDE de ficar vermelha inteira.
-    # O `client-preset` reescreve CADA documento dentro de `gql.ts` para casar a sobrecarga de
-    # `graphql()`: hoje são 8 fragmentos e 17 operações repetidos verbatim. Dentro do escopo, os OITO
-    # fragmentos passariam a existir duas vezes e cada arquivo que os espalha ganharia um
-    # `fragment is already defined`. O codegen.ts exclui o mesmo diretório pela mesma razão
-    # (`!src/gql/**/*`); o diretório é gerado e gitignored (apps/web/.gitignore:49).
     exclude:
       - apps/web/src/gql/**
     extensions:
       endpoints:
-        # A API DIRETO, e não o proxy em :3000/api/graphql: quem põe o bearer no proxy é o cookie
-        # `httpOnly` da sessão, que o editor não tem. Da margem do editor, o alvo útil é a borda.
         local:
           url: http://localhost:8080/graphql
           headers:

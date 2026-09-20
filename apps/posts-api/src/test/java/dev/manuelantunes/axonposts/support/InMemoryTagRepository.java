@@ -10,9 +10,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
-/** Repositório de Tags em memória, com a mesma busca por nome sem caixa do adapter real. */
 public final class InMemoryTagRepository implements TagRepository {
-
     private final List<Tag> tags = new ArrayList<>();
 
     @Override
@@ -20,7 +18,6 @@ public final class InMemoryTagRepository implements TagRepository {
         tags.add(tag);
     }
 
-    /** O duplo do insert condicional: já existir é o resultado desejado, não um conflito. */
     @Override
     public void saveIfAbsent(Tag tag) {
         if (findById(tag.id()).isEmpty()) {

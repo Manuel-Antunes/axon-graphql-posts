@@ -15,17 +15,6 @@
     <name>posts</name>
     <description>O módulo de posts: os agregados Post e Tag, com domínio, aplicação e persistência</description>
 
-    <!--
-      MÓDULO DE POSTS — DOIS AGREGADOS, UM MÓDULO
-      ===========================================
-      `Post` e `Tag` são ambos `@EventSourcedEntity`, ou seja dois agregados. Vivem no mesmo módulo
-      porque `Tag` só existe para servir `Post`: não há caso de uso que crie ou consulte tag fora do
-      contexto de um post, e a tag padrão é criada por um handler de evento de post. Módulo é fronteira
-      de coesão, não sinônimo de agregado.
-
-      Depende de `users` porque `Post.author` é um `User` — dependência real do domínio, não acidente
-      de código. A recíproca não existe.
-    -->
     <dependencies>
         <dependency>
             <groupId>dev.manuelantunes</groupId>
@@ -52,14 +41,6 @@
             <artifactId>axon-eventsourcing</artifactId>
         </dependency>
 
-        <!--
-          O TESTE DE DOMÍNIO MORA NA LIB QUE ELE TESTA — e é só JUnit e AssertJ.
-
-          Nada de `quarkus-junit`: estes testes não sobem aplicação, não têm CDI e não tocam em JPA.
-          Dar-lhes Quarkus seria convidá-los a deixar de ser o que são — a prova de que o domínio
-          decide sozinho. Foi o que permitiu a eles atravessarem a conversão de Spring para Quarkus
-          sem uma linha alterada.
-        -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
@@ -71,7 +52,6 @@
             <version>${assertj.version}</version>
             <scope>test</scope>
         </dependency>
-        <!-- Os fixtures compartilhados; `test` é o que os mantém fora do artefato publicado. -->
         <dependency>
             <groupId>dev.manuelantunes</groupId>
             <artifactId>axonposts-test-support</artifactId>
@@ -82,7 +62,6 @@
 
     <build>
         <plugins>
-            <!-- Sem o índice, bean CDI e entidade JPA desta lib são invisíveis. Ver libs/platform. -->
             <plugin>
                 <groupId>io.smallrye</groupId>
                 <artifactId>jandex-maven-plugin</artifactId>
@@ -96,7 +75,6 @@
                     </execution>
                 </executions>
             </plugin>
-            <!-- MapStruct: o `defaultComponentModel=jakarta-cdi` vem do parent e vale aqui também -->
         </plugins>
     </build>
 </project>

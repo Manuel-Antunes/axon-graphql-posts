@@ -65,8 +65,6 @@ export function SiteHeader() {
                   </Badge>
                 ) : null}
               </span>
-              {/* A ação apaga os cookies; quem navega é esta função, com recarga —
-                                mesma razão do login (ver `app/actions/auth.ts`). */}
               <Button
                 variant="ghost"
                 size="sm"

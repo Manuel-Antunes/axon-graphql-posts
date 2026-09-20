@@ -11,15 +11,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { getFragmentData, graphql } from '@/gql';
+import { errorShownByHookState } from '@/lib/utils';
 
-/**
- * O editor pede o que o editor precisa: o id para o command, e o título e o corpo ATUAIS — que ele
- * usa como placeholder, para deixar claro o que acontece quando o campo fica em branco.
- *
- * `PostArticle_post` também pede `content`, e isso não é duplicação de transferência: o servidor
- * resolve o campo uma vez e o Apollo o normaliza uma vez. Dois fragmentos pedindo o mesmo campo é
- * exatamente o caso que a composição de fragmentos resolve.
- */
 export const PostEditor_post = graphql(`
   fragment PostEditor_post on Post {
     id
@@ -38,13 +31,6 @@ interface UpdateRunner {
   error?: unknown;
 }
 
-/**
- * Update PARCIAL: o que fica em branco não vai na mutation.
- *
- * Não é economia de bytes — é o contrato. `UpdatePostInput` tem `title` e `content` opcionais com
- * `@Pattern`, e não `@NotBlank`, porque uma constraint é IGNORADA quando o valor é `null`. Mandar
- * string vazia significaria "apague o título"; omitir significa "não mexa nele".
- */
 export function PostEditor({
   post,
   update,
@@ -80,9 +66,7 @@ export function PostEditor({
             setTitle('');
             setContent('');
           })
-          .catch(() => {
-            /* `update.error` já carrega a mensagem traduzida pelo servidor */
-          });
+          .catch(errorShownByHookState);
       }}
     >
       <div className="space-y-2">

@@ -2,248 +2,284 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Forma do repositório
+## Comments: do not write them
 
-Monorepo de dois apps sobre módulos compartilhados. A regra que decide onde tudo mora:
+> **Write NO comments in code. Not Javadoc, not `//`, not `/* */`, not `#`, not `<!-- -->` — in any
+> language, in any file.** The only exception is when the user explicitly asks for a comment.
 
-> **`libs/` tem domínio e infraestrutura. `apps/` tem aplicação e apresentação.**
+This repository was deliberately stripped of every comment. Do not reintroduce them.
 
-A linha não é entre serviços, é entre **camadas** — e é isso que torna um módulo reutilizável. Domínio é
-regra e infraestrutura é como a regra persiste: as duas são do módulo (`posts`, `users`), e mais de um
-app as importa. Aplicação é fluxo — qual command existe, qual query responde o quê — e fluxo é de quem o
-executa.
+**Say it in the code instead.** Everything a comment would have said has a home that the compiler,
+the test runner or the reader reaches anyway:
+
+- a name — extract a method, a constant or a local variable whose name is the sentence you were
+  about to write;
+- a test — a case named after the rule is an executable comment that cannot go stale;
+- this document — the *why* of a decision, the measurement behind it, the trap somebody already
+  paid for. That is what `CLAUDE.md` and the four READMEs are for, and they are the place to write
+  it.
+
+**What is NOT a comment, and must be preserved.** These look like comments and are instructions to a
+tool; removing them breaks the build:
+
+- `/// <reference path="..." />` — how SST brings its generated types into scope;
+- `// eslint-disable-next-line ...`, `// @ts-expect-error`, `// prettier-ignore`;
+- `#!/usr/bin/env bash` and any other shebang;
+- the Apache licence header in the vendored `mvnw`.
+
+**When something really is inexplicable without prose**, the answer is not a comment: write it in
+this file, in the section that owns the subject, and let the code be read on its own.
+
+## Repository shape
+
+A monorepo of two apps over shared modules. The rule that decides where everything lives:
+
+> **`libs/` holds domain and infrastructure. `apps/` holds application and presentation.**
+
+The line is not between services, it is between **layers** — and that is what makes a module
+reusable. Domain is rule and infrastructure is how the rule persists: both belong to the module
+(`posts`, `users`), and more than one app imports them. Application is flow — which command exists,
+which query answers what — and flow belongs to whoever executes it.
 
 ```
 libs/platform          domain/shared + infrastructure/{axon,time}
 libs/users             domain/user/**        + infrastructure/persistence/user
 libs/posts             domain/{post,tag}/**  + infrastructure/persistence/post
-libs/axon-channels     a integração Axon ↔ channels (outbox + ingestão)
-libs/axon-aws          o endereçamento de saída em SNS e SQS (uma ChannelAddressing por conector)
-libs/axon-lambda       a entrada quando o transporte é o event source mapping do Lambda
-libs/axon-native-support  a extensão de build para GraalVM native
+libs/axon-channels     the Axon ↔ channels integration (outbox + ingestion)
+libs/axon-aws          outbound addressing on SNS and SQS (one ChannelAddressing per connector)
+libs/axon-lambda       the entry point when the transport is Lambda's event source mapping
+libs/axon-native-support  the build extension for GraalVM native
 
 apps/posts-api         application/** + interfaces/{graphql,messaging}/** + infrastructure/security
-apps/tagging           o serviço de tagueamento: application/** + interfaces/messaging/**
-apps/web               o CLIENTE: Next.js + Apollo, o único módulo JavaScript do monorepo
+apps/tagging           the tagging service: application/** + interfaces/messaging/**
+apps/web               the CLIENT: Next.js + Apollo, the monorepo's only JavaScript module
 ```
 
-`apps/web` não é Maven — é um pacote do workspace pnpm, e por isso não aparece no `<modules>` do pom.
-Ele não implementa regra nenhuma: consome a API pela borda GraphQL, como qualquer cliente faria. A
-regra de camadas acima não se aplica a ele; a dele está em `apps/web/README.md`.
+`apps/web` is not Maven — it is a pnpm workspace package, and that is why it does not appear in the
+pom's `<modules>`. It implements no rule at all: it consumes the API through the GraphQL edge, like
+any client would. The layering rule above does not apply to it; its own is in `apps/web/README.md`.
 
-O que isso resolve: `apps/tagging` importa `libs/posts` e ganha o `Post`, os eventos, as regras e os
-repositórios. **Não** ganha o GraphQL, a projeção nem os command handlers do outro app — que o Axon
-descobre em build time e ligaria contra tabelas que ele não tem.
+What this solves: `apps/tagging` imports `libs/posts` and gets `Post`, the events, the rules and the
+repositories. It does **not** get the other app's GraphQL, projection or command handlers — which
+Axon discovers at build time and would wire against tables it does not have.
 
-`apps/posts-api` é o único com `infrastructure/`: `CurrentUser`/`SecurityProducer` são OIDC e HTTP, que
-só ele tem — e `CurrentUser` depende de `UserProvisioning`, que é aplicação. Na lib, viraria ciclo.
+`apps/posts-api` is the only one with `infrastructure/`: `CurrentUser`/`SecurityProducer` are OIDC
+and HTTP, which only it has — and `CurrentUser` depends on `UserProvisioning`, which is application.
+In the lib, that would be a cycle.
 
-## Comandos
+## Commands
 
-Em dev e em teste **não é preciso subir nada**: o Dev Services do Quarkus levanta Postgres e Keycloak
-(com o realm importado) sozinho. Basta o Docker ligado.
+In dev and in test **nothing has to be started by hand**: Quarkus Dev Services brings up Postgres and
+Keycloak (with the realm imported) on its own. Docker running is all it takes.
 
-**`-pl <módulo>` NÃO funciona para os goals de BUILD**, com ou sem `-am`: o
-`quarkus-extension-maven-plugin` do `axon-native-support` valida que o artefato de deployment está no
-reator, e um build parcial o deixa de fora — `Deployment artifact ... is missing the following
-dependencies`. Para compilar, empacotar ou testar, rode da raiz e filtre com `-Dtest=`.
+**`-pl <module>` DOES NOT work for BUILD goals**, with or without `-am`: `axon-native-support`'s
+`quarkus-extension-maven-plugin` validates that the deployment artifact is in the reactor, and a
+partial build leaves it out — `Deployment artifact ... is missing the following dependencies`. To
+compile, package or test, run from the root and filter with `-Dtest=`.
 
-**Para `quarkus:dev` o `-pl` funciona, e é o jeito certo.** O goal não constrói a extensão — ele a
-resolve do `~/.m2` e descobre as libs pelo workspace do reator —, então a validação nem roda. Sem `-pl`
-o Maven percorreria os oito módulos em série para subir duas aplicações. É o que `pnpm dev` usa.
+**For `quarkus:dev` the `-pl` works, and it is the right way.** The goal does not build the
+extension — it resolves it from `~/.m2` and discovers the libs through the reactor's workspace — so
+the validation never runs. Without `-pl` Maven would walk all eight modules serially to bring up two
+applications. That is what `pnpm dev` uses.
 
 ```bash
-pnpm dev                       # os DOIS backends E o cliente web, em paralelo — ver a seção abaixo
-pnpm --filter @axonposts/web dev   # só o cliente, em http://localhost:3000
-pnpm --filter @axonposts/web exec vitest   # as unidades do cliente, em modo OBSERVADOR
-./infra/scripts/package.sh     # os QUATRO zips de Lambda (alvos do Nx) — ver *AWS Lambda*
-./mvnw install -DskipTests -pl '!apps/posts-api,!apps/tagging'   # as libs no ~/.m2 (ver abaixo)
-./mvnw quarkus:dev -pl apps/posts-api   # uma aplicação só
-./mvnw test                    # suíte inteira — EXIGE Docker
-pnpm test                      # o NÍVEL DE BAIXO, pelo Nx: Java + as unidades do `web` (ver *Testes*)
-pnpm test:e2e                  # os DOIS níveis pesados, em série — ver *Testes*
-pnpm lint                      # ESLint nos pacotes JS + Spotless nos 8 módulos Java
-pnpm lint:fix                  # conserta os DOIS lados de uma vez (ver *O LINT*)
-./mvnw package                 # build + testes
-./mvnw test -Dtest=PostTest                                       # uma classe
-./mvnw test -Dtest=PostLifecycleE2ETest#aNewPostArrivesAlreadyTaggedAtVersionTwo   # um método
-./mvnw test -Dtest='*E2ETest'                                     # só os ponta a ponta
-open target/jacoco-report/index.html   # cobertura — o quarkus-jacoco roda junto com `test`
-open http://localhost:3001     # Grafana do Dev Services: traces, logs e métricas DOS DOIS serviços
+pnpm dev                       # BOTH backends AND the web client, in parallel — see the section below
+pnpm --filter @axonposts/web dev   # the client only, at http://localhost:3000
+pnpm --filter @axonposts/web exec vitest   # the client's unit tests, in WATCH mode
+./infra/scripts/package.sh     # the FOUR Lambda zips (Nx targets) — see *AWS Lambda*
+./mvnw install -DskipTests -pl '!apps/posts-api,!apps/tagging'   # the libs into ~/.m2 (see below)
+./mvnw quarkus:dev -pl apps/posts-api   # a single application
+./mvnw test                    # the whole suite — REQUIRES Docker
+pnpm test                      # the LOWER LEVEL, through Nx: Java + the `web` unit tests (see *Tests*)
+pnpm test:e2e                  # the TWO heavy levels, serially — see *Tests*
+pnpm lint                      # ESLint on the JS packages + Spotless on the 8 Java modules
+pnpm lint:fix                  # fixes BOTH sides at once (see *THE LINT*)
+./mvnw package                 # build + tests
+./mvnw test -Dtest=PostTest                                       # one class
+./mvnw test -Dtest=PostLifecycleE2ETest#aNewPostArrivesAlreadyTaggedAtVersionTwo   # one method
+./mvnw test -Dtest='*E2ETest'                                     # end-to-end only
+open target/jacoco-report/index.html   # coverage — quarkus-jacoco runs along with `test`
+open http://localhost:3001     # Dev Services Grafana: traces, logs and metrics FOR BOTH SERVICES
 ```
 
-Federado (Apollo Router na frente). O `-Dquarkus.http.host=0.0.0.0` **não** é detalhe: em dev o Quarkus
-escuta só em `127.0.0.1` e o router roda em container — sem isso ele não alcança a aplicação.
+Federated (Apollo Router in front). The `-Dquarkus.http.host=0.0.0.0` is **not** a detail: in dev
+Quarkus listens only on `127.0.0.1` and the router runs in a container — without it the router cannot
+reach the application.
 
 ```bash
 ./mvnw quarkus:dev -Dquarkus.http.host=0.0.0.0
 rover supergraph compose --config docker/federation/supergraph.yaml > docker/federation/supergraph.graphql
 docker compose --profile federation up -d router          # http://localhost:4000
-rover supergraph compose --config docker/federation/supergraph-example.yaml   # compõe com um vizinho fictício
+rover supergraph compose --config docker/federation/supergraph-example.yaml   # composes with a fictional neighbour
 ```
 
-O `docker-compose.yml` serve para **dois** casos, e só: rodar o JAR empacotado (perfil `prod`) e ter o
-console de administração do Keycloak. Os containers levam prefixo `quarkus-` para não colidirem com os do
-projeto Spring original, e as portas do host são variáveis (`POSTGRES_PORT`, `KEYCLOAK_PORT`).
+`docker-compose.yml` serves **two** cases, and only those: running the packaged JAR (`prod` profile)
+and having the Keycloak admin console. The containers carry a `quarkus-` prefix so they do not clash
+with the original Spring project's, and the host ports are variables (`POSTGRES_PORT`,
+`KEYCLOAK_PORT`).
 
 ```bash
 docker compose up -d && ./mvnw package && java -jar target/quarkus-app/quarkus-run.jar
-docker compose down -v         # reset total
-curl -s localhost:8080/q/health | jq    # inclui "Axon eventprocessors", da extensão
+docker compose down -v         # full reset
+curl -s localhost:8080/q/health | jq    # includes "Axon eventprocessors", from the extension
 ```
 
-### `pnpm dev`: o nx roda os processos, o Maven resolve os módulos
+### `pnpm dev`: nx runs the processes, Maven resolves the modules
 
-`pnpm dev` = `nx run-many --target serve`. O target `serve` de cada app é um `nx:run-commands`
-declarado em `apps/*/project.json`, e tudo que ele faz é `./mvnw quarkus:dev -pl apps/<app> -Ddebug=<porta>`.
-O nx aqui é **só o executor paralelo de dois processos contínuos**; quem resolve dependência entre módulos
-continua sendo o reator do Maven.
+`pnpm dev` = `nx run-many --target serve`. Each app's `serve` target is an `nx:run-commands` declared
+in `apps/*/project.json`, and all it does is `./mvnw quarkus:dev -pl apps/<app> -Ddebug=<port>`. Nx
+here is **only the parallel executor of two long-running processes**; what resolves dependencies
+between modules is still the Maven reactor.
 
-**As libs precisam estar instaladas no `~/.m2`, e o `pnpm dev` não as instala.** Com `-pl` e sem `-am`, o
-Maven resolve `axonposts-platform` e companhia do repositório local — então código novo numa lib (e agora
-há código lá: `AxonMetrics`) só chega às aplicações depois de um
-`./mvnw install -DskipTests -pl '!apps/posts-api,!apps/tagging'`. O filtro é por exclusão e não por
-enumeração: mantém os DOIS módulos do `axon-native-support` no reator, que é o que a validação da extensão
-exige, não precisa ser editado quando uma lib nova entra, e pular as aplicações evita o `quarkus:build`
-delas — que é justamente o passo intermitente documentado mais abaixo.
+**The libs have to be installed into `~/.m2`, and `pnpm dev` does not install them.** With `-pl` and
+without `-am`, Maven resolves `axonposts-platform` and friends from the local repository — so new
+code in a lib (and there is code there now: `AxonMetrics`) only reaches the applications after a
+`./mvnw install -DskipTests -pl '!apps/posts-api,!apps/tagging'`. The filter is by exclusion and not
+by enumeration: it keeps BOTH `axon-native-support` modules in the reactor, which is what the
+extension's validation requires, does not need editing when a new lib arrives, and skipping the
+applications avoids their `quarkus:build` — which is exactly the intermittent step documented further
+down.
 
-Provado de ponta a ponta: as duas aplicações sobem juntas, o Dev Services dá **um Postgres para cada uma**
-(event store próprio, como o desenho exige) e **um RabbitMQ, um Keycloak e um LGTM para as duas**, e a
-saga atravessa — o post nasce na versão 1 sem tag e chega à 2 com a `Untagged` decidida pelo outro
-processo, num único trace com os dois `service.name` dentro (`http://localhost:3001`, ver
-*Observabilidade* mais abaixo).
+Proven end to end: both applications come up together, Dev Services gives **one Postgres to each**
+(its own event store, as the design requires) and **one RabbitMQ, one Keycloak and one LGTM for
+both**, and the saga crosses — the post is born at version 1 with no tag and reaches version 2 with
+the `Untagged` decided by the other process, in a single trace with both `service.name` values inside
+(`http://localhost:3001`, see *Observability* below).
 
-Duas colisões entre os dois processos, e as duas foram observadas de verdade:
+Two collisions between the two processes, and both were actually observed:
 
-1. **A porta do debugger.** O `quarkus:dev` abre JDWP na 5005 por default, e os dois disputam. Daí o
-   `-Ddebug=5005` e `-Ddebug=5006` nos `project.json`. Sem isso o segundo a subir morre com
-   `transport error 202: bind failed: Address already in use` — e é INTERMITENTE, porque depende de quem
-   chegou primeiro: três execuções passaram antes de a quarta falhar.
-2. **A descoberta dos Dev Services COMPARTILHADOS é uma corrida, e esta ainda está aberta.** Container
-   compartilhado (RabbitMQ, LGTM, Keycloak) é achado por LABEL: quem sobe primeiro cria, quem chega
-   depois reusa. Partindo juntos, os dois podem criar antes de o outro estar rotulado — e foi o que
-   aconteceu numa execução: **dois** RabbitMQ (cada serviço num broker, a saga MUDA), e o `posts-api`
-   morrendo em
-   `Bind for 0.0.0.0:3001 failed: port is already allocated` ao tentar criar um segundo LGTM.
-   O `grafana-port` fixo transforma a falha silenciosa (duas stacks, telemetria partida) numa falha
-   alta — o que é melhor, mas não é conserto.
-   **Contorno que funciona, medido:** subir em série, `apps/tagging` primeiro e o `posts-api` depois de
-   ele estar no ar. Aí a topologia sai certa toda vez. Consertar de verdade é fazer os serviços
-   compartilhados existirem ANTES das aplicações — o candidato é o Dev Services de Compose, que este
-   projeto já tem no classpath (`compose` aparece nas *Installed features* dos dois apps) e não usa.
+1. **The debugger port.** `quarkus:dev` opens JDWP on 5005 by default, and the two fight over it.
+   Hence `-Ddebug=5005` and `-Ddebug=5006` in the `project.json` files. Without that the second one
+   up dies with `transport error 202: bind failed: Address already in use` — and it is INTERMITTENT,
+   because it depends on who got there first: three runs passed before the fourth failed.
+2. **Discovery of SHARED Dev Services is a race, and this one is still open.** A shared container
+   (RabbitMQ, LGTM, Keycloak) is found by LABEL: whoever comes up first creates it, whoever arrives
+   later reuses it. Starting together, both can create before the other is labelled — and that is
+   what happened on one run: **two** RabbitMQ instances (each service on its own broker, the saga
+   CHANGES), and `posts-api` dying with `Bind for 0.0.0.0:3001 failed: port is already allocated`
+   while trying to create a second LGTM. The fixed `grafana-port` turns the silent failure (two
+   stacks, broken telemetry) into a loud one — which is better, but is not a fix.
+   **A workaround that works, measured:** start them serially, `apps/tagging` first and `posts-api`
+   after it is up. Then the topology comes out right every time. The real fix is to make the shared
+   services exist BEFORE the applications — the candidate is Compose Dev Services, which this project
+   already has on the classpath (`compose` shows up in both apps' *Installed features*) and does not
+   use.
 
-**A CAUSA RAIZ DOS DOIS PROBLEMAS ABAIXO ERA O JDK, e ela foi consertada.** Leia esta seção antes das
-duas: o `JAVA_HOME` desta máquina vinha do `~/.zshrc`, que o zsh lê **só em shell interativo**. Todo
-processo sem terminal — o Nx ao disparar um alvo, a IDE, um hook — nascia de um shell não-interativo,
-não via aquela linha, e herdava um `JAVA_HOME` antigo apontando para um **JDK 17**. Daí
-`class file version 65.0 ... up to 61.0` nos alvos inferidos, que rodam num Maven em processo com o
-JDK que o Nx herdou.
+**THE ROOT CAUSE OF THE TWO PROBLEMS BELOW WAS THE JDK, and it has been fixed.** Read this section
+before those two: this machine's `JAVA_HOME` came from `~/.zshrc`, which zsh reads **only in an
+interactive shell**. Every process without a terminal — Nx firing a target, the IDE, a hook — was
+born from a non-interactive shell, did not see that line, and inherited an old `JAVA_HOME` pointing
+at a **JDK 17**. Hence `class file version 65.0 ... up to 61.0` on inferred targets, which run on an
+in-process Maven with the JDK Nx inherited.
 
-`JAVA_HOME` e `GRAALVM_HOME` foram para o `~/.zshenv`, que o zsh lê em TODA invocação. Depois disso,
-**MEDIDO**: `nx run <projeto>:mvn-test` passa, com as 36 tarefas de `^mvn-install` encadeadas, **3 de
-3 execuções seguidas** — a armadilha do `nx-build-state.json` descrita no item (1) abaixo **não
-aparece**. Era sintoma, não causa.
+`JAVA_HOME` and `GRAALVM_HOME` moved to `~/.zshenv`, which zsh reads on EVERY invocation. After that,
+**MEASURED**: `nx run <project>:mvn-test` passes, with the 36 chained `^mvn-install` tasks, **3 runs
+out of 3** — the `nx-build-state.json` trap described in item (1) below **does not appear**. It was a
+symptom, not the cause.
 
-O que continua valendo do item (2) é a forma, não o veredito: os goals inferidos rodam num Maven
-residente, em processo. Para o `quarkus:dev` isso segue sendo problema — ele quer um CLI de verdade —,
-e é por isso que o `serve` é um `nx:run-commands` com `./mvnw`.
+What still holds from item (2) is the shape, not the verdict: inferred goals run on a resident,
+in-process Maven. For `quarkus:dev` that is still a problem — it wants a real CLI — and that is why
+`serve` is an `nx:run-commands` with `./mvnw`.
 
-**O relato original, mantido porque a medição dele continua correta para o que ela mede:**
+**The original report, kept because its measurement is still correct for what it measures:**
 
-**NÃO usar o target `quarkus:dev` que o `@nx/maven` infere.** Ele não funciona, por duas razões
-independentes, as duas medidas na versão 23.2.1 (a mais recente) e nenhuma delas configurável:
+**DO NOT use the `quarkus:dev` target that `@nx/maven` infers.** It does not work, for two
+independent reasons, both measured on version 23.2.1 (the latest) and neither configurable:
 
-1. **O plugin decompõe o ciclo de vida do Maven em um target por execução de mojo**, então `package` roda
-   `jar:jar@default-jar` sozinho. Como o mesmo plugin também restaura `target/nx-build-state.json` — que
-   grava `mainArtifact.file` — o mojo encontra o artefato JÁ anexado ao projeto e aborta com
-   `You have to use a classifier to attach supplemental artifacts to the project instead of replacing
-   them`. Passa uma vez depois de um `clean` e falha em TODAS as seguintes; apagar o
-   `nx-build-state.json` conserta aquela execução e a próxima o regrava. Como todo target inferido
-   depende de `^install`, qualquer target do plugin cai nisso. Os targets `*-ci` rodam o mesmo mojo e
-   têm o mesmo defeito.
-2. **Os goals rodam num Maven RESIDENTE, em processo**, e o `quarkus:dev` precisa de um CLI de verdade:
-   ali ele morre com `Cannot invoke "String.toLowerCase(java.util.Locale)" because "version" is null`.
-   O mesmo goal pelo `./mvnw` sobe normalmente.
+1. **The plugin decomposes the Maven lifecycle into one target per mojo execution**, so `package`
+   runs `jar:jar@default-jar` on its own. Since the same plugin also restores
+   `target/nx-build-state.json` — which records `mainArtifact.file` — the mojo finds the artifact
+   ALREADY attached to the project and aborts with `You have to use a classifier to attach
+   supplemental artifacts to the project instead of replacing them`. It passes once after a `clean`
+   and fails on ALL subsequent runs; deleting `nx-build-state.json` fixes that run and the next one
+   rewrites it. Since every inferred target depends on `^install`, any plugin target falls into this.
+   The `*-ci` targets run the same mojo and have the same defect.
+2. **The goals run on a RESIDENT, in-process Maven**, and `quarkus:dev` needs a real CLI: there it
+   dies with `Cannot invoke "String.toLowerCase(java.util.Locale)" because "version" is null`. The
+   same goal through `./mvnw` starts normally.
 
-Duas linhas saíram do `nx.json` junto, e as duas eram armadilha: o `targetDefaults.build` apontava para
-um target que **não existe** neste workspace (o `@nx/maven` infere fases, não `build`), e o
-`targetDefaults.test` sobrescrevia o `dependsOn` inferido por esse mesmo `build` inexistente —
-`targetDefaults` tem precedência sobre target inferido por plugin, então `nx test` rodava o surefire
-**sem compilar nada antes**, calado. Quem roda a suíte é `./mvnw test`, da raiz, como sempre.
+Two lines left `nx.json` along with it, and both were traps: `targetDefaults.build` pointed at a
+target that **does not exist** in this workspace (`@nx/maven` infers phases, not `build`), and
+`targetDefaults.test` overrode the inferred `dependsOn` with that same non-existent `build` —
+`targetDefaults` takes precedence over a plugin-inferred target, so `nx test` ran surefire **without
+compiling anything first**, silently. The one who runs the suite is `./mvnw test`, from the root, as
+always.
 
-`quarkus:dev` recarrega sozinho na próxima requisição depois de uma classe mudar.
-O event store é **persistente** desde que a saga passou a ser coreografada: recarga não apaga mais nada.
-Um post criado antes da recarga segue respondendo em `post(id:)` e passa a dar `NOT_FOUND` no
-`updatePost`, que reidrata o agregado do stream.
+`quarkus:dev` reloads by itself on the next request after a class changes. The event store is
+**persistent** ever since the saga became choreographed: a reload no longer wipes anything. A post
+created before the reload still answers `post(id:)` and starts returning `NOT_FOUND` on `updatePost`,
+which rehydrates the aggregate from the stream.
 
-**O BUILD DO `posts-api` É INTERMITENTE, e a causa não está no projeto.** Em cerca de metade das
-execuções IDÊNTICAS o augmentation do Quarkus não encontra classes que estão em `target/classes`:
+**THE `posts-api` BUILD IS INTERMITTENT, and the cause is not in the project.** In roughly half of
+IDENTICAL runs Quarkus augmentation does not find classes that are in `target/classes`:
 
 ```
 Unsatisfied dependency for type ...PostViewMapper
 Producer method return type not found in index: PostInputMapper
-Could not load class with name: ...FindAllPostsQueryTest      (e com ele os 149 testes)
+Could not load class with name: ...FindAllPostsQueryTest      (and with it the 149 tests)
 ```
 
-Em todas as vezes os `.class` existem, estão corretos e (quando gerados) devidamente anotados. **Basta
-repetir o comando.** Só apareceu quando a camada de aplicação veio para o app, trazendo o processador de
-anotação do MapStruct com ela — em `libs/` isso nunca aconteceu.
+Every time, the `.class` files exist, are correct and (when generated) properly annotated. **Just
+repeat the command.** It only appeared once the application layer moved into the app, bringing the
+MapStruct annotation processor with it — in `libs/` this never happened.
 
-**Onde dói e onde não:** `./mvnw clean test` passa (o `test` não roda `quarkus:build`). Quem falha é o
-`package` — e portanto o alvo `build` de `apps/posts-api-e2e`, que empacota antes de subir as aplicações.
+**Where it hurts and where it does not:** `./mvnw clean test` passes (`test` does not run
+`quarkus:build`). What fails is `package` — and therefore the `build` target of `apps/posts-api-e2e`,
+which packages before bringing up the applications.
 
-Descartados por medição: estado sujo em `target/`, snapshots instalados no `~/.m2`, índice Jandex
-desatualizado nas libs, `quarkus.arc.exclude-types`, teste nomeando classe gerada, opções do processador
-na execução vs no plugin, `<proc>none</proc>` no round de teste, `useIncrementalCompilation=false`,
-índice Jandex no app, `quarkus.builder.parallel=false` (o augmentation sequencial não conserta) e
-produtores de bean escritos à mão em vez do `componentModel` — com eles a falha deixa de ser intermitente
-e passa a ser **determinística** (`Producer method return type not found in index`), o que é pior. Daí a
-configuração atual ser a convencional.
+Ruled out by measurement: dirty state in `target/`, snapshots installed in `~/.m2`, a stale Jandex
+index in the libs, `quarkus.arc.exclude-types`, a test naming a generated class, processor options in
+the execution vs in the plugin, `<proc>none</proc>` in the test round, `useIncrementalCompilation=false`,
+a Jandex index in the app, `quarkus.builder.parallel=false` (sequential augmentation does not fix it)
+and hand-written bean producers instead of `componentModel` — with those the failure stops being
+intermittent and becomes **deterministic** (`Producer method return type not found in index`), which
+is worse. Hence the current configuration being the conventional one.
 
-**Suspeita principal: o JDK — e ela foi TESTADA E REFUTADA.** A JVM desta máquina é a **25**, que o
-Quarkus 3.39 não suporta (`release` é 21), e o próximo passo registrado era rodar num JDK 21. Feito,
-com um Temurin 21.0.12 baixado só para a medição: **3 empacotamentos, 3 falhas**, com a MESMA
-exceção (`Unsatisfied dependency ... PostViewMapper`). No mesmo período, o JDK 25 deu **0 sucessos em
-6**. A versão da JVM não é a variável.
+**Main suspect: the JDK — and it was TESTED AND REFUTED.** This machine's JVM is **25**, which
+Quarkus 3.39 does not support (`release` is 21), and the next step on record was to run on a JDK 21.
+Done, with a Temurin 21.0.12 downloaded just for the measurement: **3 packagings, 3 failures**, with
+the SAME exception (`Unsatisfied dependency ... PostViewMapper`). Over the same period, JDK 25 gave
+**0 successes out of 6**. The JVM version is not the variable.
 
-Duas observações novas do mesmo episódio, e as duas são pistas melhores que a anterior:
+Two new observations from the same episode, and both are better leads than the previous one:
 
-- **a falha é RÁPIDA — ~4,7s no módulo**, sem recompilar. O augmentation roda contra um
-  `target/classes` que já existe e não enxerga os impls que estão lá;
-- **a taxa não é estável no tempo.** O documento registrava "cerca de metade"; numa janela de uma
-  hora foram ~15 falhas seguidas, inclusive com `clean`. Seja o que for, tem estado, e o estado não é
-  o `target/` (ver a medição do `clean` na seção do `apps/posts-api-e2e`).
+- **the failure is FAST — ~4.7s in the module**, with no recompilation. Augmentation runs against a
+  `target/classes` that already exists and does not see the impls that are there;
+- **the rate is not stable over time.** The document recorded "about half"; in a one-hour window
+  there were ~15 failures in a row, including with `clean`. Whatever it is, it has state, and the
+  state is not `target/` (see the `clean` measurement in the `apps/posts-api-e2e` section).
 
-Quem depender de um empacotamento verde hoje — o alvo `build` de `apps/posts-api-e2e` e o
-`sst deploy` — repete o comando. **Isto continua aberto**, e o próximo passo
-deixou de ser o JDK.
+Whoever depends on a green packaging today — the `build` target of `apps/posts-api-e2e` and the
+`sst deploy` — repeats the command. **This is still open**, and the next step is no longer the JDK.
 
-**O BYTECODE FOI CONFERIDO, e é a pista que sobra.** Não é o fonte gerado que está errado nem o
-`.class` que falta: `javap -v` nos dois impls mostra `RuntimeVisibleAnnotations` com
-`Ljakarta/enterprise/context/ApplicationScoped;`, em classes recém-compiladas, no mesmo minuto da
-falha. Classe presente, anotada e fresca — e o `ArcProcessor#validate` diz `Unsatisfied dependency`.
-O que não enxerga é o ÍNDICE, e é aí que a próxima investigação tem de começar.
+**THE BYTECODE WAS CHECKED, and it is the lead that remains.** It is not the generated source that is
+wrong nor the `.class` that is missing: `javap -v` on both impls shows `RuntimeVisibleAnnotations`
+with `Ljakarta/enterprise/context/ApplicationScoped;`, on freshly compiled classes, in the same
+minute as the failure. Class present, annotated and fresh — and `ArcProcessor#validate` says
+`Unsatisfied dependency`. What does not see it is the INDEX, and that is where the next
+investigation has to start.
 
-**E o estado incremental do `target/` É gatilho, pelo menos para o `test`.** Depois de uma série de
-`package` falhados, `./mvnw test` passou a falhar também — e `./mvnw clean test` voltou a passar, em
-33s. São dois caminhos de augmentation diferentes (o `test` não roda `quarkus:build`), e só o do
-`test` se recupera com `clean`: para o `package`, a medição de três execuções com `clean` deu o mesmo
-1 em 3 de sem ele. **Se a suíte começar a falhar sem que ninguém tenha mexido no código, `clean` é a
-primeira coisa a tentar.**
+**And incremental `target/` state IS a trigger, at least for `test`.** After a series of failed
+`package` runs, `./mvnw test` started failing too — and `./mvnw clean test` passed again, in 33s.
+These are two different augmentation paths (`test` does not run `quarkus:build`), and only the `test`
+one recovers with `clean`: for `package`, three runs with `clean` measured the same 1-in-3 as without
+it. **If the suite starts failing without anyone having touched the code, `clean` is the first thing
+to try.**
 
-**Duas regras que ficaram do episódio**, e as duas valem por si:
+**Two rules left over from that episode**, and both stand on their own:
 
-1. **As opções do processador ficam no nível do PLUGIN**, não numa `<execution>`. Presas ao
-   `default-compile`, o round de teste regerava os impls sem elas — sem `@ApplicationScoped` — e o que
-   sobrava em `target/` dependia de quem escreveu por último.
-2. **Nenhum teste nomeia uma classe gerada** (`*MapperImpl`) nem depende do bean dela. Quem precisar de
-   um mapper num teste de unidade usa um dublo local; quem exercita o mapper de verdade é a suíte ponta a
-   ponta, pela borda GraphQL.
+1. **Processor options go at the PLUGIN level**, not in an `<execution>`. Pinned to `default-compile`,
+   the test round regenerated the impls without them — without `@ApplicationScoped` — and what was
+   left in `target/` depended on who wrote last.
+2. **No test names a generated class** (`*MapperImpl`) nor depends on its bean. Whoever needs a mapper
+   in a unit test uses a local double; the one exercising the real mapper is the end-to-end suite,
+   through the GraphQL edge.
 
-Não há plugin de lint/format configurado. O gate de qualidade que existe é o compilador: MapStruct roda
-com `-Amapstruct.unmappedTargetPolicy=ERROR`, então um campo de destino sem origem **quebra o build**.
+There is no lint/format plugin configured beyond what *THE JAVA SIDE* describes. The quality gate is
+the compiler: MapStruct runs with `-Amapstruct.unmappedTargetPolicy=ERROR`, so a destination field
+with no source **breaks the build**.
 
-Token para testar à mão:
+Token for testing by hand:
 
 ```bash
 TOKEN=$(curl -s -X POST <issuer>/protocol/openid-connect/token \
@@ -251,108 +287,114 @@ TOKEN=$(curl -s -X POST <issuer>/protocol/openid-connect/token \
   -d username=manuel@example.com -d password=segredo123 | jq -r .access_token)
 ```
 
-Em dev o `<issuer>` é o Keycloak do Dev Services (porta aleatória; veja `/q/dev/`); com o compose é
-`http://localhost:8081/realms/axon-posts`. **São dois Keycloak diferentes, e o token de um não vale no
-outro**: token do 8081 mandado para o `quarkus:dev` dá `JWK with kid '…' is not available` seguido de
-`introspect … 403 "Client not allowed."` no log, e `unauthorized` para o cliente. Não é configuração
-faltando — é assinatura de um emissor que aquela aplicação não conhece.
+In dev the `<issuer>` is the Dev Services Keycloak (random port; see `/q/dev/`); with compose it is
+`http://localhost:8081/realms/axon-posts`. **They are two different Keycloaks, and a token from one
+is not valid in the other**: a token from 8081 sent to `quarkus:dev` gives `JWK with kid '…' is not
+available` followed by `introspect … 403 "Client not allowed."` in the log, and `unauthorized` for
+the client. It is not missing configuration — it is a signature from an issuer that application does
+not know.
 
-O **mesmo** par de erros tem uma segunda causa: mandar o cookie `KEYCLOAK_IDENTITY` (o JWT que aparece ao
-logar no console do Keycloak) em vez de um access token. Decodificar o payload separa os dois casos na
-hora — access token é `alg: RS256`, `typ: Bearer`, com `azp`/`scope`/`realm_access.roles`; o cookie é
-`alg: HS512`, `typ: Serialized-ID`, com `sid`/`state_checker` e nenhuma role. O `HS512` é a pista: a chave
-HMAC do realm não vai para o JWKS, então o `kid` é mesmo desconhecido. Usuários semeados (senha `segredo123`):
-`manuel@example.com` (role `author`), `leitor@example.com` (sem role), `promovido@example.com`
-(role `author`, existe para exercitar a promoção `Reader` → `Author`).
+The **same** pair of errors has a second cause: sending the `KEYCLOAK_IDENTITY` cookie (the JWT that
+appears when you log into the Keycloak console) instead of an access token. Decoding the payload
+separates the two cases immediately — an access token is `alg: RS256`, `typ: Bearer`, with
+`azp`/`scope`/`realm_access.roles`; the cookie is `alg: HS512`, `typ: Serialized-ID`, with
+`sid`/`state_checker` and no roles. The `HS512` is the clue: the realm's HMAC key does not go into
+the JWKS, so the `kid` really is unknown. Seeded users (password `segredo123`):
+`manuel@example.com` (role `author`), `leitor@example.com` (no role), `promovido@example.com`
+(role `author`, exists to exercise the `Reader` → `Author` promotion).
 
-## Arquitetura
+## Architecture
 
-POC de Axon Framework **5** (entidades anotadas + DCB, sem Axon Server) + SmallRye GraphQL com Mutiny e
-subscriptions sobre WebSocket. Event store **persistente no Postgres**, com token store; Keycloak é o
-provedor de identidade e a aplicação é apenas resource server. **Dois serviços** conversam por RabbitMQ
-numa saga coreografada.
+A proof of concept of Axon Framework **5** (annotated entities + DCB, no Axon Server) with SmallRye
+GraphQL over Mutiny and subscriptions over WebSocket. Event store **persistent in Postgres**, with a
+token store; Keycloak is the identity provider and the application is only a resource server. **Two
+services** talk over RabbitMQ in a choreographed saga.
 
-**Uma tag por evento, e isso é do framework.** O Axon 5.3.1 tem exatamente dois `EventStorageEngine`:
-`InMemoryEventStorageEngine`, com DCB completo, e `AggregateBasedJpaEventStorageEngine`, que é o modo de
-compatibilidade com o Axon 4 — uma tag por evento, e a query de sourcing filtra só por
-`aggregateIdentifier` (o `aggregateType` nem entra). DCB de verdade em armazenamento relacional não
-existe fora do Axon Server. Foi a troca: durabilidade custou o segundo `@EventTag` dos eventos de post.
+**One tag per event, and that comes from the framework.** Axon 5.3.1 has exactly two
+`EventStorageEngine` implementations: `InMemoryEventStorageEngine`, with full DCB, and
+`AggregateBasedJpaEventStorageEngine`, which is the Axon 4 compatibility mode — one tag per event, and
+the sourcing query filters only by `aggregateIdentifier` (`aggregateType` does not even take part).
+Real DCB on relational storage does not exist outside Axon Server. That was the trade: durability cost
+the post events their second `@EventTag`.
 
-É a conversão de um projeto Spring Boot — o README é o documento dessa conversão, decisão por decisão.
-**Ao mudar uma decisão, atualizá-lo junto.**
+This is the conversion of a Spring Boot project — the README is the document of that conversion,
+decision by decision. **When a decision changes, update it too.**
 
-### O ciclo de vida de um post tem DUAS fases
+### A post's lifecycle has TWO phases
 
-`PostPreCreated` = o post existe. `PostCreated` = o post está **completo** (tem a primeira tag) e
-visível. Nasce na versão 1, chega à 2.
+`PostPreCreated` = the post exists. `PostCreated` = the post is **complete** (it has its first tag)
+and visible. It is born at version 1 and reaches version 2.
 
-Existem duas fases porque a primeira tag deixou de ser decidida aqui: quem decide é **outro serviço**, e
-a mensagem atravessa um broker. Fingir que criar e publicar são o mesmo instante exigiria esperar o
-vizinho dentro da transação de escrita.
+There are two phases because the first tag is no longer decided here: the one who decides is **another
+service**, and the message crosses a broker. Pretending that creating and publishing are the same
+instant would require waiting for the neighbour inside the write transaction.
 
 ```
 @Mutation createPost
   → commandGateway.send(CreatePost)
-     → Post.create(...)  → PostPreCreated          [v1, sem tag]   → posts.save(post)
-  → a mutation responde v1                          ~~~ RabbitMQ: posts.PostPreCreated.<postId> ~~~
+     → Post.create(...)  → PostPreCreated          [v1, no tag]   → posts.save(post)
+  → the mutation answers v1                         ~~~ RabbitMQ: posts.PostPreCreated.<postId> ~~~
 
                                             apps/tagging
-                                              → ChannelEventInbox APENDA no event store dele
+                                              → ChannelEventInbox APPENDS to its own event store
                                               → CompleteOnPostPreCreated → CompletePostWithDefaultTag
-                                              → Post.complete(...) → PostCreated  [v2, com a tag]
+                                              → Post.complete(...) → PostCreated  [v2, with the tag]
   ~~~ RabbitMQ: posts.PostCreated.<postId> ~~~
 
-  → ChannelEventInbox APENDA no event store daqui (lendo o stream antes, pela sequência)
-  → PostCreatedProjection materializa a linha, DENTRO da transação do append
-  → PostCreatedEventHandler emite onPostCreated — noutro processor, em TODO container (ver abaixo)
+  → ChannelEventInbox APPENDS to this side's event store (reading the stream first, for the sequence)
+  → PostCreatedProjection materializes the row, INSIDE the append's transaction
+  → PostCreatedEventHandler emits onPostCreated — on another processor, in EVERY container (see below)
 ```
 
-Nenhum dos dois serviços nomeia o outro: um publica `posts.PostPreCreated` e escuta `posts.PostCreated`,
-o outro faz o inverso. Trocar o serviço de tagueamento é trocar quem responde àquela routing key.
+Neither service names the other: one publishes `posts.PostPreCreated` and listens for
+`posts.PostCreated`, the other does the inverse. Replacing the tagging service means replacing who
+answers that routing key.
 
-**Em teste a decisão é dublada em processo** (`InProcessTagAssignment`, removido do build em dev/prod
-pelo `@IfBuildProperty`), porque consistência eventual faz mensagem em voo cruzar a fronteira do
-`truncate` entre testes. O caminho real é coberto por `apps/posts-api-e2e`, fora do Surefire.
+**In test the decision is doubled in-process** (`InProcessTagAssignment`, removed from the build in
+dev/prod by `@IfBuildProperty`), because eventual consistency makes an in-flight message cross the
+`truncate` boundary between tests. The real path is covered by `apps/posts-api-e2e`, outside Surefire.
 
-### A integração Axon ↔ channels, nas duas direções
+### The Axon ↔ channels integration, in both directions
 
-- **saída**: todo evento apendado é oferecido, depois do commit, aos **outboxes deste serviço**, por um
-  `MessageDispatchInterceptor`. Genérico — nenhum tipo de evento é citado em código. A routing key sai do
-  `@Event` + `@EventTag`: `namespace.Name.tagDoAgregado`.
-- **entrada**: toda mensagem recebida é **apendada no event store local**, e é o store — não a fila —
-  que alimenta os event processors. O broker é transporte; o Axon funciona como em qualquer aplicação
-  sem mensageria, com token, replay e durabilidade.
+- **outbound**: every appended event is offered, after the commit, to **this service's outboxes**, by a
+  `MessageDispatchInterceptor`. Generic — no event type is named in code. The routing key comes from
+  `@Event` + `@EventTag`: `namespace.Name.aggregateTag`.
+- **inbound**: every received message is **appended to the local event store**, and it is the store —
+  not the queue — that feeds the event processors. The broker is transport; Axon works as it does in
+  any application with no messaging, with tokens, replay and durability.
 
-**UM CANAL POR DESTINO, e a saída deixou de ter um hub.** Era um canal só, `axon-events`, por onde todo
-evento passava — um ponto central numa saga que se diz coreografada, e a razão pela qual "parte em Kafka,
-parte em RabbitMQ" não era exprimível: conector é atributo do canal, e só havia um canal.
+**ONE CHANNEL PER DESTINATION, and the outbound side no longer has a hub.** It used to be a single
+channel, `axon-events`, through which every event passed — a central point in a saga that calls itself
+choreographed, and the reason "part on Kafka, part on RabbitMQ" was not expressible: a connector is an
+attribute of a channel, and there was only one channel.
 
-#### A regra que decide onde cada coisa é declarada
+#### The rule that decides where each thing is declared
 
-> **O código diz O QUÊ sai. A configuração diz PARA ONDE.**
+> **The code says WHAT goes out. The configuration says WHERE TO.**
 
-Houve uma versão intermediária com o seletor no `application.properties`
-(`axonposts.messaging.outbox.<canal>.events=posts.*`), escrita para espelhar o `routing-keys` da entrada.
-A simetria era aparente: na **entrada** o seletor é mesmo configuração, porque anda junto com nome de
-fila e binding, que mudam por ambiente; na **saída** não muda por ambiente nunca — o que um serviço
-publica é contrato dele, e contrato em `.properties` se altera sem passar por revisão de código.
+There was an intermediate version with the selector in `application.properties`
+(`axonposts.messaging.outbox.<channel>.events=posts.*`), written to mirror the inbound `routing-keys`.
+The symmetry was apparent: on the **inbound** side the selector really is configuration, because it
+travels with queue names and bindings, which change per environment; on the **outbound** side it never
+changes per environment — what a service publishes is its contract, and a contract in `.properties`
+can be altered without going through code review.
 
-E houve uma versão com uma `interface AxonOutbox` de três métodos, implementada por um bean em cada
-serviço. Ela dizia os mesmos dois fatos em uma classe, com o nome do canal escrito duas vezes e sem nada
-conferindo. O qualifier diz o mesmo em duas linhas, e a conferência passou a existir.
+And there was a version with an `interface AxonOutbox` of three methods, implemented by a bean in each
+service. It stated the same two facts in one class, with the channel name written twice and nothing
+checking. The qualifier says the same thing in two lines, and the check now exists.
 
-#### A saída, peça por peça
+#### The outbound side, piece by piece
 
-| peça | onde | o que decide |
+| piece | where | what it decides |
 |---|---|---|
-| `EventAddress` | lib | lê o evento UMA vez: nome qualificado, namespace, id e chave de ordenação |
-| `OutboxRouting` | lib | qual outbox recebe qual evento, por namespace; valida a fiação |
-| `@AxonOutbox` | **qualifier da lib, usado na aplicação** | o canal e os **namespaces** que saem por ele |
-| `ChannelAddressing` | lib, uma por conector | como aquele broker endereça (routing key, record key) |
+| `EventAddress` | lib | reads the event ONCE: qualified name, namespace, id and ordering key |
+| `OutboxRouting` | lib | which outbox receives which event, by namespace; validates the wiring |
+| `@AxonOutbox` | **a lib qualifier, used in the application** | the channel and the **namespaces** that go out through it |
+| `ChannelAddressing` | lib, one per connector | how that broker addresses (routing key, record key) |
 
-**OUTBOX NOVO = DUAS COISAS:**
+**A NEW OUTBOX = TWO THINGS:**
 
-1. um produtor de `Emitter` em `infrastructure/outbox/` da aplicação — uma declaração, os dois fatos:
+1. an `Emitter` producer in the application's `infrastructure/outbox/` — one declaration, both facts:
 
 ```java
 static final String CHANNEL = "post-events-out";
@@ -364,308 +406,364 @@ Emitter<AxonEventEnvelope> postEvents(@Channel(CHANNEL) Emitter<AxonEventEnvelop
 }
 ```
 
-2. o bloco `mp.messaging.outgoing.<canal>.*`: conector, exchange/tópico. Nada sobre *o que* sai.
+2. the `mp.messaging.outgoing.<channel>.*` block: connector, exchange/topic. Nothing about *what* goes
+   out.
 
-**Três coisas do CDI que decidiram essa forma, e as três foram medidas:**
+**Three CDI facts that decided this shape, and all three were measured:**
 
-- **`@AxonOutbox` não pode ir no campo injetado**, ao lado do `@Channel`. Qualifier num ponto de injeção
-  exige um bean com *todos* os qualifiers dali, e o emitter de `@Channel` é um bean sintético do Quarkus
-  que só tem o `@Channel`. A lib também não pode oferecer esse bean: um produtor que casasse com qualquer
-  canal precisaria de `@Channel` com `value()` `@Nonbinding`, e ele é **binding** — é o que distingue um
-  canal do outro. Num produtor a colisão some.
-- **O nome do canal aparece duas vezes** porque não há de onde lê-lo uma vez só: o ArC devolve
-  `Bean#getInjectionPoints()` **vazio** para produtores (medido: `injectionPoints=[]`), então o `@Channel`
-  do parâmetro é invisível em runtime. O que impede a divergência é `OutboxRouting`, que confere o emitter
-  produzido contra o que o `ChannelRegistry` tem sob aquele nome.
-- **A lib coleta com `@AxonOutbox Instance<Object>`**, e não `Instance<Emitter<…>>`: o Quarkus valida todo
-  ponto de injeção cujo tipo requerido seja `Emitter` e exige `@Channel` nele —
-  `Invalid emitter injection - @Channel is required for parameter 'outboxes'`. `Object` escapa da
-  validação; o elenco é conferido na coleta.
+- **`@AxonOutbox` cannot go on the injected field**, next to `@Channel`. A qualifier at an injection
+  point requires a bean with *all* the qualifiers there, and the `@Channel` emitter is a Quarkus
+  synthetic bean carrying only `@Channel`. The lib cannot offer that bean either: a producer matching
+  any channel would need `@Channel` with a `@Nonbinding` `value()`, and it is **binding** — it is what
+  distinguishes one channel from another. In a producer the collision disappears.
+- **The channel name appears twice** because there is nowhere to read it once: ArC returns
+  `Bean#getInjectionPoints()` **empty** for producers (measured: `injectionPoints=[]`), so the
+  parameter's `@Channel` is invisible at runtime. What prevents divergence is `OutboxRouting`, which
+  checks the produced emitter against what `ChannelRegistry` holds under that name.
+- **The lib collects with `@AxonOutbox Instance<Object>`**, not `Instance<Emitter<…>>`: Quarkus
+  validates every injection point whose required type is `Emitter` and demands `@Channel` on it —
+  `Invalid emitter injection - @Channel is required for parameter 'outboxes'`. `Object` escapes that
+  validation; the cast is checked during collection.
 
-Produtor declarando canal que o SmallRye não ligou **derruba a resolução da tabela**, com o nome do canal
-no erro. O inverso — bloco de canal sem produtor — não é detectável, porque nem todo canal outgoing
-precisa ser um outbox do Axon; o sinal dele é o `has no downstream` do SmallRye na partida.
+A producer declaring a channel SmallRye did not wire **brings down table resolution**, with the channel
+name in the error. The inverse — a channel block with no producer — is not detectable, because not
+every outgoing channel needs to be an Axon outbox; its signal is SmallRye's `has no downstream` at
+startup.
 
-Evento que casa com vários outboxes sai em todos — é o que mantém "tudo num barramento de auditoria e só
-os posts no broker" exprimível com dois beans. Evento que não casa com nenhum não sai, e isso é o desenho:
-o event store continua sendo o log durável, e o que não foi publicado pode ser republicado.
+An event matching several outboxes goes out on all of them — that is what keeps "everything on an
+audit bus and only the posts on the broker" expressible with two beans. An event matching none does
+not go out, and that is the design: the event store remains the durable log, and what was not published
+can be republished.
 
-**O limite conhecido:** a granularidade é o namespace, então não dá para mandar `posts.PostCreated` a um
-destino e `posts.PostUpdated` a outro. O dia em que for preciso, o lugar de resolver é a porta
-`AxonOutbox` — um método a mais —, não um arquivo de propriedades.
+**The known limit:** granularity is the namespace, so you cannot send `posts.PostCreated` to one
+destination and `posts.PostUpdated` to another. The day that is needed, the place to solve it is the
+`AxonOutbox` port — one more method — not a properties file.
 
-**Protocolo novo = uma `ChannelAddressing` a mais**, declarando o `connector()` que ela atende
-(`smallrye-kafka`, `smallrye-pulsar`…). Ela **não** substitui a de RabbitMQ: as duas convivem, e quem
-escolhe entre elas é o `mp.messaging.outgoing.<canal>.connector` daquele canal. Conector sem
-`ChannelAddressing` derruba a resolução — sem endereçamento a mensagem sairia sem routing key e o
-exchange a descartaria sem uma linha no log.
+**A new protocol = one more `ChannelAddressing`**, declaring the `connector()` it serves
+(`smallrye-kafka`, `smallrye-pulsar`…). It does **not** replace the RabbitMQ one: the two coexist, and
+what chooses between them is that channel's `mp.messaging.outgoing.<channel>.connector`. A connector
+with no `ChannelAddressing` brings down resolution — without addressing the message would go out with
+no routing key and the exchange would discard it without a line in the log.
 
-**A chave de ordenação NÃO é mais configurada.** Havia `axonposts.messaging.ordering-tag-keys=postId,…`
-nos dois serviços, e os dois `application.properties` já admitiam por escrito que a lista não desempatava
-nada: o `AggregateBasedJpaEventStorageEngine` aceita **uma tag por evento**. Hoje a chave é a tag do
-evento, lida do evento (`EventAddress`), e duas tags produzem `WARN` em vez de escolha alfabética calada.
-Quem trava as três regras é `OutboxRoutingTest`.
+**The ordering key is NO LONGER configured.** There used to be
+`axonposts.messaging.ordering-tag-keys=postId,…` in both services, and both `application.properties`
+already admitted in writing that the list broke no ties: `AggregateBasedJpaEventStorageEngine` accepts
+**one tag per event**. Today the key is the event's tag, read from the event (`EventAddress`), and two
+tags produce a `WARN` instead of a silent alphabetical choice. What locks down the three rules is
+`OutboxRoutingTest`.
 
-Três guardas independentes contra execução duplicada, e cada uma cobre o que a outra não cobre: a
-**marca de origem** na metadata descarta o eco do próprio serviço (e corta o laço de reenvio); o
-**inbox** (`axon_message_inbox`) descarta reentrega, no mesmo commit do append; e o **agregado** descarta
-a decisão repetida (`Post.isComplete()`), que é a única que sobrevive a um inbox limpo.
+Three independent guards against duplicate execution, and each covers what the others do not: the
+**origin mark** in the metadata discards the service's own echo (and cuts the resend loop); the
+**inbox** (`axon_message_inbox`) discards a redelivery, in the same commit as the append; and the
+**aggregate** discards the repeated decision (`Post.isComplete()`), which is the only one that
+survives a cleared inbox.
 
-### Regras de camada (seguir ao adicionar código)
+### Layer rules (follow these when adding code)
 
-1. **Um arquivo por mensagem, e a classe leva o nome dela.** Não existe classe `…Handler` para
-   command/query/subscription: `CreatePostCommand` **é** o command — traz o record da mensagem aninhado
-   (`CreatePostCommand.CreatePost`) e o `@CommandHandler` que a trata. Quem despacha importa o tipo
-   aninhado. Vale igual para `FindPostQuery.FindPost` e `OnPostUpdatedSubscription.OnPostUpdated`.
-2. **Eventos são o inverso: uma classe por reação.** Os eventos de domínio vivem em `domain.*.event` e quem
-   os dispara são as entidades, pela porta `DomainEventPublisher`. Quem reage vive em
-   `application.<agregado>.event`, um arquivo por responsabilidade, e a classe leva o nome do evento:
-   `PostCreatedEventHandler`, `PostUpdatedEventHandler`. É a mesma forma da versão Spring — o
-   `QueryUpdateEmitter` injetado por parâmetro, um `emit` e mais nada.
-3. **O command decide e salva; o evento notifica e orquestra.** Event handlers não escrevem no banco — um
-   emite para as subscriptions, o outro despacha os commands que dão sequência.
-   **Uma exceção, estreita e declarada**: evento que chega de OUTRO serviço não tem command local atrás
-   dele, então quem o recebe materializa a projeção. É o papel clássico de uma projeção em CQRS; o que
-   era incomum aqui era o command acumular esse papel, o que só funcionava enquanto tudo era local.
-   **A exceção tem pacote próprio** — `application.post.projection` —, e não por gosto de simetria: é o
-   pacote que escolhe o processor, e projetar precisa de uma entrega que notificar não precisa. Ver a
-   seção *O pacote escolhe a ENTREGA*, logo abaixo.
-4. **Porta de entrada é APRESENTAÇÃO, venha de onde vier.** `interfaces/graphql` para HTTP/WebSocket/SSE
-   e `interfaces/messaging` para as filas. O critério não é o transporte, é a DIREÇÃO: adaptador de saída
-   (o outbox, os repositórios, o provedor de identidade) é infraestrutura; o que traz algo de fora para
-   dentro é apresentação. Um `@Incoming` é um endereço, como um `@GraphQLApi` é um caminho.
-   Um listener, portanto, não alcança repositório nem decide regra: entrega a mensagem ao mecanismo de
-   ingestão e sai, como um resolver entrega ao command gateway.
-5. **A apresentação não alcança `domain` nem `infrastructure` da própria aplicação.** Os `@GraphQLApi` falam com o gateway de
-   command/query e com a porta `application.auth.AuthenticatedUser` (implementada por
-   `infrastructure.security.CurrentUser`). Nada de repositório de domínio num resolver.
-6. **Nada de pacote por papel na raiz.** Não existe mais `dto/`, `mapper/` nem `exceptions/` soltos: cada
-   tipo mora na camada que o **possui**, e o pacote diz qual é.
+1. **One file per message, and the class takes its name.** There is no `…Handler` class for
+   command/query/subscription: `CreatePostCommand` **is** the command — it carries the message record
+   nested inside (`CreatePostCommand.CreatePost`) and the `@CommandHandler` that handles it. The
+   dispatcher imports the nested type. The same holds for `FindPostQuery.FindPost` and
+   `OnPostUpdatedSubscription.OnPostUpdated`.
+2. **Events are the inverse: one class per reaction.** Domain events live in `domain.*.event` and what
+   raises them are the entities, through the `DomainEventPublisher` port. Whoever reacts lives in
+   `application.<aggregate>.event`, one file per responsibility, and the class takes the event's name:
+   `PostCreatedEventHandler`, `PostUpdatedEventHandler`. It is the same shape as the Spring version —
+   the `QueryUpdateEmitter` injected by parameter, one `emit` and nothing else.
+3. **The command decides and saves; the event notifies and orchestrates.** Event handlers do not write
+   to the database — one emits to the subscriptions, the other dispatches the commands that follow on.
+   **One exception, narrow and declared**: an event arriving from ANOTHER service has no local command
+   behind it, so whoever receives it materializes the projection. That is a projection's classic role
+   in CQRS; what was unusual here was the command accumulating that role, which only worked while
+   everything was local.
+   **The exception has its own package** — `application.post.projection` — and not out of a taste for
+   symmetry: the package is what chooses the processor, and projecting needs a delivery that notifying
+   does not. See *A handler's package chooses its DELIVERY*, just below.
+4. **An entry point is PRESENTATION, wherever it comes from.** `interfaces/graphql` for
+   HTTP/WebSocket/SSE and `interfaces/messaging` for the queues. The criterion is not the transport,
+   it is the DIRECTION: an outbound adapter (the outbox, the repositories, the identity provider) is
+   infrastructure; what brings something from outside in is presentation. An `@Incoming` is an
+   address, just as a `@GraphQLApi` is a path.
+   A listener, therefore, does not reach a repository nor decide a rule: it hands the message to the
+   ingestion mechanism and leaves, just as a resolver hands off to the command gateway.
+5. **Presentation does not reach the application's own `domain` or `infrastructure`.** The
+   `@GraphQLApi` classes talk to the command/query gateway and to the
+   `application.auth.AuthenticatedUser` port (implemented by `infrastructure.security.CurrentUser`).
+   No domain repository in a resolver.
+6. **No package-by-role at the root.** There is no loose `dto/`, `mapper/` or `exceptions/` any more:
+   each type lives in the layer that **owns** it, and the package says which one.
 
-### O pacote de um event handler escolhe a ENTREGA dele
+### A handler's package chooses its DELIVERY
 
-Um `@EventHandler` não diz em que processor roda: quem diz é o **pacote**, numa linha de
-`application.properties`. E o processor não é afinamento — ele decide **quantas vezes** a reação
-acontece, **onde** ela acontece e **o que** acontece quando ela falha. Duas reações ao mesmo evento
-podem precisar de respostas opostas para essas três perguntas, e quando precisam, elas não cabem na
-mesma classe.
+An `@EventHandler` does not say which processor it runs in: what says it is the **package**, in a line
+of `application.properties`. And the processor is not tuning — it decides **how many times** the
+reaction happens, **where** it happens and **what** happens when it fails. Two reactions to the same
+event can need opposite answers to those three questions, and when they do, they do not fit in the
+same class.
 
-É o caso de `PostCreated`:
+That is the case for `PostCreated`:
 
-|  | projetar (`application.post.projection`) | notificar (`application.post.event`) |
+|  | project (`application.post.projection`) | notify (`application.post.event`) |
 |---|---|---|
-| quantas vezes | uma | em **todo** container |
-| onde | na transação do append | fora dela |
-| se ninguém estiver ouvindo | grava assim mesmo | não há o que fazer |
-| se falhar | aborta o append | avisa e segue |
-| processor | subscribing | pooled streaming, token em memória, HEAD |
+| how many times | once | in **every** container |
+| where | in the append's transaction | outside it |
+| if nobody is listening | writes anyway | there is nothing to do |
+| if it fails | aborts the append | logs and moves on |
+| processor | subscribing | pooled streaming, in-memory token, HEAD |
 
-As classes dos dois lados são `@EventHandler` comuns — nenhuma delas sabe em que processor está, e
-nenhuma tem uma linha de leitura de evento. **A configuração é a diferença inteira.**
+The classes on both sides are ordinary `@EventHandler` methods — neither knows which processor it is
+in, and neither has a line of event reading. **The configuration is the entire difference.**
 
-E as duas colunas se sustentam:
+And both columns hold up:
 
-- **projetar tem de ser subscribing** porque só ali o handler roda na transação de quem apendou. É daí
-  que vem a garantia que o resto usa sem saber — *quem enxerga o evento no store enxerga a linha* —, e é
-  por isso que o handler que notifica pode ler o banco sem correr atrás da escrita. Num processor com
-  token em memória, um container congelado entre invocações (que em Lambda é o estado normal) levaria a
-  materialização com ele;
-- **notificar tem de ser streaming** porque um `emit` só alcança os assinantes do próprio processo, e em
-  Lambda quem segura a conexão SSE nunca é quem atende a mutation: a invocação dele não retornou.
+- **projecting has to be subscribing** because only there does the handler run in the transaction of
+  whoever appended. That is where the guarantee the rest relies on without knowing comes from —
+  *whoever sees the event in the store sees the row* — and that is why the notifying handler can read
+  the database without racing the write. On a processor with an in-memory token, a container frozen
+  between invocations (which on Lambda is the normal state) would take the materialization with it;
+- **notifying has to be streaming** because an `emit` only reaches subscribers of its own process, and
+  on Lambda whoever holds the SSE connection is never whoever serves the mutation: that invocation has
+  not returned.
 
-**Consequência ao escrever código novo**: um handler que grava vai para `projection`; um que avisa, para
-`event`. Errar o pacote não quebra compilação nem teste — muda a semântica de entrega em silêncio.
+**Consequence when writing new code**: a handler that writes goes to `projection`; one that notifies,
+to `event`. Getting the package wrong breaks neither compilation nor tests — it silently changes
+delivery semantics.
 
-### Onde cada coisa mora (e por quê)
+### Where each thing lives (and why)
 
 ```
-application/<agregado>/view/     PostView, TagView, UserView…, PostPage, *ViewMapper
-interfaces/graphql/api/          os @GraphQLApi — só resolver, nada mais
+application/<aggregate>/view/    PostView, TagView, UserView…, PostPage, *ViewMapper
+interfaces/graphql/api/          the @GraphQLApi classes — resolvers only, nothing else
 interfaces/graphql/dto/          CreatePostInput, UpdatePostInput
 interfaces/graphql/mapper/       PostInputMapper (input → command)
 interfaces/graphql/relay/        Connection/Edge/PageInfo/Connections/Cursors + Post/TagConnection/Edge
-interfaces/graphql/error/        GraphQlErrors, @TranslatesErrors, as 4 exceções com @ErrorCode
-interfaces/graphql/sse/          GraphQL over SSE: a rota, o handler e o formato do fio
-docker/federation/               supergraph.yaml, router.yaml e o subgraph de exemplo (SDL só)
+interfaces/graphql/error/        GraphQlErrors, @TranslatesErrors, the 4 exceptions with @ErrorCode
+interfaces/graphql/sse/          GraphQL over SSE: the route, the handler and the wire format
+docker/federation/               supergraph.yaml, router.yaml and the example subgraph (SDL only)
 ```
 
-A regra que decide: **quem atravessa o bus é da aplicação; quem só existe no schema é da apresentação.**
+The deciding rule: **what crosses the bus is application; what only exists in the schema is
+presentation.**
 
-- Os `*View` são o resultado das queries — atravessam o query bus, entram em `PostPage`, são emitidos
-  pelas subscriptions. Por isso são de `application`, e os `*ViewMapper` (entidade → view) com eles. A
-  apresentação os **consome**; a dependência aponta para dentro.
-- Os `*Input` nunca saem da borda: o `PostInputMapper` os transforma em command antes de qualquer coisa.
-  Por isso são de `interfaces`, e o mapper deles também.
-- **O que ficou como dívida consciente**: os `*View` carregam anotações do MicroProfile GraphQL
-  (`@Name("Post")`, `@Id`, `@Description`) e, desde a federação, o `@Key` — é o que dá o nome do tipo no
-  schema e o papel dele na topologia, e é a aplicação sabendo de protocolo. Tirar isso seria duplicar cada view (uma da aplicação, uma do schema) e dobrar os mappers;
-  não vale para o tamanho desta POC. Se um dia valer, a fronteira a mexer é o `*ViewMapper`.
-- `DataIntegrityTranslator` fica em `error/` apesar de conhecer o Hibernate: ele é parte do mecanismo de
-  **classificação**, e quem o chama é o `GraphQlErrors`. Movê-lo para `infrastructure` criaria a única
-  dependência de apresentação → infraestrutura do projeto, que é justamente o que a regra 4 evita.
+- The `*View` types are the result of the queries — they cross the query bus, go into `PostPage`, are
+  emitted by the subscriptions. Hence they are `application`, and the `*ViewMapper` classes (entity →
+  view) with them. Presentation **consumes** them; the dependency points inwards.
+- The `*Input` types never leave the edge: `PostInputMapper` turns them into a command before anything
+  else. Hence they are `interfaces`, and their mapper too.
+- **What remains as conscious debt**: the `*View` types carry MicroProfile GraphQL annotations
+  (`@Name("Post")`, `@Id`, `@Description`) and, since federation, `@Key` — that is what gives the type
+  its name in the schema and its role in the topology, and it is the application knowing about
+  protocol. Removing it would mean duplicating every view (one for the application, one for the
+  schema) and doubling the mappers; not worth it at this proof of concept's size. If it ever is, the
+  boundary to move is `*ViewMapper`.
+- `DataIntegrityTranslator` stays in `error/` despite knowing Hibernate: it is part of the
+  **classification** mechanism, and the one calling it is `GraphQlErrors`. Moving it to
+  `infrastructure` would create the project's only presentation → infrastructure dependency, which is
+  exactly what rule 4 avoids.
 
-### Uma classe por entidade
+### One class per entity
 
-`Post`, `Tag` e `User` são, cada uma, `@Entity` (JPA) + `@EventSourcedEntity` (Axon) + comportamento de
-domínio na mesma classe. Não existe entidade de infraestrutura espelho; os value objects são
-`@Embeddable` records que validam no construtor canônico. Consequências que importam ao editar:
+`Post`, `Tag` and `User` are each an `@Entity` (JPA) + `@EventSourcedEntity` (Axon) + domain behaviour
+in the same class. There is no mirror infrastructure entity; the value objects are `@Embeddable`
+records that validate in the canonical constructor. Consequences that matter when editing:
 
-- A entidade é **mutável** (o JPA exige construtor sem argumentos e campos não-finais), mas sem setters
-  públicos: só eventos mudam estado, e só decisões produzem eventos.
-- **`@EventSourcingHandler` tem de ser idempotente.** O mesmo evento chega por dois caminhos (o domínio o
-  aplica ao decidir; o Axon o aplica ao apendar). Por isso todo campo do evento é **valor absoluto**,
-  inclusive a versão resultante — nada de `version.next()` dentro do `on(...)`. Travado por
-  `applyingTheSameEventTwiceLeavesTheSameState`.
-- **Decidir termina chamando evoluir**: `Post.create(...)` termina no `@EntityCreator` e `update`/`assignTag`
-  terminam em `on(evento)`, os mesmos caminhos do replay. Travado por
+- The entity is **mutable** (JPA requires a no-arg constructor and non-final fields), but with no
+  public setters: only events change state, and only decisions produce events.
+- **`@EventSourcingHandler` has to be idempotent.** The same event arrives through two paths (the
+  domain applies it when deciding; Axon applies it when appending). That is why every event field is an
+  **absolute value**, including the resulting version — no `version.next()` inside `on(...)`. Locked
+  down by `applyingTheSameEventTwiceLeavesTheSameState`.
+- **Deciding ends by calling evolving**: `Post.create(...)` ends at the `@EntityCreator` and
+  `update`/`assignTag` end at `on(event)`, the same paths as replay. Locked down by
   `theStateReturnedByUpdateIsTheSameAsSourcingTheRaisedEvent`.
-- **Eventos carregam primitivos** — são contrato, ficam gravados. A conversão para value object acontece nas
-  fronteiras da entidade.
-- **Os ids são escalares NO FIO**: `PostId`, `TagId` e `UserId` levam `@JsonValue` + `@JsonCreator`. Sem
-  isso um record de um componente sai como objeto (`{"postId":{"value":"abc"}}`) e quem consome do outro
-  lado precisa modelar um invólucro que só existe aqui dentro. Enquanto o event store era em memória nada
-  era serializado e ninguém notou; no primeiro serviço que desserializou o payload, a saga morreu com
+- **Events carry primitives** — they are contract, they get stored. Conversion to value objects happens
+  at the entity's boundaries.
+- **The ids are scalars ON THE WIRE**: `PostId`, `TagId` and `UserId` carry `@JsonValue` +
+  `@JsonCreator`. Without that a one-component record comes out as an object
+  (`{"postId":{"value":"abc"}}`) and whoever consumes it on the other side has to model a wrapper that
+  only exists in here. While the event store was in memory nothing was serialized and nobody noticed;
+  in the first service that deserialized the payload, the saga died with
   `MismatchedInputException: Cannot deserialize value of type String from Object value`.
-- O tipo do id da entidade **não** está numa anotação: ele é o primeiro argumento de
-  `EventSourcedEntityModule.autodetected(PostId.class, Post.class)`, e quem o fornece é o mapa de
-  `libs/platform`, em `infrastructure/axon/EventSourcedEntities` — na PLATAFORMA e não num app, porque
-  os dois serviços precisam dele. No starter do Spring era o `idType` do `@EventSourced`, que
-  só existia para o scan ter onde lê-lo.
+- The entity's id type is **not** in an annotation: it is the first argument of
+  `EventSourcedEntityModule.autodetected(PostId.class, Post.class)`, and what provides it is the map in
+  `libs/platform`, in `infrastructure/axon/EventSourcedEntities` — in the PLATFORM and not in an app,
+  because both services need it. In the Spring starter it was `@EventSourced`'s `idType`, which only
+  existed so the scan had somewhere to read it from.
 
-### Identidade e autorização
+### Identity and authorization
 
-- **Nenhum usuário é cadastrado na aplicação.** `UserProvisioning` cria o perfil *just-in-time* na primeira
-  requisição com um token novo, ou liga a conta a um usuário existente pelo e-mail (account linking).
-- **`User` é agregado polimórfico**: `@EventSourcedEntity(concreteTypes = {Reader, Author})`, e o tipo
-  concreto é função pura do histórico. O Axon fixa o tipo na criação, então **promover é encerrar um
-  agregado e abrir outro** (`UserSupersededEvent` + novo `UserRegisteredEvent` com `supersedes` +
-  `LinkAccount` por credencial). São três unidades de trabalho: a janela entre elas é detectável e o
-  `UserProvisioning` a conserta no login seguinte (`resumeInterruptedPromotion`), sem saga nem job.
-- **A autenticação não é proativa; quem autoriza é o método.** Um endpoint GraphQL é um caminho HTTP só, e
-  `quarkus.http.auth.proactive=false` é o que deixa `post`/`posts` públicas no mesmo POST em que
-  `me`/`createPost` exigem token. Toda mutation de escrita leva `@RolesAllowed(Role.AUTHOR_CLAIM)` — e uma
-  mutation nova sem ela aparece porque `AuthorizationE2ETest` é parametrizado sobre a lista de operações.
-  **Ao adicionar uma mutation, acrescentá-la lá.**
-- **Sem prefixo de role.** O Quarkus põe `realm_access.roles` no `SecurityIdentity` como está, então o
-  literal do `@RolesAllowed` é o que o realm emite (`author`). A constante `Role.AUTHOR_CLAIM` existe
-  porque anotação exige literal em tempo de compilação — mantê-la ao lado do enum é o que torna a
-  divergência visível.
-- **Ser autor autoriza a escrever, não a escrever no alheio.** A checagem de "é o autor deste post" está no
-  domínio (`Post.assertWrittenBy`), não no resolver: depende do estado do agregado, então é invariante.
-- Exceções de domínio viram código de erro em `interfaces/graphql/error/GraphQlErrors` — um `if` por família, percorrendo
-  a cadeia de causas. Quem o chama é o `ErrorTranslationInterceptor`, um interceptador CDI ligado por
-  `@TranslatesErrors` **na classe** de cada `@GraphQLApi` — o SmallRye pede o resolver ao CDI e recebe o
-  client proxy, então a cadeia de interceptadores vale ali como em qualquer bean. **Classe nova de resolver
-  = a anotação na classe**, e não uma linha por método. Sem ela os erros saem como "System Error".
-  Consequência de ter subido do corpo do método para a volta dele: o caminho síncrono passa a ser
-  traduzido — um `@Valid` que estoura agora sai `BAD_REQUEST`, e não mais `ValidationError` sem `code`.
-- **A prioridade do interceptador é `PLATFORM_BEFORE + 100`, e o número importa.** Os interceptadores de
-  segurança do Quarkus são `@Priority(150)`; ficar em `APPLICATION` (2000) rodava por dentro deles e
-  deixava as recusas saírem com `"message": null` (as exceções do Quarkus não têm mensagem) e `code` em
-  minúsculas. Por fora, viram `UNAUTHORIZED`/`FORBIDDEN` com mensagem, e o log troca a pilha do Mutiny +
-  `CompositeException` + `CIRCULAR REFERENCE` por uma linha. `AuthorizationE2ETest` trava as duas coisas —
-  o código **e** a mensagem.
-- Por isso as exceções `io.quarkus.security.*` **saíram** de `show-runtime-exception-message`: elas não
-  chegam mais ao cliente. Só as quatro do projeto ficam lá.
-- **Limite conhecido**: token com assinatura inválida é recusado pelo `HttpAuthenticator` antes do
-  resolver — `HTTP 401` com corpo vazio, sem `errors`. Token *ausente* vira erro de GraphQL normal.
+- **No user is registered in the application.** `UserProvisioning` creates the profile *just-in-time*
+  on the first request with a new token, or links the account to an existing user by e-mail (account
+  linking).
+- **`User` is a polymorphic aggregate**: `@EventSourcedEntity(concreteTypes = {Reader, Author})`, and
+  the concrete type is a pure function of the history. Axon fixes the type at creation, so **promoting
+  means closing one aggregate and opening another** (`UserSupersededEvent` + a new `UserRegisteredEvent`
+  with `supersedes` + `LinkAccount` per credential). That is three units of work: the window between
+  them is detectable and `UserProvisioning` repairs it on the next login
+  (`resumeInterruptedPromotion`), with no saga and no job.
+- **Authentication is not proactive; the method is what authorizes.** A GraphQL endpoint is just an
+  HTTP path, and `quarkus.http.auth.proactive=false` is what lets `post`/`posts` be public in the same
+  POST where `me`/`createPost` require a token. Every write mutation carries
+  `@RolesAllowed(Role.AUTHOR_CLAIM)` — and a new mutation without it shows up because
+  `AuthorizationE2ETest` is parameterized over the list of operations. **When adding a mutation, add it
+  there.**
+- **No role prefix.** Quarkus puts `realm_access.roles` into the `SecurityIdentity` as they are, so the
+  `@RolesAllowed` literal is what the realm emits (`author`). The `Role.AUTHOR_CLAIM` constant exists
+  because an annotation requires a compile-time literal — keeping it next to the enum is what makes a
+  divergence visible.
+- **Being an author authorizes writing, not writing on someone else's.** The "is this post's author"
+  check is in the domain (`Post.assertWrittenBy`), not in the resolver: it depends on the aggregate's
+  state, so it is an invariant.
+- Domain exceptions become error codes in `interfaces/graphql/error/GraphQlErrors` — one `if` per
+  family, walking the cause chain. The one calling it is `ErrorTranslationInterceptor`, a CDI
+  interceptor bound by `@TranslatesErrors` **on the class** of each `@GraphQLApi` — SmallRye asks CDI
+  for the resolver and gets the client proxy, so the interceptor chain applies there as on any bean.
+  **A new resolver class = the annotation on the class**, and not a line per method. Without it the
+  errors come out as "System Error".
+  A consequence of having moved up from the method's body to around it: the synchronous path is now
+  translated — a `@Valid` that blows up now comes out `BAD_REQUEST`, and no longer `ValidationError`
+  with no `code`.
+- **The interceptor's priority is `PLATFORM_BEFORE + 100`, and the number matters.** Quarkus's security
+  interceptors are `@Priority(150)`; sitting at `APPLICATION` (2000) ran inside them and let refusals
+  come out with `"message": null` (Quarkus exceptions have no message) and a lowercase `code`. Outside
+  them, they become `UNAUTHORIZED`/`FORBIDDEN` with a message, and the log swaps the Mutiny stack +
+  `CompositeException` + `CIRCULAR REFERENCE` for one line. `AuthorizationE2ETest` locks down both —
+  the code **and** the message.
+- That is why the `io.quarkus.security.*` exceptions **left** `show-runtime-exception-message`: they no
+  longer reach the client. Only the project's four stay there.
+- **Known limit**: a token with an invalid signature is refused by `HttpAuthenticator` before the
+  resolver — `HTTP 401` with an empty body, no `errors`. A *missing* token becomes an ordinary GraphQL
+  error.
 
-### Schema e persistência
+### Schema and persistence
 
-- **O schema do banco vem do Flyway** (`src/main/resources/db/migration`), e o Hibernate roda em
-  `schema-management.strategy=validate`: entidade nova sem migration **não sobe**. Os testes rodam as
-  mesmas migrations.
-- **O DEV SERVICES EXECUTA A LISTA DAS MIGRATIONS, e nada é gerado.**
-  `quarkus.datasource.devservices.init-script-path` aceita `Optional<List<String>>` — conferido no
-  bytecode de `DevServicesBuildTimeConfig` —, então ele recebe `db/migration/V*.sql` diretamente, na
-  ordem.
+- **The database schema comes from Flyway** (`src/main/resources/db/migration`), and Hibernate runs
+  with `schema-management.strategy=validate`: a new entity with no migration **does not start**. The
+  tests run the same migrations.
+- **DEV SERVICES EXECUTES THE LIST OF MIGRATIONS, and nothing is generated.**
+  `quarkus.datasource.devservices.init-script-path` accepts `Optional<List<String>>` — checked in
+  `DevServicesBuildTimeConfig`'s bytecode — so it receives `db/migration/V*.sql` directly, in order.
 
-  **Antes ele recebia um `db/init/schema.sql` concatenado pelo `maven-antrun-plugin` em
-  `process-resources`, e aquilo violava o R de REPEATABLE do FIRST**: o resultado do teste dependia de
-  uma FASE DO MAVEN ter rodado. Quem rodasse a suíte pela IDE — que copia recursos mas não executa o
-  antrun — via `ContainerLaunchException: Could not load classpath init script: db/init/schema.sql`,
-  uma mensagem sobre container para um defeito que não tem nada a ver com container. O plugin saiu dos
-  dois poms; as migrations SÃO o schema, e some a duplicação junto.
+  **It used to receive a `db/init/schema.sql` concatenated by `maven-antrun-plugin` in
+  `process-resources`, and that violated the R for REPEATABLE in FIRST**: the test result depended on
+  a MAVEN PHASE having run. Anyone running the suite from the IDE — which copies resources but does
+  not execute antrun — saw `ContainerLaunchException: Could not load classpath init script:
+  db/init/schema.sql`, a message about a container for a defect that has nothing to do with
+  containers. The plugin left both poms; the migrations ARE the schema, and the duplication goes with
+  it.
 
-  **MIGRATION NOVA = MAIS UMA LINHA na propriedade**, e quem cobra é `DevServicesSchemaTest`, nos DOIS
-  apps: ele falha se uma migration do classpath não estiver na lista, se a ordem não for crescente ou
-  se um caminho não resolver. Não é `@QuarkusTest` de propósito — o que ele afirma é configuração e
-  classpath, que existem sem aplicação de pé, então ele roda em milissegundos e **sem Docker**. Um
-  guarda que só roda com o Docker ligado é um guarda que não roda.
+  **A NEW MIGRATION = ONE MORE LINE in the property**, and the one enforcing it is
+  `DevServicesSchemaTest`, in BOTH apps: it fails if a classpath migration is not on the list, if the
+  order is not ascending or if a path does not resolve. It is deliberately not a `@QuarkusTest` —
+  what it asserts is configuration and classpath, which exist without a running application, so it
+  runs in milliseconds and **without Docker**. A guard that only runs with Docker up is a guard that
+  does not run.
 
-  **A ordem é por VERSÃO, não alfabética**, e `DevServicesSchema.VERSION_ORDER` (em
-  `libs/test-support`) implementa a do Flyway: partes numéricas separadas por `.` ou `_`, comparadas
-  parte a parte, a mais curta primeiro quando é prefixo. A primeira versão disso fazia
-  `Integer.parseInt` do trecho inteiro — funcionava com as migrations deste projeto, todas de uma
-  parte só, e **explodiria com `NumberFormatException` na primeira que seguisse a convenção que o
-  próprio Flyway recomenda** (`V1_0_1__descricao.sql`). O defeito estava DORMINDO: nenhum teste o
-  pegaria até alguém escrever aquela migration. `DevServicesSchemaVersionTest` trava os casos que
-  ninguém escreve hoje — `V10` depois de `V2`, `V1_10` depois de `V1_2`, `V1_0` antes de `V1_0_1`.
+  **The order is by VERSION, not alphabetical**, and `DevServicesSchema.VERSION_ORDER` (in
+  `libs/test-support`) implements Flyway's: numeric parts separated by `.` or `_`, compared part by
+  part, the shorter first when it is a prefix. The first version of this did `Integer.parseInt` on the
+  whole chunk — it worked with this project's migrations, all single-part, and **would have exploded
+  with `NumberFormatException` on the first one following the convention Flyway itself recommends**
+  (`V1_0_1__description.sql`). The defect was SLEEPING: no test would catch it until somebody wrote
+  that migration. `DevServicesSchemaVersionTest` locks down the cases nobody writes today — `V10`
+  after `V2`, `V1_10` after `V1_2`, `V1_0` before `V1_0_1`.
 
-  **Renomear migration JÁ APLICADA não é opção**: a versão é o que fica gravado em
-  `flyway_schema_history`, então `V1__` → `V1_0_1__` vira uma migration nova aos olhos do Flyway. A
-  convenção composta vale para as PRÓXIMAS, e o código já a suporta.
+  **Renaming an ALREADY-APPLIED migration is not an option**: the version is what gets stored in
+  `flyway_schema_history`, so `V1__` → `V1_0_1__` becomes a new migration in Flyway's eyes. The
+  composite convention holds for the NEXT ones, and the code already supports it.
 
-- **`migrate-at-start` é `false`, e não é preferência.** `AxonExtension.init` é um recorder de
-  RUNTIME_INIT que resolve o event storage engine e toca o EntityManager — construindo a persistence
-  unit ANTES de o Flyway ter a vez. Com `validate` contra banco vazio a aplicação morre com
-  `missing table [accounts]`, e adiar dentro do `ComponentBuilder` não resolve (a lambda é chamada de
-  dentro do próprio init). Quem cria o schema: em dev/teste, o Dev Services executa a LISTA das
-  migrations no `initdb` (ver o item acima); no compose e em produção, os serviços `flyway-*`. É o que produção faria de qualquer jeito, e o gate do `validate` continua valendo
-  porque o script é gerado das próprias migrations.
-- `baseline-on-migrate` é `false` de propósito: banco não-vazio sem histórico é banco que alguém criou
-  por fora.
-- Índices que nenhuma anotação JPA expressa vivem só no SQL — o principal é `uk_users_email_active`:
-  e-mail único **entre os ativos**, porque um leitor encerrado e o autor que o substituiu convivem com o
-  mesmo e-mail.
-- Exclusão lógica por `@SQLDelete` + `@SQLRestriction`. Efeito colateral com teste próprio: apagar a conta
-  **esconde os posts do autor**, porque `Post.author` é `@ManyToOne(optional = false)` contra uma linha
-  filtrada.
-- **Um arquivo por agregado na persistência**, em `infrastructure/persistence/<agregado>/`. Eram dois
-  (adapter + repositório Panache) porque `PanacheRepositoryBase.findById(Id)` devolve a entidade e a porta
-  do domínio devolve `Optional` — mesma assinatura, retornos incompatíveis. Recebendo o `EntityManager`
-  por construtor, o conflito desaparece e sobra um arquivo. O pacote é escopado por agregado
-  (`.../post`, `.../user`) porque um `.../panache` comum seria **split package** entre os dois módulos.
-- **`merge`, nunca `persist`.** A entidade vem reconstituída dos eventos pelo Axon: é sempre *detached*,
-  exista a linha ou não.
+  **AND THE CHECKSUM COVERS THE WHOLE FILE, COMMENTS INCLUDED.** Measured: stripping the comments out
+  of the six applied migrations left every already-migrated database refusing to start, with
+  `Migration checksum mismatch for migration version 1 … 6`. The compose stack's `flyway-posts`
+  service runs `migrate`, and `migrate` validates first — so it aborted, and took the whole
+  `apps/posts-api-e2e` run down with it **before a single service came up**. The message names the
+  migration, not the reason, and nothing points at the edit that caused it.
+
+  CI never sees this (an ephemeral runner starts from an empty database), which is exactly what makes
+  it a local-and-production trap: what sees it is every environment where those migrations had
+  already run — this machine's `postgres-data` volume, and the deployed stage, whose
+  `PostsMigrate`/`TaggingMigrate` functions fail the next deploy the same way.
+
+  **The recovery is `repair`, and it is not `down -v`**: it rewrites the stored checksums to match the
+  files and keeps the data. There are TWO databases, so it runs twice:
+
+  ```bash
+  docker compose run --rm flyway-posts \
+    -url=jdbc:postgresql://postgres:5432/axonposts -user=axonposts -password=axonposts \
+    -locations=filesystem:/flyway/sql -connectRetries=20 repair
+  docker compose run --rm flyway-tagging \
+    -url=jdbc:postgresql://postgres:5432/axonposts_tagging -user=axonposts -password=axonposts \
+    -locations=filesystem:/flyway/sql -connectRetries=20 repair
+  ```
+
+  `repair` stays a one-off recovery and does **NOT** go into the compose `command:`. There it would
+  silently accept any change to an applied migration — and that acceptance is the guard itself.
+
+- **`migrate-at-start` is `false`, and that is not a preference.** `AxonExtension.init` is a
+  RUNTIME_INIT recorder that resolves the event storage engine and touches the EntityManager —
+  building the persistence unit BEFORE Flyway gets its turn. With `validate` against an empty database
+  the application dies with `missing table [accounts]`, and deferring inside the `ComponentBuilder`
+  does not help (the lambda is called from inside init itself). Who creates the schema: in dev/test,
+  Dev Services executes the LIST of migrations in `initdb` (see the item above); on compose and in
+  production, the `flyway-*` services. That is what production would do anyway, and the `validate`
+  gate still holds because the script is generated from the migrations themselves.
+- `baseline-on-migrate` is `false` on purpose: a non-empty database with no history is a database
+  somebody created out of band.
+- Indexes that no JPA annotation expresses live only in the SQL — the main one is
+  `uk_users_email_active`: a unique e-mail **among the active ones**, because a closed reader and the
+  author who superseded them coexist with the same e-mail.
+- Logical deletion via `@SQLDelete` + `@SQLRestriction`. A side effect with a test of its own: deleting
+  the account **hides the author's posts**, because `Post.author` is `@ManyToOne(optional = false)`
+  against a filtered row.
+- **One file per aggregate in persistence**, in `infrastructure/persistence/<aggregate>/`. There used
+  to be two (adapter + Panache repository) because `PanacheRepositoryBase.findById(Id)` returns the
+  entity and the domain port returns `Optional` — same signature, incompatible returns. Taking the
+  `EntityManager` through the constructor removes the conflict and leaves one file. The package is
+  scoped per aggregate (`.../post`, `.../user`) because a shared `.../panache` would be a **split
+  package** between the two modules.
+- **`merge`, never `persist`.** The entity comes reconstituted from the events by Axon: it is always
+  *detached*, whether the row exists or not.
 
 ### GraphQL
 
-- **Schema code-first.** Não há `.graphqls`; o SDL é gerado e servido em `/graphql/schema.graphql`. O
-  `schema.graphql` da raiz é uma cópia versionada dele (nada o lê em runtime); atualizar com
-  `curl -s http://localhost:8080/graphql/schema.graphql > schema.graphql` ao mexer no contrato. Ele traz
-  `@link`/`@key`/`@shareable` porque `schema-include-directives` e `schema-include-schema-definition` estão
-  ligados — as duas linhas existem para que esse arquivo **componha** sem a aplicação de pé, e tirar
-  qualquer uma delas faz o `rover` ler o subgraph como Federação 1. `FederationSchemaTest` trava isso. Por
-  isso os DTOs levam `@Name`/`@Input`: `PostView` → `Post`, `CreatePostInput` → `CreatePostInput` (sem a
-  anotação viraria `CreatePostInputInput`).
-- **Os acessores de `UserView` levam `@Name`, e isso não é redundância.** O `InterfaceCreator` do SmallRye
-  só considera campo de interface o método que parece getter (`getX()`) *ou* que traz `@Name`. Estes
-  acessores são estilo record. Sem a anotação a interface sai com zero campos, e uma interface sem campos é
-  **descartada em silêncio** — o erro aparece na partida como `type User not found in schema`.
-- **Cursor connections em `interfaces/graphql/relay`**, escritas uma vez: `Connection<N, E extends Edge<N>>` e
-  `Edge<N>` genéricos, com uma subclasse concreta de **uma linha** por tipo paginado
-  (`PostEdge extends Edge<PostView>`). A subclasse é o que dá ao schema o nome da convenção Relay —
-  um genérico instanciado viraria `Edge_Post`. Campo `…Connection` novo = duas linhas, e o
-  `RelaySchemaTest` confere o resultado no SDL.
-- **Campos com argumentos usam `@Source List<T>`**, inclusive paginados: o `BatchDataFetcher` do SmallRye
-  passa os argumentos do campo no contexto do lote. É o que permitiu `Post.tags` e `Author.posts` serem
-  dois métodos em vez das duas classes de `BatchLoaderRegistry` do projeto Spring.
-- Coleções resolvidas por lote são `LAZY` de propósito: com `EAGER` o N+1 aconteceria antes de o lote
-  entrar em cena.
-- **Subscriptions**: `subscriptionQuery(...)` do `QueryGateway` do núcleo devolve um `Publisher` de
-  Reactive Streams, adaptado para `Multi` com `FlowAdapters.toFlowPublisher`. O `@QueryHandler` da
-  subscription **precisa existir** (devolve `Optional.empty()`). O filtro por tópico é avaliado no `emit`:
-  o payload da subscription carrega o próprio predicado.
-- **O update chega ao assinante depois do commit, e quem faz isso é o Axon.** O
-  `SimpleQueryBus.emitUpdate` chama `runAfterCommitOrImmediately`: bufferiza os updates num recurso do
-  `ProcessingContext`, registra **um** `runOnAfterCommit` e entrega o lote junto; sem contexto, ou com ele
-  já commitado, entrega na hora. Um `@EventHandler` escreve `emitter.emit(...)` e mais nada.
+- **Code-first schema.** There is no `.graphqls`; the SDL is generated and served at
+  `/graphql/schema.graphql`. The root `schema.graphql` is a committed copy of it (nothing reads it at
+  runtime); update it with `curl -s http://localhost:8080/graphql/schema.graphql > schema.graphql` when
+  touching the contract. It carries `@link`/`@key`/`@shareable` because `schema-include-directives` and
+  `schema-include-schema-definition` are on — those two lines exist so that file **composes** without a
+  running application, and removing either makes `rover` read the subgraph as Federation 1.
+  `FederationSchemaTest` locks that down. That is also why the DTOs carry `@Name`/`@Input`: `PostView`
+  → `Post`, `CreatePostInput` → `CreatePostInput` (without the annotation it would become
+  `CreatePostInputInput`).
+- **`UserView`'s accessors carry `@Name`, and that is not redundancy.** SmallRye's `InterfaceCreator`
+  only counts as an interface field a method that looks like a getter (`getX()`) *or* that carries
+  `@Name`. These accessors are record-style. Without the annotation the interface comes out with zero
+  fields, and an interface with no fields is **silently discarded** — the error shows up at startup as
+  `type User not found in schema`.
+- **Cursor connections in `interfaces/graphql/relay`**, written once: generic
+  `Connection<N, E extends Edge<N>>` and `Edge<N>`, with a **one-line** concrete subclass per paginated
+  type (`PostEdge extends Edge<PostView>`). The subclass is what gives the schema the Relay convention
+  name — an instantiated generic would become `Edge_Post`. A new `…Connection` field = two lines, and
+  `RelaySchemaTest` checks the result in the SDL.
+- **Fields with arguments use `@Source List<T>`**, including paginated ones: SmallRye's
+  `BatchDataFetcher` passes the field's arguments in the batch context. That is what let `Post.tags` and
+  `Author.posts` be two methods instead of the Spring project's two `BatchLoaderRegistry` classes.
+- Batch-resolved collections are `LAZY` on purpose: with `EAGER` the N+1 would happen before the batch
+  entered the picture.
+- **Subscriptions**: the core `QueryGateway`'s `subscriptionQuery(...)` returns a Reactive Streams
+  `Publisher`, adapted to `Multi` with `FlowAdapters.toFlowPublisher`. The subscription's
+  `@QueryHandler` **has to exist** (it returns `Optional.empty()`). The topic filter is evaluated at
+  `emit`: the subscription's payload carries the predicate itself.
+- **The update reaches the subscriber after the commit, and Axon is what does that.**
+  `SimpleQueryBus.emitUpdate` calls `runAfterCommitOrImmediately`: it buffers the updates in a
+  `ProcessingContext` resource, registers **one** `runOnAfterCommit` and delivers the batch together;
+  with no context, or with one already committed, it delivers immediately. An `@EventHandler` writes
+  `emitter.emit(...)` and nothing else.
 
-  **A condição para isso funcionar é a unidade de trabalho do Axon ser DONA da transação.** O
-  `quarkus-axon-transaction` faz *begin-or-join*: se já houver transação JTA aberta, ela junta — e aí o
-  after-commit do Axon dispara com a transação ainda aberta, o assinante lê o banco noutra thread dentro
-  dela, e a transação aborta:
+  **The condition for this to work is that Axon's unit of work OWNS the transaction.**
+  `quarkus-axon-transaction` does *begin-or-join*: if a JTA transaction is already open, it joins — and
+  then Axon's after-commit fires with the transaction still open, the subscriber reads the database on
+  another thread inside it, and the transaction aborts:
 
   ```
   ARJUNA012125: TwoPhaseCoordinator.beforeCompletion - failed ... ConcurrentModificationException
@@ -673,213 +771,229 @@ domínio na mesma classe. Não existe entidade de infraestrutura espelho; os val
   This statement has been closed.
   ```
 
-  Por isso **`ChannelEventIngestion.ingest` não leva `@Transactional`**: a linha do inbox e o append vão
-  dentro da mesma `unitOfWorkFactory().create("axon-inbox")`, que abre a transação e a commita. A
-  atomicidade é a mesma; o que muda é quem é o dono. Medido nos dois sentidos com `pnpm test:e2e`:
-  **11 de 12** com a anotação, **12 de 12** sem ela — e nenhum teste do Surefire pega a diferença, porque
-  em teste o tagueamento é dublado em processo e a ingestão não roda. Quem trava é
-  `AxonWiringTest.theIngestionOwnsItsOwnTransaction`, que confere a ausência da anotação.
+  That is why **`ChannelEventIngestion.ingest` does not carry `@Transactional`**: the inbox row and the
+  append go inside the same `unitOfWorkFactory().create("axon-inbox")`, which opens the transaction and
+  commits it. Atomicity is the same; what changes is who owns it. Measured in both directions with
+  `pnpm test:e2e`: **11 out of 12** with the annotation, **12 out of 12** without it — and no Surefire
+  test catches the difference, because in test the tagging is doubled in-process and ingestion does not
+  run. What locks it down is `AxonWiringTest.theIngestionOwnsItsOwnTransaction`, which checks the
+  annotation's absence.
 
-  **Houve duas tentativas de resolver isso por fora, e as duas estão registradas porque as duas
-  pareciam certas.** Uma sincronização JTA escrita à mão dentro do `PostCreatedEventHandler` — que punha
-  infraestrutura na aplicação e morria no interceptador de métricas (`isStarted()` ainda `true` em
-  `AFTER_COMMIT` → `ProcessingContext is already in phase AFTER_COMMIT`, levantada **antes** da emissão).
-  E um decorador de `QueryBus` na plataforma, que funcionava e eram 280 linhas para refazer, no eixo do
-  JTA, o que o framework já fazia no eixo dele. As duas sumiram quando a fronteira da transação passou a
-  bater com a da unidade de trabalho. **Não era uma roda faltando: era a nossa roda girando no eixo
-  errado.**
-- **Dois transportes no mesmo `/graphql`, escolhidos por cabeçalho.** `Upgrade: websocket` →
-  `graphql-transport-ws`/`graphql-ws`, que vem do SmallRye. `Accept: text/event-stream` → GraphQL over
-  SSE, que **não** vem: o SmallRye 2.18.5 e a extensão do Quarkus 3.39 não têm uma linha de
-  `event-stream`, e `interfaces/graphql/sse` é a porta escrita aqui (modo *distinct connections* do
-  `graphql-sse`). O handler herda de `SmallRyeGraphQLAbstractHandler` — a mesma classe do handler HTTP e
-  do de WebSocket do Quarkus —, e é isso que faz contexto de requisição, `SecurityIdentity`,
-  `@RolesAllowed` e tradução de erro valerem igual nas três portas. Dependência consciente de um pacote
-  `runtime` de extensão, que não é API pública.
-- **A GraphiQL do Quarkus fala WebSocket, sempre — não é bug do SSE.** O `render.js` do webjar traz
-  `Accept: application/json` nos headers padrão e `subscriptionUrl: getWsUrl()` fixo, e o `updateUrl` do
-  `SmallRyeGraphQLProcessor` só reescreve `const api`/`const logo`. Sem `subscriptionUrl` o
-  `createGraphiQLFetcher` **lança** em subscription em vez de cair em SSE. Exercitar a porta de SSE é
-  `curl -N` ou `new EventSource('/graphql?query=subscription{...}')` no console; quem a trava de verdade
-  é o `SseSubscriptionE2ETest`. **Não** tratar "a UI usa ws" como sinal de que o SSE quebrou.
-- **A ordem da rota de SSE é o que quebra, e o número não é chutável.** O Quarkus numera as rotas da
-  aplicação em **sequência** (WebSocket `-99`, schema `2`, execução `4`), não em 10 000. Um `order` alto
-  cai depois do handler de execução, que devolve `406 Not Acceptable` a quem pediu `text/event-stream` —
-  a rota nova simplesmente não roda. Daí ser `-SecurityHandlerPriorities.AUTHORIZATION + 2`. E como o
-  Vert.x Web **pausa** a requisição ao rotear e esta rota não tem `BodyHandler` (de propósito: ela devolve
-  com `ctx.next()` o que não é SSE, e o corpo seria lido duas vezes), falta o `request.resume()` — sem
-  ele o POST fica pendurado. `SseSubscriptionE2ETest` trava as duas coisas, inclusive que o POST JSON de
-  sempre continua respondendo `application/graphql-response+json`.
-- **`.onOverflow().buffer(...)` depois do `publisher(...)` é obrigatório, não afinamento.** O `Publisher`
-  do `subscriptionQuery` **não honra demanda incremental**: com `request(Long.MAX_VALUE)` entrega tudo,
-  com `request(1)` a cada item — que é o que o `SubscriptionSubscriber` do SmallRye faz — entrega o
-  primeiro e para. O buffer separa as duas demandas (Mutiny pede ilimitado ao Axon e serve o assinante do
-  próprio buffer). Falha em silêncio: handshake completa, o primeiro evento chega, a conexão fica aberta.
-  **Subscription nova = o operador junto**, e `NewsletterSubscriptionE2ETest.theSameSubscriptionKeeps...`
-  é o que pega a falta dele — junto com o irmão dele em `SseSubscriptionE2ETest`, porque o assinante de
-  SSE pede um item de cada vez pelo mesmo motivo e cai na mesma armadilha.
-- **Validação em duas alturas**: Bean Validation nos `*Input` é fail-fast de borda (`BAD_REQUEST` antes de
-  existir command); os value objects continuam validando por conta própria, e é essa a validação que vale.
-  Em update parcial usar `@Pattern`, não `@NotBlank` — constraints são ignoradas quando o valor é `null`.
-- **Bloqueio fora do event-loop**: `SimpleCommandBus`/`SimpleQueryBus` executam na thread que despacha e lá
-  dentro tem JPA bloqueante. Todo despacho de resolver é
+  **There were two attempts to solve this from the outside, and both are on record because both looked
+  right.** A hand-written JTA synchronization inside `PostCreatedEventHandler` — which put
+  infrastructure in the application and died in the metrics interceptor (`isStarted()` still `true` at
+  `AFTER_COMMIT` → `ProcessingContext is already in phase AFTER_COMMIT`, raised **before** the
+  emission). And a `QueryBus` decorator in the platform, which worked and was 280 lines redoing, on the
+  JTA axis, what the framework already did on its own. Both disappeared when the transaction boundary
+  came to match the unit of work's. **It was not a missing wheel: it was our wheel spinning on the
+  wrong axle.**
+- **Two transports on the same `/graphql`, chosen by header.** `Upgrade: websocket` →
+  `graphql-transport-ws`/`graphql-ws`, which comes from SmallRye. `Accept: text/event-stream` → GraphQL
+  over SSE, which does **not**: SmallRye 2.18.5 and the Quarkus 3.39 extension have not one line of
+  `event-stream`, and `interfaces/graphql/sse` is the endpoint written here (the `graphql-sse`
+  *distinct connections* mode). The handler inherits from `SmallRyeGraphQLAbstractHandler` — the same
+  class as Quarkus's HTTP and WebSocket handlers — and that is what makes request context,
+  `SecurityIdentity`, `@RolesAllowed` and error translation work identically across all three
+  endpoints. A conscious dependency on an extension's `runtime` package, which is not public API.
+- **Quarkus's GraphiQL speaks WebSocket, always — it is not an SSE bug.** The webjar's `render.js`
+  carries `Accept: application/json` in the default headers and a hard-coded
+  `subscriptionUrl: getWsUrl()`, and `SmallRyeGraphQLProcessor`'s `updateUrl` only rewrites `const api`
+  and `const logo`. Without `subscriptionUrl`, `createGraphiQLFetcher` **throws** on a subscription
+  instead of falling back to SSE. Exercising the SSE endpoint means `curl -N` or
+  `new EventSource('/graphql?query=subscription{...}')` in the console; what really locks it down is
+  `SseSubscriptionE2ETest`. Do **not** treat "the UI uses ws" as a sign that SSE broke.
+- **The SSE route's order is what breaks, and the number is not guessable.** Quarkus numbers the
+  application's routes **sequentially** (WebSocket `-99`, schema `2`, execution `4`), not in the
+  10,000s. A high `order` lands after the execution handler, which answers `406 Not Acceptable` to
+  whoever asked for `text/event-stream` — the new route simply does not run. Hence
+  `-SecurityHandlerPriorities.AUTHORIZATION + 2`. And since Vert.x Web **pauses** the request when
+  routing and this route has no `BodyHandler` (on purpose: it hands back with `ctx.next()` whatever is
+  not SSE, and the body would be read twice), a `request.resume()` is missing — without it the POST
+  hangs. `SseSubscriptionE2ETest` locks down both, including that the usual JSON POST still answers
+  `application/graphql-response+json`.
+- **`.onOverflow().buffer(...)` after `publisher(...)` is mandatory, not tuning.** The
+  `subscriptionQuery` `Publisher` **does not honour incremental demand**: with
+  `request(Long.MAX_VALUE)` it delivers everything, with `request(1)` per item — which is what
+  SmallRye's `SubscriptionSubscriber` does — it delivers the first and stops. The buffer separates the
+  two demands (Mutiny requests unbounded from Axon and serves the subscriber from its own buffer). It
+  fails silently: the handshake completes, the first event arrives, the connection stays open. **A new
+  subscription = the operator along with it**, and
+  `NewsletterSubscriptionE2ETest.theSameSubscriptionKeeps...` is what catches its absence — along with
+  its sibling in `SseSubscriptionE2ETest`, because the SSE subscriber requests one item at a time for
+  the same reason and falls into the same trap.
+- **Validation at two heights**: Bean Validation on the `*Input` types is edge fail-fast
+  (`BAD_REQUEST` before a command exists); the value objects still validate on their own, and that is
+  the validation that counts. In a partial update use `@Pattern`, not `@NotBlank` — constraints are
+  ignored when the value is `null`.
+- **Blocking off the event loop**: `SimpleCommandBus`/`SimpleQueryBus` execute on the dispatching
+  thread and inside it there is blocking JPA. Every resolver dispatch is
   `Uni.createFrom().completionStage(() -> gateway...).runSubscriptionOn(Infrastructure.getDefaultWorkerPool())`,
-  escrito no próprio resolver. **O `Supplier` é obrigatório**: a sobrecarga que recebe o
-  `CompletableFuture` pronto executa o gateway no event-loop, e o offload vira decorativo. **Não** chamar
-  o gateway direto, sem o `runSubscriptionOn`. A explicação completa está no `package-info` de
-  `interfaces/graphql`.
-- `version` no `PostView` é `int` e não `long`: a especificação MicroProfile GraphQL mapeia `long` para o
-  scalar `BigInteger`, e o campo é `Int!`.
-- **Teto de profundidade**: `quarkus.smallrye-graphql.instrumentation-query-depth=20`. O default do
-  SmallRye é **10**, e 10 quebra a introspecção da GraphiQL (profundidade 15) e a query Relay mais funda
-  do schema (11). Falha de um jeito enganoso — a aplicação sobe, o SDL é servido, query rasa responde, e
-  só a UI abre em branco. `SchemaIntrospectionTest` trava os dois casos; baixar o número derruba ele.
+  written in the resolver itself. **The `Supplier` is mandatory**: the overload taking a ready
+  `CompletableFuture` executes the gateway on the event loop, and the offload becomes decorative. Do
+  **not** call the gateway directly, without the `runSubscriptionOn`. The full explanation is in
+  `interfaces/graphql`'s `package-info`.
+- `version` on `PostView` is `int` and not `long`: the MicroProfile GraphQL specification maps `long`
+  to the `BigInteger` scalar, and the field is `Int!`.
+- **Depth ceiling**: `quarkus.smallrye-graphql.instrumentation-query-depth=20`. SmallRye's default is
+  **10**, and 10 breaks GraphiQL's introspection (depth 15) and the schema's deepest Relay query (11).
+  It fails in a misleading way — the application starts, the SDL is served, a shallow query answers,
+  and only the UI opens blank. `SchemaIntrospectionTest` locks down both cases; lowering the number
+  takes it down.
 
-### Federação (Apollo Federation 2)
+### Federation (Apollo Federation 2)
 
-A aplicação é um **subgraph**. O SmallRye serve `_service { sdl }` e `_entities(representations:)`;
-o que é daqui são as anotações nas views, os `*EntityApi` e duas linhas de `application.properties`
-(`federation.enabled`, `federation.batch-resolving-enabled`). `docker/federation/` tem o
-`supergraph.yaml`, o `router.yaml` e um subgraph vizinho escrito só como SDL.
+The application is a **subgraph**. SmallRye serves `_service { sdl }` and
+`_entities(representations:)`; what belongs to us are the annotations on the views, the `*EntityApi`
+classes and two lines of `application.properties` (`federation.enabled`,
+`federation.batch-resolving-enabled`). `docker/federation/` holds `supergraph.yaml`, `router.yaml` and
+a neighbouring subgraph written as SDL only.
 
-Entidades e chaves: `Post`, `Tag`, `Author`, `Reader` e a **interface** `User`, todas por `id`.
-`PageInfo` leva `@Shareable` — é o único tipo que outro subgraph também define.
+Entities and keys: `Post`, `Tag`, `Author`, `Reader` and the **interface** `User`, all by `id`.
+`PageInfo` carries `@Shareable` — it is the only type another subgraph also defines.
 
-**ENTIDADE NOVA = QUATRO COISAS, e faltar qualquer uma quebra em runtime, não na compilação:**
+**A NEW ENTITY = FOUR THINGS, and missing any one breaks at runtime, not at compile time:**
 
-1. `@Key(fields = @FieldSet("id"))` na *view* (é ela que vira o `type` do schema);
-2. um `<X>EntityApi` em `interfaces/graphql/api/` com um `@Resolver` em lote;
-3. uma query `Find<X>sByIds` em `application/<agregado>/query/`, devolvendo **mapa** por id;
-4. `findAllById` na porta do repositório + o método no adapter de `infrastructure/persistence/` + o
-   duplo em memória de `support/`.
+1. `@Key(fields = @FieldSet("id"))` on the *view* (it is what becomes the schema `type`);
+2. an `<X>EntityApi` in `interfaces/graphql/api/` with a batched `@Resolver`;
+3. a `Find<X>sByIds` query in `application/<aggregate>/query/`, returning a **map** by id;
+4. `findAllById` on the repository port + the method on the `infrastructure/persistence/` adapter + the
+   in-memory double in `support/`.
 
-As quatro armadilhas do `@Resolver`, todas silenciosas:
+The `@Resolver`'s four traps, all silent:
 
-- **o argumento precisa se chamar `id`** (ou o que estiver no `@Key`). O casamento é por *tipo de retorno
-  + conjunto de nomes de argumento*, não por nome de método. `postId` compila e o `_entities` fica sem
-  resolvedor;
-- **o argumento em lote NÃO leva `@Id`.** O `ReferenceCreator` testa `@Id` antes de desembrulhar a
-  coleção: com ele, o tipo esperado vira `ID` de `java.util.List` e cada id é lido como JSON. O que chega
-  ao cliente é `NullPointerException: resultList is null`, sem menção a argumento;
-- **o elemento da lista NÃO leva `@NonNull`.** Com `[Post!]` o casamento por tipo de retorno falha — o
-  `FederationDataFetcher` espera um tipo *nomeado* depois de desembrulhar a lista — e o lote deixa de ser
-  usado sem um log;
-- **uma posição por representação, na ordem recebida**, com `null` onde não existe. Por isso o resolvedor
-  projeta a lista de ids sobre o mapa da query, em vez de devolver o que veio do banco.
+- **the argument has to be called `id`** (or whatever is in the `@Key`). The match is by *return type +
+  set of argument names*, not by method name. `postId` compiles and `_entities` ends up with no
+  resolver;
+- **the batched argument does NOT carry `@Id`.** `ReferenceCreator` tests for `@Id` before unwrapping
+  the collection: with it, the expected type becomes `ID` of `java.util.List` and each id is read as
+  JSON. What reaches the client is `NullPointerException: resultList is null`, with no mention of an
+  argument;
+- **the list element does NOT carry `@NonNull`.** With `[Post!]` the return-type match fails — the
+  `FederationDataFetcher` expects a *named* type after unwrapping the list — and the batch stops being
+  used without a log line;
+- **one position per representation, in the order received**, with `null` where it does not exist. That
+  is why the resolver projects the id list over the query's map, instead of returning what came out of
+  the database.
 
-Tipo polimórfico precisa de **um `@Resolver` por tipo concreto mais um para a interface** (`UserEntityApi`
-tem três): `List<UserView>` e `List<AuthorView>` são o mesmo apagamento em Java e três tipos GraphQL
-diferentes, e é o tipo GraphQL que o casamento usa. Pedir o tipo errado responde `null`, nunca o outro
-tipo.
+A polymorphic type needs **one `@Resolver` per concrete type plus one for the interface**
+(`UserEntityApi` has three): `List<UserView>` and `List<AuthorView>` are the same erasure in Java and
+three different GraphQL types, and it is the GraphQL type the match uses. Asking for the wrong type
+answers `null`, never the other type.
 
-O `@Link` mora sozinho em `FederatedSchemaApi`, e **só pode haver um** — repetir o `@link` da Federação
-em outra classe `@GraphQLApi` derruba a aplicação na partida. Diretiva usada e não importada sai
-prefixada (`@federation__key`): ao usar uma nova, acrescentar o `@Import` junto. A versão é literal de
-propósito; não trocar por `Link.FEDERATION_SPEC_LATEST_URL`.
+The `@Link` lives alone in `FederatedSchemaApi`, and **there can be only one** — repeating the
+Federation `@link` in another `@GraphQLApi` class brings the application down at startup. A directive
+used and not imported comes out prefixed (`@federation__key`): when using a new one, add the `@Import`
+along with it. The version is a literal on purpose; do not swap it for
+`Link.FEDERATION_SPEC_LATEST_URL`.
 
-**Dois erros VERMELHOS no editor são falso positivo, e não se conserta no código.** O plugin Quarkus Tools
-(Red Hat) acusa, via LSP4IJ:
+**Two RED errors in the editor are false positives, and they are not fixable in code.** The Quarkus
+Tools plugin (Red Hat) reports, via LSP4IJ:
 
 ```
 Directive 'io.smallrye.graphql.api.federation.Key' is not allowed on element type 'INTERFACE'   UserView
 Directive 'io.smallrye.graphql.api.federation.link.Link' is not allowed on element type 'SCHEMA' FederatedSchemaApi
 ```
 
-As duas anotações declaram exatamente essas posições (`@Directive(on = {OBJECT, INTERFACE})` e
-`on = {SCHEMA}`), e o SDL gerado prova que funcionam. O bug está no
-`MicroProfileGraphQLASTValidator`, que lê os valores do `on` assim:
+Both annotations declare exactly those positions (`@Directive(on = {OBJECT, INTERFACE})` and
+`on = {SCHEMA}`), and the generated SDL proves they work. The bug is in
+`MicroProfileGraphQLASTValidator`, which reads the `on` values like this:
 
 ```java
-name = init.getText().substring(init.getText().indexOf(".") + 1);   // indexOf, não lastIndexOf
+name = init.getText().substring(init.getText().indexOf(".") + 1);   // indexOf, not lastIndexOf
 ```
 
-Lido de um .class de biblioteca, o texto vem qualificado
-(`io.smallrye.graphql.api.DirectiveLocation.INTERFACE`); o `indexOf(".")` para no ponto de `io.` e sobra
-`smallrye.graphql.api.DirectiveLocation.INTERFACE`, que não casa com nada. Só aparece nessas duas porque
-o validador **não checa `OBJECT`** — por isso `@Key` nos records (`PostView`, `TagView`…) passa calado.
+Read from a library `.class`, the text comes qualified
+(`io.smallrye.graphql.api.DirectiveLocation.INTERFACE`); the `indexOf(".")` stops at the dot in `io.`
+and what is left is `smallrye.graphql.api.DirectiveLocation.INTERFACE`, which matches nothing. It only
+shows up on those two because the validator **does not check `OBJECT`** — which is why `@Key` on the
+records (`PostView`, `TagView`…) passes quietly.
 
-Não há conserto pelo código: as duas posições são as únicas que o SmallRye aceita, e `@SuppressWarnings`
-não pega (é diagnóstico de language server, não inspeção — nem `"ALL"` silencia). Quem incomodar,
-desliga em **Settings → Languages & Frameworks → MicroProfile → Validation** (guardado em
-`.idea/microProfileSettings.xml`, que não é versionado). **Não remover o `@Key` da interface nem mudar o
-`@Link` de lugar para calar a IDE** — seria trocar uma capacidade real por um aviso errado.
+There is no fix in code: those two positions are the only ones SmallRye accepts, and
+`@SuppressWarnings` does not catch it (it is a language-server diagnostic, not an inspection — not
+even `"ALL"` silences it). Whoever is bothered turns it off in **Settings → Languages & Frameworks →
+MicroProfile → Validation** (stored in `.idea/microProfileSettings.xml`, which is not committed). **Do
+not remove the `@Key` from the interface or move the `@Link` to quiet the IDE** — that would trade a
+real capability for a wrong warning.
 
-`@Blocking`/`@NonBlocking`/`@RunOnVirtualThread` **não** podem ser combinadas com `@Resolver`. Não é
-problema aqui: o offload é escrito no corpo do método (`runSubscriptionOn`), como em todo resolver.
+`@Blocking`/`@NonBlocking`/`@RunOnVirtualThread` **cannot** be combined with `@Resolver`. Not a problem
+here: the offload is written in the method body (`runSubscriptionOn`), as in every resolver.
 
-**`_entities` é público e resolve qualquer entidade pela chave, sem token** — é a premissa da Federação
-(o subgraph fica interno, o roteador é a fronteira). Consequência concreta: `Reader`, que não era
-alcançável anonimamente, agora é. Não publicar esta aplicação direto na internet.
+**`_entities` is public and resolves any entity by key, with no token** — that is Federation's premise
+(the subgraph stays internal, the router is the boundary). A concrete consequence: `Reader`, which was
+not reachable anonymously, now is. Do not publish this application straight to the internet.
 
-### Configuração de infraestrutura
+### Infrastructure configuration
 
-**Quem configura o Axon é a extensão de Quarkus** `at.meks.quarkiverse.axonframework-extension`
-(`quarkus-axon` + `quarkus-axon-transaction`, versão no `${quarkus-axon.version}` do pom). Ela descobre
-entidades, command/query/event handlers em **build time** e publica gateways e buses como beans. O
-`AxonProducer`, o `AxonHandlerLookup` e o `JtaTransactionManager` escritos à mão **não existem mais** —
-539 linhas viraram 78. O README tem a avaliação da troca, inclusive o que piorou.
+**What configures Axon is the Quarkus extension** `at.meks.quarkiverse.axonframework-extension`
+(`quarkus-axon` + `quarkus-axon-transaction`, version in the pom's `${quarkus-axon.version}`). It
+discovers entities and command/query/event handlers at **build time** and publishes gateways and buses
+as beans. The hand-written `AxonProducer`, `AxonHandlerLookup` and `JtaTransactionManager` **no longer
+exist** — 539 lines became 78. The README has the assessment of that trade, including what got worse.
 
-Sobrou em `infrastructure/axon` o que a extensão não tem como adivinhar, um arquivo por decisão:
+What remains in `infrastructure/axon` is what the extension cannot guess, one file per decision:
 
-- **`EventSourcedEntities`** — o tipo do id de cada entidade, implementando o
-  `EventSourcedEntityConfigurer`. **Entidade nova = uma linha no mapa.** A alternativa que a extensão
-  oferece é `@IdType(PostId.class)` na entidade, e ela está **descartada de propósito**: seria a primeira
-  dependência de `domain` para uma biblioteca de plataforma.
-- **`ApplicationClock`** — o `Clock` como bean, para poder ser fixo em teste.
+- **`EventSourcedEntities`** — each entity's id type, implementing `EventSourcedEntityConfigurer`. **A
+  new entity = one line in the map.** The alternative the extension offers is `@IdType(PostId.class)`
+  on the entity, and it is **deliberately rejected**: it would be the domain's first dependency on a
+  platform library.
+- **`ApplicationClock`** — the `Clock` as a bean, so it can be fixed in tests.
 
-Duas linhas de `application.properties` valem tanto quanto código, e as duas falham em silêncio:
+Two lines of `application.properties` are worth as much as code, and both fail silently:
 
-1. `quarkus.axon.subscribingprocessor.namespaces` e `quarkus.axon.pooledprocessor.<nome>.namespaces` —
-   quais pacotes rodam em qual processor. O valor é o nome do pacote porque a extensão lê `@Namespace` da
-   *classe* e cai no pacote como default (por isso o `@Namespace` do `package-info.java` saiu: ali não
-   tinha mais efeito).
-   **Handler novo num pacote já listado: nada a fazer. Handler num PACOTE NOVO: mais um item numa das
-   duas.** Quem fica de fora não dá erro — vai para um `PooledStreamingEventProcessor` **anônimo**,
-   assíncrono e com token store JPA, e as duas propriedades que o pacote dele precisava deixam de valer
-   em silêncio. Quem a pega é
+1. `quarkus.axon.subscribingprocessor.namespaces` and
+   `quarkus.axon.pooledprocessor.<name>.namespaces` — which packages run in which processor. The value
+   is the package name because the extension reads `@Namespace` from the *class* and falls back to the
+   package (which is why the `package-info.java` `@Namespace` was removed: there it no longer had any
+   effect).
+   **A new handler in an already-listed package: nothing to do. A handler in a NEW PACKAGE: one more
+   entry in one of the two.** Whoever is left out gets no error — it goes to an **anonymous**
+   `PooledStreamingEventProcessor`, asynchronous and with a JPA token store, and the two properties
+   that package needed silently stop applying. What catches it is
    `AxonWiringTest.everyPackageWithAnEventHandlerIsAssignedToAProcessor`.
-   **A ordem é handler primeiro, propriedade depois**: namespace listado sem nenhum handler faz a
-   aplicação não subir, com `NullPointerException` na partida (`getEventhandlers` faz
-   `map(mapa::get).flatMap(...)` sobre um `null`).
-2. Nenhuma linha de event store — quem escolhe é o POM. Com `quarkus-axon-jpa-eventstore` e
-   `quarkus-axon-tokenstore-jpa` no classpath a extensão troca os defaults em memória pelos de JPA, e as
-   tabelas vêm da V2.
-   **Os dois módulos declaram cada um uma classe `QuarkusAxonEntityManagerProvider`**, as duas
-   `@ApplicationScoped` e nenhuma `@DefaultBean` — ter os dois sem excluir uma derruba a partida com
-   `AmbiguousResolutionException`. Daí a linha de `quarkus.arc.exclude-types` no `posts-api`; o
-   `apps/tagging` não precisa dela porque não tem token store (não tem processor streaming).
+   **The order is handler first, property second**: a namespace listed with no handler at all makes
+   the application fail to start, with a `NullPointerException` at startup (`getEventhandlers` does
+   `map(map::get).flatMap(...)` over a `null`).
+2. No event store line — the POM is what chooses. With `quarkus-axon-jpa-eventstore` and
+   `quarkus-axon-tokenstore-jpa` on the classpath the extension swaps the in-memory defaults for the
+   JPA ones, and the tables come from V2.
+   **The two modules each declare a `QuarkusAxonEntityManagerProvider` class**, both
+   `@ApplicationScoped` and neither `@DefaultBean` — having both without excluding one brings startup
+   down with `AmbiguousResolutionException`. Hence the `quarkus.arc.exclude-types` line in
+   `posts-api`; `apps/tagging` does not need it because it has no token store (it has no streaming
+   processor).
 
-**As substituições funcionam por ausência**, e é isso que `AxonWiringTest` trava: a extensão declara
-`@DefaultBean`s e cede a vez a quem existir. Apagar `EventSourcedEntities` ou tirar o
-`quarkus-axon-transaction` do pom não quebra compilação — volta o `String` como id e o
-`NoTransactionManager`, que não commita o evento junto com a linha.
+**The substitutions work by absence**, and that is what `AxonWiringTest` locks down: the extension
+declares `@DefaultBean`s and steps aside for whatever exists. Deleting `EventSourcedEntities` or
+removing `quarkus-axon-transaction` from the pom breaks no compilation — it brings back `String` as the
+id and `NoTransactionManager`, which does not commit the event together with the row.
 
-Herdados da extensão, com efeito visível:
+Inherited from the extension, with visible effects:
 
-- exceção de domínio chega ao resolver dentro de uma `CommandExecutionException`
-  (`quarkus.axon.exception-handling.wrap-on-command-handler`, `true` por default). Nada quebrou porque
-  `GraphQlErrors` e `PostCommandFixtures.hasCause` percorrem a **cadeia**;
-- `/q/health` traz `Axon eventprocessors` (daí o `quarkus-smallrye-health` no pom);
-- `quarkus.axon.update-check.disabled=true` desliga a chamada de rede da AxonIQ na partida.
+- a domain exception reaches the resolver inside a `CommandExecutionException`
+  (`quarkus.axon.exception-handling.wrap-on-command-handler`, `true` by default). Nothing broke because
+  `GraphQlErrors` and `PostCommandFixtures.hasCause` walk the **chain**;
+- `/q/health` carries `Axon eventprocessors` (hence `quarkus-smallrye-health` in the pom);
+- `quarkus.axon.update-check.disabled=true` switches off AxonIQ's network call at startup.
 
-**Live reload é o ponto fraco.** Já foi observado, uma vez e sem reprodução depois, a projeção parar em
-silêncio após um reload: post nasce na versão 1, sem tag, e o log não reclama. Se acontecer, reiniciar o
-`quarkus:dev`. O botão que a extensão documenta para o sintoma vizinho ("no command handler available") é
-`quarkus.axon.live-reload.shutdown.wait-duration.amount`; ele **não** é usado aqui porque não se provou
-que resolve este caso.
+**Live reload is the weak point.** It has been observed, once and without reproduction afterwards, that
+the projection silently stopped after a reload: a post is born at version 1, with no tag, and the log
+says nothing. If it happens, restart `quarkus:dev`. The knob the extension documents for the
+neighbouring symptom ("no command handler available") is
+`quarkus.axon.live-reload.shutdown.wait-duration.amount`; it is **not** used here because it was not
+proven to fix this case.
 
-### Observabilidade: OpenTelemetry em TODA aplicação
+### Observability: OpenTelemetry in EVERY application
 
-**REGRA: aplicação nova nasce instrumentada.** `quarkus-opentelemetry` mais o
-`quarkus-observability-devservices-lgtm` em `provided`, e as mesmas linhas de `quarkus.otel` que os
-dois apps já têm. Sinal que existe num serviço e não no outro dá um trace pela metade, e um trace pela
-metade é pior que nenhum: **a lacuna parece latência**. Foi exatamente o que aconteceu enquanto só o
-`posts-api` exportava — o publish aparecia e depois vinha um silêncio de duração desconhecida, que era
-o `tagging` decidindo a tag sem nada registrar.
+**RULE: a new application is born instrumented.** `quarkus-opentelemetry` plus
+`quarkus-observability-devservices-lgtm` in `provided`, and the same `quarkus.otel` lines both apps
+already have. A signal that exists in one service and not in the other gives you half a trace, and half
+a trace is worse than none: **the gap looks like latency**. That is exactly what happened while only
+`posts-api` was exporting — the publish showed up and then came a silence of unknown duration, which
+was `tagging` deciding the tag with nothing recorded.
 
-O que a instrumentação custa em código: **nada**. Traces de HTTP, JDBC e do conector de mensageria são
-automáticos, e o elo entre os processos sai de graça porque `tracing.enabled` já é `true` por default
-nos dois lados do conector do RabbitMQ. A saga inteira é **um trace só**, medido:
+What the instrumentation costs in code: **nothing**. HTTP, JDBC and messaging-connector traces are
+automatic, and the link between the processes comes for free because `tracing.enabled` is already
+`true` by default on both sides of the RabbitMQ connector. The whole saga is **one trace**, measured:
 
 ```
 quarkus-axon-graphql-posts   POST /graphql                                SERVER     322 ms
@@ -890,468 +1004,484 @@ axonposts-tagging                axonposts.events publish                 PRODUC
 quarkus-axon-graphql-posts     axonposts.posts-api.post-completed receive CONSUMER
 ```
 
-Quatro coisas que valem por si, e as três primeiras falham em silêncio:
+Four things that stand on their own, and the first three fail silently:
 
-1. **`quarkus.application.name` é o `service.name` do Grafana.** Sem ele todo trace chega como
-   `unknown_service` — e com dois serviços no mesmo trace isso apaga justamente a informação que o
-   trace distribuído tem para dar: em qual lado o tempo foi gasto.
-2. **Logs e métricas são `false` por default no Quarkus.** Só traces vêm ligados, então
-   `quarkus.otel.logs.enabled` e `quarkus.otel.metrics.enabled` são o que faz o sinal EXISTIR. Não são
-   afinamento.
-3. **O container do LGTM é COMPARTILHADO** (`quarkus.observability.lgtm.shared` é `true` por default,
-   `service-name` é `lgtm`): uma stack, um Grafana, os dois `service.name` dentro. Quem o SOBE é quem
-   partir primeiro — e no `pnpm dev` os dois partem juntos. Daí
-   `quarkus.observability.lgtm.grafana-port=3001` estar declarada nos DOIS apps: **a duplicação é
-   necessária**, porque sem ela a URL da Grafana passaria a depender de quem ganhou a corrida.
-   Verificado com as duas no ar: um container só, e a corrida não produz um segundo.
-4. **`quarkus-opentelemetry` NÃO traz porta HTTP** — depende de `quarkus-vertx`, não de
-   `quarkus-vertx-http`. É o que permite instrumentar o `tagging` sem lhe dar um endpoint nem fazê-lo
-   disputar o 8080 com o outro app no `pnpm dev`.
+1. **`quarkus.application.name` is Grafana's `service.name`.** Without it every trace arrives as
+   `unknown_service` — and with two services in the same trace that erases precisely the information a
+   distributed trace has to give: which side the time was spent on.
+2. **Logs and metrics are `false` by default in Quarkus.** Only traces come on, so
+   `quarkus.otel.logs.enabled` and `quarkus.otel.metrics.enabled` are what make the signal EXIST. They
+   are not tuning.
+3. **The LGTM container is SHARED** (`quarkus.observability.lgtm.shared` is `true` by default,
+   `service-name` is `lgtm`): one stack, one Grafana, both `service.name` values inside. Whoever STARTS
+   it is whoever comes up first — and under `pnpm dev` both start together. Hence
+   `quarkus.observability.lgtm.grafana-port=3001` being declared in BOTH apps: **the duplication is
+   necessary**, because without it the Grafana URL would depend on who won the race. Verified with both
+   up: a single container, and the race does not produce a second one.
+4. **`quarkus-opentelemetry` does NOT bring an HTTP port** — it depends on `quarkus-vertx`, not on
+   `quarkus-vertx-http`. That is what allows instrumenting `tagging` without giving it an endpoint or
+   making it fight over 8080 with the other app under `pnpm dev`.
 
-Em **teste** a observabilidade está desligada nos dois (`%test.quarkus.observability.enabled=false` +
-`%test.quarkus.otel.sdk.disabled=true`), e as duas razões são medidas: subir Loki+Grafana+Tempo+Mimir
-por suíte custa memória de Docker que esta máquina não tem sobrando, e com o SDK ligado sem coletor todo
-teste paga tentativa de exportação e enche o log de falha de conexão. `sdk.disabled` desliga a
-instrumentação inteira, não só o exportador. O `provided` do devservice não o tira do classpath de
-teste — por isso as linhas, e não a ausência da dependência, é que o desligam.
+In **test** observability is off in both (`%test.quarkus.observability.enabled=false` +
+`%test.quarkus.otel.sdk.disabled=true`), and both reasons are measured: bringing up Loki+Grafana+Tempo+
+Mimir per suite costs Docker memory this machine does not have to spare, and with the SDK on and no
+collector every test pays for an export attempt and fills the log with connection failures.
+`sdk.disabled` turns off the whole instrumentation, not just the exporter. The devservice's `provided`
+scope does not remove it from the test classpath — which is why those lines, and not the absence of the
+dependency, are what turn it off.
 
-**O ponto cego em SPANS, e por que ele não se fecha hoje:** o que o Axon faz por dentro do
-command/event bus não gera span — nem a extensão de Quarkus os publica, nem o Axon 5 tem tracing. A
-documentação de tracing do Axon é explícita: *"The Distributed Tracing feature is not yet available in
-Axon Framework 5.0. It will be reintroduced in Axon Framework soon."* O `SpanFactory`, o
-`OpenTelemetrySpanFactory` e o artefato `axon-tracing-opentelemetry` são do Axon 4, e o
-`axon-framework-bom` 5.3.1 — o que este projeto importa — **não tem artefato de tracing nenhum**. A
-extensão de Quarkus até declara o gancho (`AxonTracingConfigurer`), e não há o que plugar nele. Então o
-append no event store, o `@EventSourcingHandler` e a decisão de domínio ficam DENTRO do span do
-`receive`, como um bloco opaco. Fechar isso hoje é escrever os spans à mão, num interceptador de
-mensagem; não foi feito.
+**The blind spot in SPANS, and why it does not close today:** what Axon does inside the command/event
+bus produces no span — the Quarkus extension does not publish them, and Axon 5 has no tracing. Axon's
+tracing documentation is explicit: *"The Distributed Tracing feature is not yet available in Axon
+Framework 5.0. It will be reintroduced in Axon Framework soon."* `SpanFactory`,
+`OpenTelemetrySpanFactory` and the `axon-tracing-opentelemetry` artifact are from Axon 4, and
+`axon-framework-bom` 5.3.1 — the one this project imports — **has no tracing artifact at all**. The
+Quarkus extension even declares the hook (`AxonTracingConfigurer`), and there is nothing to plug into
+it. So the event store append, the `@EventSourcingHandler` and the domain decision stay INSIDE the
+`receive` span, as an opaque block. Closing that today means writing the spans by hand, in a message
+interceptor; it was not done.
 
-**É por isso que as MÉTRICAS do Axon não são enfeite** — elas são o único sinal do que acontece ali
-dentro, e vêm de `libs/platform`, em `infrastructure/axon/AxonMetrics`. Está na PLATAFORMA pela mesma
-razão que o `EventSourcedEntities`: os dois serviços precisam, e nenhum tem nada de próprio a dizer.
-Medido, com as duas aplicações no ar:
+**That is why Axon's METRICS are not decoration** — they are the only signal of what happens in there,
+and they come from `libs/platform`, in `infrastructure/axon/AxonMetrics`. It is in the PLATFORM for the
+same reason as `EventSourcedEntities`: both services need it, and neither has anything of its own to
+say. Measured, with both applications up:
 
 ```
 post_projection_latency{processorName="post-projection", service_name="quarkus-axon-graphql-posts"}  58
 tag_decision_latency   {processorName="tag-decision",    service_name="axonposts-tagging"}          391
 ```
 
-Isso é o ATRASO de cada processor, e é a pergunta que trace nenhum responde: um trace conta uma
-requisição que já passou, e aqui o que importa é o que ainda não passou. Junto vêm contador, timer com
-buckets, percentil e capacidade de `CommandBus`, `QueryBus` e `EventStore`, com o nome do processor como
-TAG (`use-dimensions`), o que permite comparar os dois lados no mesmo gráfico.
+That is each processor's LAG, and it is the question no trace answers: a trace tells you about a
+request that has already gone through, and here what matters is what has not gone through yet. Along
+with it come a counter, a timer with buckets, a percentile and capacity figures for `CommandBus`,
+`QueryBus` and `EventStore`, with the processor name as a TAG (`use-dimensions`), which allows
+comparing both sides on the same chart.
 
-**Por que escrito à mão, e NÃO com o `quarkus-axon-metrics`.** A extensão existe, na versão exata da
-nossa (`2.0.0-alpha6`), e faz exatamente as duas linhas de `AxonMetrics.configure`. Mas arrasta
-`quarkus-micrometer`, que depende de **`quarkus-vertx-http`, e não em escopo opcional** — o que daria
-porta HTTP a quem importasse a plataforma, inclusive ao `apps/tagging`, que não tem nem quer uma (ele
-disputaria o 8080 com o outro app no `pnpm dev`). O que a extensão precisa de verdade é um
-`MeterRegistry`, e o `OpenTelemetryMeterRegistry` é um sobre o bean `OpenTelemetry` que já existe — num
-JAR, não numa extensão. Dois JARs (`axon-metrics-micrometer`, `opentelemetry-micrometer-1.5`) e uma
-classe, e a métrica sai pelo **mesmo OTLP** que o trace e o log.
-Isto também é o que dispensou o `quarkus-micrometer-opentelemetry` no `posts-api` — extensão em
-**Preview** no Quarkus 3.39 que chegou a entrar aqui e saiu quando a configuração subiu para a
-plataforma. Os dois serviços usam agora exatamente o mesmo mecanismo.
+**Why hand-written, and NOT with `quarkus-axon-metrics`.** The extension exists, at our exact version
+(`2.0.0-alpha6`), and does exactly the two lines of `AxonMetrics.configure`. But it drags in
+`quarkus-micrometer`, which depends on **`quarkus-vertx-http`, and not in optional scope** — which
+would give an HTTP port to anyone importing the platform, including `apps/tagging`, which has and wants
+none (it would fight over 8080 with the other app under `pnpm dev`). What the extension really needs is
+a `MeterRegistry`, and `OpenTelemetryMeterRegistry` is one over the `OpenTelemetry` bean that already
+exists — in a JAR, not in an extension. Two JARs (`axon-metrics-micrometer`,
+`opentelemetry-micrometer-1.5`) and one class, and the metric goes out over the **same OTLP** as the
+trace and the log.
 
-`AxonMetrics` também **funciona por ausência**: substitui o `NoMetricsConfigurer` da extensão, que é
-`@DefaultBean`. Apagá-la não quebra compilação — as métricas somem dos DOIS serviços, em silêncio.
+This is also what made `quarkus-micrometer-opentelemetry` unnecessary in `posts-api` — a **Preview**
+extension in Quarkus 3.39 that did enter here and left when the configuration moved up to the platform.
+Both services now use exactly the same mechanism.
 
-## O segundo serviço (`apps/tagging`)
+`AxonMetrics` also **works by absence**: it substitutes the extension's `NoMetricsConfigurer`, which is
+a `@DefaultBean`. Deleting it breaks no compilation — the metrics silently disappear from BOTH
+services.
 
-Um microserviço Axon completo, **sem uma linha de HTTP**: reage a `posts.PostPreCreated`, decide a
-primeira tag e publica `posts.PostCreated`. Tem event store próprio (banco próprio), fila própria e
-agregado nenhum — ele trabalha com o `Post` de verdade, importado de `libs/posts`.
+## The second service (`apps/tagging`)
 
-- **não tem agregado próprio.** Houve um `TagAssignment`, e era invenção: a pergunta que importa é "este
-  post já está completo?", e o `Post` responde. Entidade para guardar o que outra entidade já sabe é
-  estado duplicado, e estado duplicado diverge;
-- **não redeclara eventos.** Importar `libs/posts` é o ponto de o domínio ser uma lib. Um evento de
-  domínio escrito duas vezes é a mesma regra em dois lugares, e o primeiro campo novo as separa em
-  silêncio;
-- **não tem read model**, e é por isso que `quarkus.hibernate-orm.packages=org.axonframework`: as
-  entidades JPA vêm no classpath com o domínio, e sem essa restrição o `validate` exigiria `posts`,
-  `tags`, `users` e `authors` num serviço que não usa nenhuma. Ele reidrata o `Post` do EVENT STORE e
-  aplica regra; nada disso passa por JPA;
-- **não decide qual é a tag padrão.** Nome e identidade são do domínio (`Tag.DEFAULT_NAME` e
-  `Tag.DEFAULT_ID`, este derivado daquele por `UUID.nameUUIDFromBytes`). É função pura: o mesmo id em
-  todo nó, toda reinicialização e todo serviço. Importa porque **dois** lugares atribuem a tag padrão —
-  este serviço em produção e o dublê em processo na suíte do outro app — e os dois têm de chegar ao mesmo
-  id; com a regra no domínio isso é consequência, não coincidência mantida à mão.
+A complete Axon microservice, **with not one line of HTTP**: it reacts to `posts.PostPreCreated`,
+decides the first tag and publishes `posts.PostCreated`. It has its own event store (its own database),
+its own queue and no aggregate — it works with the real `Post`, imported from `libs/posts`.
+
+- **it has no aggregate of its own.** There used to be a `TagAssignment`, and it was an invention: the
+  question that matters is "is this post already complete?", and `Post` answers it. An entity to store
+  what another entity already knows is duplicated state, and duplicated state diverges;
+- **it does not redeclare events.** Importing `libs/posts` is the point of the domain being a lib. A
+  domain event written twice is the same rule in two places, and the first new field separates them
+  silently;
+- **it has no read model**, and that is why `quarkus.hibernate-orm.packages=org.axonframework`: the JPA
+  entities come on the classpath with the domain, and without that restriction `validate` would demand
+  `posts`, `tags`, `users` and `authors` in a service that uses none of them. It rehydrates the `Post`
+  from the EVENT STORE and applies rules; none of that goes through JPA;
+- **it does not decide what the default tag is.** The name and the identity belong to the domain
+  (`Tag.DEFAULT_NAME` and `Tag.DEFAULT_ID`, the latter derived from the former by
+  `UUID.nameUUIDFromBytes`). It is a pure function: the same id on every node, every restart and every
+  service. It matters because **two** places assign the default tag — this service in production and
+  the in-process double in the other app's suite — and both have to arrive at the same id; with the
+  rule in the domain that is a consequence, not a coincidence maintained by hand.
 
 ## AWS Lambda (`infra/aws/`)
 
-Um segundo alvo de implantação, **aditivo**: nenhum arquivo que existia antes dele foi alterado. As
-mesmas duas aplicações, empacotadas por perfil Maven, viram **seis funções**; o RabbitMQ vira um topic
-SNS FIFO com três filas SQS FIFO (mais três DLQ) assinando por filter policy; e a identidade é um user
-pool do **Cognito**, com os três usuários do realm semeados.
+A second deployment target, **additive**: no file that existed before it was changed. The same two
+applications, packaged by Maven profile, become **six functions**; RabbitMQ becomes an SNS FIFO topic
+with three SQS FIFO queues (plus three DLQs) subscribing by filter policy; and the identity is a
+**Cognito** user pool, with the realm's three users seeded.
 
-**O KEYCLOAK CONTINUA SENDO TUDO EM DEV E TESTE** — o Dev Services sobe o container, importa
-`docker/keycloak/realm-axon-posts.json` e os 155 testes usam aquele realm. O Cognito vale só na AWS,
-e a troca saiu porque a aplicação é apenas resource server: o Keycloak custava Fargate + ALB + ECR
-(~US$ 25/mês) para entregar o que o Cognito entrega no free tier.
+**KEYCLOAK IS STILL EVERYTHING IN DEV AND TEST** — Dev Services brings up the container, imports
+`docker/keycloak/realm-axon-posts.json` and the 155 tests use that realm. Cognito applies only on AWS,
+and the swap happened because the application is only a resource server: Keycloak cost Fargate + ALB +
+ECR (~US$ 25/month) to deliver what Cognito delivers in the free tier.
 
-O preço são **quatro linhas** no `application-lambda.properties` (issuer, client id, audience e
-`quarkus.oidc.roles.role-claim-path=cognito:groups`). A última é a única divergência de
-COMPORTAMENTO, e falha em silêncio: sem ela toda mutation de escrita responde `FORBIDDEN`, e nenhum
-teste pega, porque em teste o emissor é outro.
+The price is **four lines** in `application-lambda.properties` (issuer, client id, audience and
+`quarkus.oidc.roles.role-claim-path=cognito:groups`). The last one is the only divergence in
+BEHAVIOUR, and it fails silently: without it every write mutation answers `FORBIDDEN`, and no test
+catches it, because in test the issuer is a different one.
 
-**E o bearer é o ID TOKEN, não o access token.** O access token do Cognito não traz `email`, e
-`UserProvisioning` chama `Email.of(identity.email())`. Pôr `email` nele exige o trigger V2_0, que a
-AWS só oferece nos planos Essentials/Plus; o tier Lite só tem V1_0, que customiza o ID token. O que
-mantém isso seguro é `quarkus.oidc.token.audience` conferindo o `aud`. Ver `infra/aws/cognito.ts`.
-Consequência prática: o token de teste NÃO sai de `/oauth2/token` (o Cognito não aceita
-`grant_type=password` ali) — sai de `aws cognito-idp initiate-auth`.
+**And the bearer is the ID TOKEN, not the access token.** Cognito's access token does not carry
+`email`, and `UserProvisioning` calls `Email.of(identity.email())`. Putting `email` in it requires the
+V2_0 trigger, which AWS only offers on the Essentials/Plus plans; the Lite tier only has V1_0, which
+customizes the ID token. What keeps this safe is `quarkus.oidc.token.audience` checking `aud`. See
+`infra/aws/cognito.ts`. Practical consequence: the test token does NOT come from `/oauth2/token`
+(Cognito does not accept `grant_type=password` there) — it comes from `aws cognito-idp initiate-auth`.
 
 ```bash
-pnpm add -D sst                            # uma vez
-./infra/scripts/package.sh                 # os quatro zips em infra/dist/ (atalho para o Nx)
-npx sst deploy --stage dev                 # ...e as migrations rodam AQUI DENTRO
-./infra/scripts/e2e.sh                     # a saga inteira, afirmada contra a stack
-npx sst remove --stage dev                 # NÃO é opcional: ~US$ 0,13/hora
+pnpm add -D sst                            # once
+./infra/scripts/package.sh                 # the four zips in infra/dist/ (a shortcut to Nx)
+npx sst deploy --stage dev                 # ...and the migrations run IN HERE
+./infra/scripts/e2e.sh                     # the whole saga, asserted against the stack
+npx sst remove --stage dev                 # NOT optional: ~US$ 0.13/hour
 
-npx nx run "dev.manuelantunes:quarkus-axon-graphql-posts:lambda-http"      # atrás do API Gateway
-npx nx run "dev.manuelantunes:quarkus-axon-graphql-posts:lambda-sqs"       # movido pela fila de volta
-npx nx run "dev.manuelantunes:quarkus-axon-graphql-posts:lambda-stream"    # a Function URL que streama
-npx nx run "dev.manuelantunes:axonposts-tagging:lambda"                    # o MESMO zip serve as duas
-npx nx run "dev.manuelantunes:axonposts-tagging:lambda:jvm"                # sem binário nativo
-npx nx run-many -t lambda-http,lambda-sqs,lambda-stream,lambda -c native --parallel=1   # os quatro
+npx nx run "dev.manuelantunes:quarkus-axon-graphql-posts:lambda-http"      # behind the API Gateway
+npx nx run "dev.manuelantunes:quarkus-axon-graphql-posts:lambda-sqs"       # driven by the return queue
+npx nx run "dev.manuelantunes:quarkus-axon-graphql-posts:lambda-stream"    # the streaming Function URL
+npx nx run "dev.manuelantunes:axonposts-tagging:lambda"                    # the SAME zip serves both
+npx nx run "dev.manuelantunes:axonposts-tagging:lambda:jvm"                # no native binary
+npx nx run-many -t lambda-http,lambda-sqs,lambda-stream,lambda -c native --parallel=1   # all four
 ```
 
-**SEIS funções de TRÊS zips**, e as duas últimas são as de fila com outra variável de ambiente:
-`quarkus.lambda.handler` é configuração de RUNTIME, então `QUARKUS_LAMBDA_HANDLER=flyway-migrate`
-transforma o mesmo artefato na função que cria o schema. **`migrate-at-start` continua `false`** — em
-Lambda isso deixa de ser contorno e vira a única escolha correta: migration na partida de uma função
-que escala para N ambientes seria N tentativas concorrentes, cada cold start esperando o lock do
-Flyway de outro dentro do timeout de uma invocação. A ordem é: deploy, invocar as duas migrações,
-testar.
+**SIX functions from THREE zips**, and the last two are the queue ones with a different environment
+variable: `quarkus.lambda.handler` is RUNTIME configuration, so `QUARKUS_LAMBDA_HANDLER=flyway-migrate`
+turns the same artifact into the function that creates the schema. **`migrate-at-start` is still
+`false`** — on Lambda that stops being a workaround and becomes the only correct choice: a migration at
+startup of a function that scales to N environments would be N concurrent attempts, each cold start
+waiting on another's Flyway lock inside one invocation's timeout. The order is: deploy, invoke the two
+migrations, test.
 
-**Quatro coisas que o SST 4.17.1 faz diferente do que se supõe**, todas medidas contra a versão
-instalada: (1) `sst.aws.Function` **não suporta Java** — os runtimes são node, go, rust, python e
-container, então as seis funções são `aws.lambda.Function` do provider Pulumi cru, que o SST expõe
-como o global `aws`; (2) o código vai por **S3**, porque os zips têm 59–72 MB e o upload direto para
-em 50 MB — e sem `sourceCodeHash` trocar o conteúdo na mesma chave **não atualiza a função**, e o
-deploy publica o artefato antigo dizendo que deu certo; (3) `dlq` exige o par `{ queue, retry }`, e a
-DLQ de uma fila FIFO também é FIFO; (4) `rawMessageDelivery` não é opção da subscription — vai por
-`transform.subscription`. E no `image` do `Service`, o `dockerfile` é relativo ao **context**; e
-caminho de arquivo na config é resolvido a partir de `.sst/platform/` e não da raiz, então o
-`FileAsset` precisa de `$cli.paths.root`.
+**Four things SST 4.17.1 does differently than assumed**, all measured against the installed version:
+(1) `sst.aws.Function` **does not support Java** — the runtimes are node, go, rust, python and
+container, so the six functions are `aws.lambda.Function` from the raw Pulumi provider, which SST
+exposes as the global `aws`; (2) the code goes through **S3**, because the zips are 59–72 MB and a
+direct upload stops at 50 MB — and without `sourceCodeHash`, swapping the content under the same key
+**does not update the function**, and the deploy publishes the old artifact saying it succeeded; (3)
+`dlq` requires the `{ queue, retry }` pair, and a FIFO queue's DLQ is also FIFO; (4)
+`rawMessageDelivery` is not a subscription option — it goes through `transform.subscription`. And in a
+`Service`'s `image`, `dockerfile` is relative to the **context**; and a file path in the config
+resolves from `.sst/platform/` and not from the root, so the `FileAsset` needs `$cli.paths.root`.
 
-**`✓ Complete` do `sst deploy` NÃO quer dizer que deu certo.** O deploy que tropeçou nesse caminho
-imprimiu `✓ Complete` na tela — com o URL do Keycloak — e deixou de criar as SEIS funções, o API
-Gateway e os três objetos no S3. O erro estava só em `.sst/log/pulumi.log` (`3 errors`). Recurso que
-não aparece depois de um deploy "bem-sucedido": é esse arquivo que responde, e `npx sst diff`
-confirma, porque ele passa a não enxergar o que falhou ao registrar.
+**`✓ Complete` from `sst deploy` does NOT mean it worked.** The deploy that tripped over that path
+printed `✓ Complete` on screen — with the Keycloak URL — and failed to create the SIX functions, the
+API Gateway and the three S3 objects. The error was only in `.sst/log/pulumi.log` (`3 errors`). A
+resource that does not show up after a "successful" deploy: that file is what answers, and `npx sst
+diff` confirms it, because it stops seeing what failed to register.
 
-**E NUM RUNNER EFÊMERO AQUELE ARQUIVO MORRIA COM O JOB.** Isto aconteceu de novo, e a segunda vez
-custou o dobro: `✓ Complete`, exit 1, e o log do job sem UMA linha sobre a causa. Numa máquina o
-arquivo está ali para ser lido; na esteira a única saída era redeployar às cegas, 25 minutos por
-tentativa, contra uma stack que cobra. Hoje o `tools/github/deploy-sst` tem um passo
-`if: failure()` que despeja as linhas de erro no log do job e sobe `.sst/log/**` inteiro como
-artefato. **Deploy que falha na esteira: é esse grupo do log que se abre primeiro.**
+**AND ON AN EPHEMERAL RUNNER THAT FILE DIED WITH THE JOB.** This happened again, and the second time
+cost double: `✓ Complete`, exit 1, and the job log without ONE line about the cause. On a machine the
+file is right there to be read; in CI the only way out was to redeploy blind, 25 minutes per attempt,
+against a stack that bills. Today `tools/github/deploy-sst` has an `if: failure()` step that dumps the
+error lines into the job log and uploads all of `.sst/log/**` as an artifact. **A deploy that fails in
+CI: that log group is the first thing to open.**
 
-**Os três perfis escrevem em `target/function.zip`** — o segundo apaga o primeiro. Por isso o script
-copia para `dist/` entre eles, e por isso não há como empacotar os três numa invocação só.
+**All three profiles write to `target/function.zip`** — the second erases the first. That is why the
+script copies to `dist/` between them, and why there is no way to package all three in one invocation.
 
-**A troca de protocolo não é código.** O `@AxonOutbox` continua dizendo `channel = "post-events-out"`,
-`namespaces = "posts"` — porque o que um serviço publica é contrato dele — e quem troca RabbitMQ por
-SNS é uma linha de `application-lambda.properties`. É exatamente o que a porta `ChannelAddressing`
-existia para comprar.
+**The protocol swap is not code.** `@AxonOutbox` still says `channel = "post-events-out"`,
+`namespaces = "posts"` — because what a service publishes is its contract — and what swaps RabbitMQ for
+SNS is one line of `application-lambda.properties`. That is exactly what the `ChannelAddressing` port
+existed to buy.
 
-**`quarkus.profile=lambda,prod` tem de valer nos DOIS momentos**, e as duas entradas importam:
-build time (vem do perfil Maven) e runtime (`QUARKUS_PROFILE` na função). Com `lambda` sozinho, as
-linhas `%prod.` do `application.properties` deixam de valer **em silêncio** e a função sobe apontando
-para o datasource de desenvolvimento. Só em build time, a função ignora o
-`application-lambda.properties` e tenta falar com um RabbitMQ que não existe.
+**`quarkus.profile=lambda,prod` has to hold at BOTH moments**, and both entries matter: build time
+(from the Maven profile) and runtime (`QUARKUS_PROFILE` on the function). With `lambda` alone, the
+`%prod.` lines of `application.properties` silently stop applying and the function comes up pointing at
+the development datasource. With build time only, the function ignores
+`application-lambda.properties` and tries to talk to a RabbitMQ that does not exist.
 
-**Por que DOIS módulos novos, e quem decidiu:** o build.
-`quarkus-amazon-lambda-http` **traz** o processador do `quarkus-amazon-lambda`, que varre o índice
-atrás de `RequestHandler` e recusa o que achar (`Multiple handler classes`). Não basta a função de
-HTTP não usar o handler — ele não pode estar no classpath dela. Daí `libs/axon-aws` (endereçamento de
-saída, nas três funções) e `libs/axon-lambda` (o handler, só nas de fila).
+**Why TWO new modules, and who decided:** the build. `quarkus-amazon-lambda-http` **brings** the
+`quarkus-amazon-lambda` processor, which scans the index for a `RequestHandler` and refuses what it
+finds (`Multiple handler classes`). It is not enough for the HTTP function not to use the handler — it
+cannot be on its classpath. Hence `libs/axon-aws` (outbound addressing, in all three functions) and
+`libs/axon-lambda` (the handler, only in the queue ones).
 
-**Os `@Incoming` que já existem continuam sendo a porta de entrada.** O canal passa a
-`smallrye-in-memory` e o handler do Lambda empurra o registro para dentro dele — então
-`PostPreCreatedListener`, `PostChangesListener` e `PostCompletionListener` rodam sem uma linha
-alterada, com o `@Blocking(ordered = false)` e a unidade de trabalho do Axon que já estão medidos ali.
-O conector in-memory é, portanto, **dependência de produção**, e tem um segundo papel: na função de
-API Gateway ele é o objeto nulo do canal `post-completed-in`, que está declarado sem perfil e não pode
-ser removido por arquivo de perfil, só sobrescrito.
+**The existing `@Incoming` methods are still the entry point.** The channel becomes
+`smallrye-in-memory` and the Lambda handler pushes the record into it — so `PostPreCreatedListener`,
+`PostChangesListener` and `PostCompletionListener` run without a line changed, with the
+`@Blocking(ordered = false)` and the Axon unit of work already measured there. The in-memory connector
+is therefore a **production dependency**, and it has a second role: in the API Gateway function it is
+the null object for the `post-completed-in` channel, which is declared without a profile and cannot be
+removed by a profile file, only overridden.
 
-**FIFO não é afinamento.** `MessageGroupId` é a tag do agregado (o `EventAddress.orderingKey()`, que
-na routing key não desempatava nada). Em fila standard esta saga não funciona pior — ela quebra, com
-`duplicate key ... uk_aggregateevententry_aggregate`, de forma intermitente e proporcional à carga.
+**FIFO is not tuning.** `MessageGroupId` is the aggregate's tag (the `EventAddress.orderingKey()`,
+which broke no ties in the routing key). On a standard queue this saga does not work worse — it breaks,
+with `duplicate key ... uk_aggregateevententry_aggregate`, intermittently and in proportion to load.
 
-**A infraestrutura é SST**, e o `sst.config.ts` da raiz não a contém: ele faz `app()` e um
-`await import("./infra/aws")` dentro de `run()` — dinâmico porque os módulos criam recursos no topo do
-arquivo, e estaticamente seriam avaliados antes de `app()` rodar.
+**The infrastructure is SST**, and the root `sst.config.ts` does not contain it: it does `app()` and an
+`await import("./infra/aws")` inside `run()` — dynamic because the modules create resources at the top
+of the file, and statically they would be evaluated before `app()` ran.
 
 ```
-infra/dist/      os três zips (gerados)
-infra/scripts/   package.sh (atalho para os alvos do Nx), migrate.sh, discover.sh, e2e.sh
+infra/dist/      the three zips (generated)
+infra/scripts/   package.sh (a shortcut to the Nx targets), migrate.sh, discover.sh, e2e.sh
 infra/aws/
-  index.ts       a fachada: ordem de carga e outputs. Não cria nada.
-  support/       as DEFINIÇÕES: ArtifactStore, QuarkusFunction/QueueWorker/Migrator, HttpApi.
-                 NADA aqui cria recurso ao ser importado.
-  network/ data/ messaging/ identity/    a infraestrutura de base
-  compute/       as seis funções e o API Gateway; platform.ts é onde support/ encontra os recursos
-  edge/          o Router: UMA distribuição do CloudFront na frente do site e do subgraph
-  web/           o cliente Next.js, atrás do router
+  index.ts       the facade: load order and outputs. Creates nothing.
+  support/       the DEFINITIONS: ArtifactStore, QuarkusFunction/QueueWorker/Migrator, HttpApi.
+                 NOTHING here creates a resource on import.
+  network/ data/ messaging/ identity/    the base infrastructure
+  compute/       the six functions and the API Gateway; platform.ts is where support/ finds the resources
+  edge/          the Router: ONE CloudFront distribution in front of the site and the subgraph
+  web/           the Next.js client, behind the router
 ```
 
-**A seta aponta sempre para o mesmo lado**: quem define não conhece quem instancia. `compute/platform.ts`
-é o único ponto onde os dois lados se encontram, e é por isso que ele existe separado — sem ele,
-`support/functions.ts` teria de importar `network` e `role`, e um helper que importa infraestrutura
-deixa de ser helper.
+**The arrow always points the same way**: the definer does not know the instantiator.
+`compute/platform.ts` is the only point where the two sides meet, and that is why it exists separately
+— without it, `support/functions.ts` would have to import `network` and `role`, and a helper that
+imports infrastructure stops being a helper.
 
-**Tudo que tem satélite é um `ComponentResource`**: `ArtifactStore` (bucket + um objeto por artefato),
-`ExecutionRole` (papel + política), `QuarkusFunction` e as subclasses `QueueWorker` (+ event source
-mapping) e `Migrator` (+ a invocação), e `HttpApi` (API + integração + rota + stage + permissão). Isso
-dá ciclo de vida junto, URN própria por peça e uma árvore de deploy que descreve o sistema.
+**Everything with satellites is a `ComponentResource`**: `ArtifactStore` (bucket + one object per
+artifact), `ExecutionRole` (role + policy), `QuarkusFunction` and the subclasses `QueueWorker`
+(+ event source mapping) and `Migrator` (+ the invocation), and `HttpApi` (API + integration + route +
+stage + permission). That gives a shared lifecycle, a URN of its own per piece and a deploy tree that
+describes the system.
 
-**AS MIGRATIONS RODAM SOZINHAS NO DEPLOY.** `Migrator` cria a função e a `aws.lambda.Invocation` que a
-chama, com `input: Date.now().toString()` para rodar a cada vez (Flyway é idempotente) e `if (!$dev)`
-porque em `sst dev` não há artefato publicado. Migration que falha vira DEPLOY que falha.
+**THE MIGRATIONS RUN ON THEIR OWN AT DEPLOY.** `Migrator` creates the function and the
+`aws.lambda.Invocation` that calls it, with `input: Date.now().toString()` so it runs every time
+(Flyway is idempotent) and `if (!$dev)` because under `sst dev` there is no published artifact. A
+migration that fails becomes a DEPLOY that fails.
 
-**Caminho de arquivo na config usa `$asset()`**, que resolve relativo à raiz do app. `$cli.paths` é
-`@internal` e caminho relativo cru quebra — ver a armadilha logo abaixo.
+**A file path in the config uses `$asset()`**, which resolves relative to the app root. `$cli.paths` is
+`@internal` and a raw relative path breaks — see the trap just below.
 
-**Três coisas que falham em SILÊNCIO no provisionamento**, e as três estão em `infra/aws/`:
-`RawMessageDelivery=true` em cada subscription (sem ele o corpo é o envelope do SNS e a ingestão morre
-com `UnrecognizedPropertyException: Type`); `ReportBatchItemFailures` em cada event source mapping
-(sem ele a AWS ignora o `SQSBatchResponse` e o lote volta inteiro); e `AXONPOSTS_LAMBDA_SQS_CHANNEL`
-em cada função de fila.
+**Three things that fail SILENTLY during provisioning**, and all three are in `infra/aws/`:
+`RawMessageDelivery=true` on each subscription (without it the body is the SNS envelope and ingestion
+dies with `UnrecognizedPropertyException: Type`); `ReportBatchItemFailures` on each event source mapping
+(without it AWS ignores the `SQSBatchResponse` and the whole batch comes back); and
+`AXONPOSTS_LAMBDA_SQS_CHANNEL` on each queue function.
 
-**A SUBSCRIPTION NO LAMBDA — as TRÊS camadas, e as TRÊS estão resolvidas.** Importa separá-las porque
-cada uma tem causa e conserto próprios, e consertar uma não faz as outras desaparecerem:
+**THE SUBSCRIPTION ON LAMBDA — the THREE layers, and all THREE are solved.** It matters to separate
+them because each has its own cause and its own fix, and fixing one does not make the others disappear:
 
-1. **O handler não streama, e não é configuração.** No bytecode da 3.39.2:
-   `LambdaHttpHandler implements RequestHandler<APIGatewayV2HTTPEvent, APIGatewayV2HTTPResponse>` — o
-   tipo de retorno É a resposta inteira. O `NettyResponseHandler` acumula cada `HttpContent` num
-   `ByteArrayOutputStream` e só completa o `CompletableFuture` no fim. Zero ocorrências de
-   `vnd.awslambda`, `RESPONSE_STREAM` ou `HttpResponseStream` no JAR.
+1. **The handler does not stream, and that is not configuration.** In 3.39.2's bytecode:
+   `LambdaHttpHandler implements RequestHandler<APIGatewayV2HTTPEvent, APIGatewayV2HTTPResponse>` — the
+   return type IS the whole response. `NettyResponseHandler` accumulates each `HttpContent` into a
+   `ByteArrayOutputStream` and only completes the `CompletableFuture` at the end. Zero occurrences of
+   `vnd.awslambda`, `RESPONSE_STREAM` or `HttpResponseStream` in the JAR.
 
-   **E o `RequestStreamHandler` do `quarkus-amazon-lambda` também não resolve — mas chega perto.** O
-   `AbstractLambdaPollLoop` (em `quarkus-amazon-lambda-common`) faz, no ramo de stream,
-   `responseStream(url).getOutputStream()` e passa ESSE stream ao handler: os bytes escritos vão para a
-   conexão com a Runtime API, não para um buffer intermediário. O que falta está em `responseStream`,
-   que tem exatamente cinco instruções — `openConnection`, `User-Agent`, `setDoOutput(true)`,
-   `setRequestMethod("POST")`, `return`:
+   **And `quarkus-amazon-lambda`'s `RequestStreamHandler` does not solve it either — but it comes
+   close.** `AbstractLambdaPollLoop` (in `quarkus-amazon-lambda-common`) does, in the stream branch,
+   `responseStream(url).getOutputStream()` and passes THAT stream to the handler: the bytes written go
+   to the connection with the Runtime API, not to an intermediate buffer. What is missing is in
+   `responseStream`, which has exactly five instructions — `openConnection`, `User-Agent`,
+   `setDoOutput(true)`, `setRequestMethod("POST")`, `return`:
    <ul>
-     <li>sem `setChunkedStreamingMode`, o `HttpURLConnection` do JDK <b>bufferiza tudo</b> para
-         calcular o `Content-Length`. Nada sai antes do `close()`;</li>
-     <li>sem `Content-Type: application/vnd.awslambda.http-integration-response`, a AWS não lê prelúdio
-         nenhum — não há como definir status nem cabeçalhos.</li>
+     <li>without `setChunkedStreamingMode`, the JDK's `HttpURLConnection` <b>buffers everything</b> to
+         compute the `Content-Length`. Nothing goes out before `close()`;</li>
+     <li>without `Content-Type: application/vnd.awslambda.http-integration-response`, AWS reads no
+         prelude — there is no way to set status or headers.</li>
    </ul>
-   O método é `protected`, mas quem o herda é `AmazonLambdaRecorder$1`, anônima dentro do recorder:
-   trocar as duas linhas significa forkar a extensão ou sombrear a classe no classpath.
-2. **O transporte na frente não suporta streaming.** O API Gateway não o oferece em modo nenhum:
-   response streaming na AWS existe só em Function URL com `InvokeMode: RESPONSE_STREAM`.
+   The method is `protected`, but the one inheriting it is `AmazonLambdaRecorder$1`, anonymous inside
+   the recorder: changing those two lines means forking the extension or shadowing the class on the
+   classpath.
+2. **The transport in front does not support streaming.** The API Gateway does not offer it in any
+   mode: response streaming on AWS exists only on a Function URL with `InvokeMode: RESPONSE_STREAM`.
 
-**AS DUAS PRIMEIRAS FORAM RESOLVIDAS — e não por um fork.** A saída foi inverter o problema:
-`StreamingFunction` (`infra/aws/support/functions.ts`) empacota a aplicação com o perfil
-`-Plambda-stream`, que <b>não acrescenta extensão de Lambda nenhuma</b> — ela é o servidor HTTP que
-sempre foi. Quem a transforma numa função é o <b>AWS Lambda Web Adapter</b>, uma layer oficial que
-roda como extensão, espera o health check e traduz cada invocação numa requisição para `localhost`.
-Com `AWS_LWA_INVOKE_MODE=response_stream` e Function URL em `RESPONSE_STREAM`, o que o Vert.x escreve
-sai conforme escreve.
+**THE FIRST TWO WERE SOLVED — and not with a fork.** The way out was to invert the problem:
+`StreamingFunction` (`infra/aws/support/functions.ts`) packages the application with the
+`-Plambda-stream` profile, which <b>adds no Lambda extension at all</b> — it is the HTTP server it
+always was. What turns it into a function is the <b>AWS Lambda Web Adapter</b>, an official layer that
+runs as an extension, waits for the health check and translates each invocation into a request to
+`localhost`. With `AWS_LWA_INVOKE_MODE=response_stream` and a Function URL in `RESPONSE_STREAM`, what
+Vert.x writes goes out as it writes it.
 
-MEDIDO contra a stack: os comentários de keep-alive do `SseStream` chegaram às 21:48:58 e 21:49:13 —
-<b>15 segundos de intervalo, exatamente o `axonposts.graphql.sse.keep-alive`</b>. A conexão fica de pé
-e os bytes chegam progressivamente. Pelo API Gateway, nenhum byte chega em 30 s.
+MEASURED against the stack: the `SseStream` keep-alive comments arrived at 21:48:58 and 21:49:13 —
+<b>15 seconds apart, exactly the `axonposts.graphql.sse.keep-alive`</b>. The connection stays up and
+the bytes arrive progressively. Through the API Gateway, no byte arrives in 30 s.
 
-A única dependência que o perfil acrescenta é `axonposts-axon-aws`, e não tem nada a ver com Lambda:
-são os conectores que o `application-lambda.properties` nomeia. Sem ela o build falha em BUILD TIME
-com `The channel 'post-events-out' is configured with an unknown connector (smallrye-sns)`.
-3. **E a fonte era EM PROCESSO — a que sobreviveu aos outros dois consertos.** Medido na Function URL
-   com o streaming já funcionando: assinar `onPostUpdated`, criar um post e editá-lo não entregou
-   evento nenhum — a mutation cai noutro container, porque o que segura a conexão está ocupado com uma
-   invocação que não retornou.
+The only dependency the profile adds is `axonposts-axon-aws`, and it has nothing to do with Lambda:
+these are the connectors `application-lambda.properties` names. Without it the build fails at BUILD
+TIME with `The channel 'post-events-out' is configured with an unknown connector (smallrye-sns)`.
 
-**A TERCEIRA FOI RESOLVIDA POR CONFIGURAÇÃO, e o conserto não tem uma linha de leitura de evento.**
-Quem avisa os assinantes continua sendo `PostCreatedEventHandler` e `PostUpdatedEventHandler` — as
-mesmas duas classes da versão Spring, em `application.post.event`, com o `QueryUpdateEmitter` injetado
-por parâmetro e um `emit` no corpo. Elas não sabem em que processor rodam. **O que mudou foi o processor
-do pacote delas**: `application.post.event` está declarado como <b>pooled streaming</b> em
-`application.properties`, com <b>token store em memória</b> e posição inicial no <b>HEAD</b>. A
-consequência é a solução inteira:
+3. **And the source was IN-PROCESS — the one that survived the other two fixes.** Measured on the
+   Function URL with streaming already working: subscribing to `onPostUpdated`, creating a post and
+   editing it delivered no event — the mutation lands in another container, because what holds the
+   connection is busy with an invocation that has not returned.
 
-- **streaming** — o processor lê o EVENT STORE, que é compartilhado. Ele enxerga o que qualquer
-  container apendou. (O `AggregateBasedJpaEventStorageEngine` suporta isso: ele tem
-  `stream(StreamingCondition)` com `GapAwareTrackingToken`, gaps e lotes — verificado no bytecode.)
-- **token em memória** — cada container tem o próprio cursor. Com o token store JPA, um container
-  reclamaria o segmento e os outros não veriam nada: é o oposto de um fan-out, onde TODO container
-  precisa ver TODO evento.
-- **HEAD** — quem sobe agora quer o que vier a partir de agora, não o histórico reemitido.
+**THE THIRD WAS SOLVED BY CONFIGURATION, and the fix has not one line of event reading.** What notifies
+the subscribers is still `PostCreatedEventHandler` and `PostUpdatedEventHandler` — the same two classes
+as the Spring version, in `application.post.event`, with the `QueryUpdateEmitter` injected by parameter
+and one `emit` in the body. They do not know which processor they run in. **What changed was their
+package's processor**: `application.post.event` is declared as <b>pooled streaming</b> in
+`application.properties`, with an <b>in-memory token store</b> and an initial position at <b>HEAD</b>.
+The consequence is the whole solution:
 
-Quem lê, mantém o cursor, faz o lote e trata falha é o Axon, com o `EventStorageEngine` e o
-`TokenStore` que a aplicação já configura.
+- **streaming** — the processor reads the EVENT STORE, which is shared. It sees what any container
+  appended. (`AggregateBasedJpaEventStorageEngine` supports this: it has `stream(StreamingCondition)`
+  with `GapAwareTrackingToken`, gaps and batches — verified in the bytecode.)
+- **in-memory token** — each container has its own cursor. With the JPA token store, one container
+  would claim the segment and the others would see nothing: that is the opposite of a fan-out, where
+  EVERY container needs to see EVERY event.
+- **HEAD** — whoever comes up now wants what arrives from now on, not the history re-emitted.
 
-**O que teve de sair de lá foi a PROJEÇÃO, não o emit.** Materializar a linha de um `PostCreated` que
-chegou de outro serviço precisa do oposto: uma vez, na transação do append, abortando o append se
-falhar. Num processor com token em memória, um container congelado entre invocações — que em Lambda é
-o estado normal — levaria a materialização com ele. Por isso ela mora em `application.post.projection`,
-que é subscribing. Ver *O pacote de um event handler escolhe a ENTREGA dele*.
+Reading, keeping the cursor, batching and handling failure is Axon's job, with the
+`EventStorageEngine` and the `TokenStore` the application already configures.
+
+**What had to leave was the PROJECTION, not the emit.** Materializing the row for a `PostCreated` that
+arrived from another service needs the opposite: once, in the append's transaction, aborting the append
+if it fails. On a processor with an in-memory token, a container frozen between invocations — which on
+Lambda is the normal state — would take the materialization with it. That is why it lives in
+`application.post.projection`, which is subscribing. See *A handler's package chooses its DELIVERY*.
 <p>
-E a ordem, que antes era cuidado escrito à mão (reconciliar antes de emitir, na mesma função), passou a
-vir da transação: o processor streaming só enxerga o evento **depois** do commit que gravou a linha.
+And the ordering, which used to be hand-written care (reconcile before emitting, in the same function),
+now comes from the transaction: the streaming processor only sees the event **after** the commit that
+wrote the row.
 
-**E isso exigiu DESFAZER uma exclusão de bean que escondia um defeito maior.** O
-`PooledEventProcessingConfigurer` estava em `quarkus.arc.exclude-types`, com o argumento de que
-processor pooled "não é o que este projeto quer em lugar nenhum". O efeito real não era desligar um
-acidente, era desligar a CAPACIDADE: enquanto ele esteve fora, um namespace esquecido em
-`subscribingprocessor.namespaces` não virava um processor assíncrono — virava <b>nenhum processor</b>, e
-os handlers dele nunca rodavam, sem um aviso em lugar nenhum. O que protege contra o acidente original
-agora é `AxonWiringTest.everyPackageWithAnEventHandlerIsAssignedToAProcessor`, que exige que todo pacote
-com `@EventHandler` esteja declarado no subscribing OU num pooled nomeado.
+**And that required UNDOING a bean exclusion that was hiding a bigger defect.**
+`PooledEventProcessingConfigurer` was in `quarkus.arc.exclude-types`, with the argument that a pooled
+processor "is not what this project wants anywhere". The real effect was not switching off an accident,
+it was switching off the CAPABILITY: while it was excluded, a namespace forgotten in
+`subscribingprocessor.namespaces` did not become an asynchronous processor — it became <b>no processor
+at all</b>, and its handlers never ran, with no warning anywhere. What protects against the original
+accident now is `AxonWiringTest.everyPackageWithAnEventHandlerIsAssignedToAProcessor`, which requires
+every package with an `@EventHandler` to be declared in the subscribing processor OR in a named pooled
+one.
 
-**MEDIDO NA FUNCTION URL**, com a subscription aberta num container e a mutation atendida em outro:
+**MEASURED ON THE FUNCTION URL**, with the subscription open in one container and the mutation served
+by another:
 
 ```
 event: next
 data: {"data":{"onPostUpdated":{"id":"e91dad31-…","title":"editado — deve chegar na subscription","version":2}}}
 ```
 
-### O BINÁRIO NATIVO — e os quatro defeitos que só ele revela
+### THE NATIVE BINARY — and the four defects only it reveals
 
-O cold start da JVM era de **14,8 s**, e com o Lambda Web Adapter ele é cobrado como tempo de
-invocação (o boot acontece DENTRO do handler, então não há `Init Duration` no REPORT). O binário
-nativo resolve isso, e `libs/axon-native-support` existe exatamente para que ele funcione.
+The JVM cold start was **14.8 s**, and with the Lambda Web Adapter it is billed as invocation time (the
+boot happens INSIDE the handler, so there is no `Init Duration` in the REPORT). The native binary
+solves that, and `libs/axon-native-support` exists exactly so it works.
 
-**Medido na stack, a mesma função, o mesmo código:**
+**Measured on the stack, the same function, the same code:**
 
-| | JVM | nativo |
+| | JVM | native |
 |---|---|---|
-| cold start (health 200) | 14,8 s | **2,8 s** |
-| `createPost` quente | 0,70–0,89 s | **0,50–0,57 s** |
-| abrir uma subscription | 26 s | **5 s** |
-| memória usada (REPORT) | 413 MB | **187 MB** |
+| cold start (health 200) | 14.8 s | **2.8 s** |
+| warm `createPost` | 0.70–0.89 s | **0.50–0.57 s** |
+| opening a subscription | 26 s | **5 s** |
+| memory used (REPORT) | 413 MB | **187 MB** |
 | zip | 70 MB | 56 MB |
 
-Ele ganha nos DOIS eixos. A leitura intermediária de que "native é mais lento quente" era medição de
-um processo morrendo — `curl -w %{time_total}` mede o tempo até a resposta, e uma resposta de erro
-também tem tempo.
+It wins on BOTH axes. The intermediate reading that "native is slower warm" was measuring a dying
+process — `curl -w %{time_total}` measures the time to the response, and an error response also has a
+time.
 
-**COMO SE CONSTRÓI:** um alvo do Nx, na configuração `native` (o default) ou `native-container`.
+**HOW IT IS BUILT:** an Nx target, in the `native` configuration (the default) or `native-container`.
 
-`native` compila com a GraalVM **da máquina**; `native-container`, dentro do builder image do
-Mandrel. A diferença não é conveniência: `native-image` gera um executável do SISTEMA onde roda, e o
-Lambda precisa de ELF/Linux — então **de um Mac, só o `native-container` produz um binário que o
-Lambda executa**. O local serve para rodar e depurar a aplicação nativa aqui, e serve inteiro num
-Linux com a GraalVM instalada. **A nota de que o container precisa de ~12 GiB no Docker ficou
-desatualizada**: os quatro artefatos foram construídos com o Docker em **8 GiB**, com o
-`native-image` enxergando 8,23 GB e `-J-Xmx10g`. O `exit 137` no `[1/8] Initializing` continua
-sendo o sintoma de faltar memória, e ele não menciona memória em lugar nenhum — mas 8 GiB bastam
-hoje. O aviso abaixo de 12 GiB saiu com o `build-env.sh`; o sintoma está na tabela de diagnóstico
-da seção *O `build-env.sh` FOI APAGADO*.
+`native` compiles with the MACHINE's GraalVM; `native-container`, inside the Mandrel builder image. The
+difference is not convenience: `native-image` produces an executable for the SYSTEM it runs on, and
+Lambda needs ELF/Linux — so **from a Mac, only `native-container` produces a binary Lambda will
+execute**. The local one is for running and debugging the native application here, and it serves
+entirely on a Linux box with GraalVM installed. **The note that the container needs ~12 GiB in Docker is
+out of date**: all four artifacts were built with Docker at **8 GiB**, with `native-image` seeing
+8.23 GB and `-J-Xmx10g`. The `exit 137` in `[1/8] Initializing` is still the symptom of running out of
+memory, and it mentions memory nowhere — but 8 GiB is enough today. The below-12-GiB warning left with
+`build-env.sh`; the symptom is in the diagnostic table in the section *`build-env.sh` WAS DELETED*.
 
-**E num Mac com o Xcode quebrado o build local falha sem nomear o Xcode.** Medido: `xcode-select -p`
-aponta para o `Xcode.app`, o `cc` que vem dali nem carrega (`dlopen(@rpath/libxcodebuildLoader.dylib):
-Symbol not found: _XPCTypeBool`, exit 72), e o `native-image` morre em ~20s com `Unable to detect
-supported DARWIN native software development toolchain`. Os Command Line Tools são uma instalação
-independente e funcionam; hoje quem os põe no jogo é o `xcode-select` (ver a seção *O `build-env.sh`
-FOI APAGADO*), com as DUAS coisas
-que a receita exige — o PATH (é dali que o `native-image` tira o `cc`) e o `-isysroot`, porque o
-`native-image` **não** repassa `SDKROOT` nem `DEVELOPER_DIR` ao compilador. A troca só acontece
-quando o `cc` do sistema está quebrado.
+**And on a Mac with a broken Xcode the local build fails without naming Xcode.** Measured:
+`xcode-select -p` points at `Xcode.app`, the `cc` that comes from there does not even load
+(`dlopen(@rpath/libxcodebuildLoader.dylib): Symbol not found: _XPCTypeBool`, exit 72), and
+`native-image` dies in ~20s with `Unable to detect supported DARWIN native software development
+toolchain`. The Command Line Tools are an independent installation and work; today what puts them in
+play is `xcode-select` (see the section *`build-env.sh` WAS DELETED*), with BOTH things the recipe
+requires — the PATH (that is where `native-image` gets `cc` from) and the `-isysroot`, because
+`native-image` does **not** pass `SDKROOT` or `DEVELOPER_DIR` through to the compiler. The switch only
+matters when the system `cc` is broken.
 
-**AS QUATRO FALHAS, e o que cada uma ensina.** Nenhuma aparece na JVM; três das quatro só aparecem
-em RUNTIME:
+**THE FOUR FAILURES, and what each one teaches.** None appears on the JVM; three of the four appear only
+at RUNTIME:
 
-1. **`org.LatencyUtils` ausente** — `io.micrometer.core.instrument.AbstractTimer` a referencia e o
-   Micrometer a declara OPCIONAL. Quem normalmente a traz é o `quarkus-micrometer`, que este projeto
-   não usa de propósito. Falha em BUILD, no `[2/8] Performing analysis` — a única das quatro que o
-   compilador pega. Conserto: declarar a dependência em `libs/platform`.
-2. **`AnnotationBasedEntityIdResolver` não registrado** — a reflexão do Axon tem DOIS níveis, e o
-   `AxonNativeImageProcessor` só cobria o primeiro: registrava as `*Definition` e não o que elas
-   INSTANCIAM. A aplicação sobe o bastante para o health responder 200 e **morre a cada requisição**
-   com `Runtime exited with error: exit status 1`, que o Lambda reporta sem causa. Conserto:
-   `AXON_DEFAULT_IMPLEMENTATIONS` no mesmo processor.
-3. **As classes-base do Relay** — `PostConnection` é uma subclasse VAZIA de `Connection<N, E>`, e um
-   método herdado não entra no registro da subclasse. O cliente recebe `"System error"` com
-   `path: ["posts","edges"]` e o servidor **não loga uma linha**. O que denuncia é `pageInfo` e
-   `edges` falharem juntos enquanto `__typename` e o SDL respondem: o problema é o OBJETO, não um
-   campo. Conserto: `@RegisterForReflection` em `Connection` e `Edge`.
-4. **A precedência de configuração muda entre JVM e nativo.** `application-lambda.properties` diz
-   `quarkus.oidc.auth-server-url=${OIDC_ISSUER_URL}` sem prefixo; `application.properties` diz
-   `%prod.quarkus.oidc.auth-server-url=...localhost:8081...`. Na JVM a primeira vence; em nativo, a
-   segunda — e a função sobe apontando para um Keycloak que não existe. Público responde, autenticado
-   dá 500. **Não é o arquivo que deixa de carregar**: `axonposts.graphql.sse.keep-alive=2s`, do mesmo
-   arquivo, vale (medido: keep-alives a cada 2 s). É a disputa entre uma propriedade COM perfil e uma
-   SEM. Conserto: `QUARKUS_OIDC_AUTH_SERVER_URL` como variável de ambiente em `environment.ts` —
-   ordinal 300 ganha de qualquer arquivo, nos dois empacotamentos.
+1. **`org.LatencyUtils` missing** — `io.micrometer.core.instrument.AbstractTimer` references it and
+   Micrometer declares it OPTIONAL. What normally brings it in is `quarkus-micrometer`, which this
+   project deliberately does not use. It fails at BUILD, in `[2/8] Performing analysis` — the only one
+   of the four the compiler catches. Fix: declare the dependency in `libs/platform`.
+2. **`AnnotationBasedEntityIdResolver` not registered** — Axon's reflection has TWO levels, and
+   `AxonNativeImageProcessor` only covered the first: it registered the `*Definition` classes and not
+   what they INSTANTIATE. The application comes up far enough for health to answer 200 and **dies on
+   every request** with `Runtime exited with error: exit status 1`, which Lambda reports with no cause.
+   Fix: `AXON_DEFAULT_IMPLEMENTATIONS` in the same processor.
+3. **The Relay base classes** — `PostConnection` is an EMPTY subclass of `Connection<N, E>`, and an
+   inherited method does not enter the subclass's registration. The client receives `"System error"`
+   with `path: ["posts","edges"]` and the server **does not log a line**. What gives it away is
+   `pageInfo` and `edges` failing together while `__typename` and the SDL answer: the problem is the
+   OBJECT, not a field. Fix: `@RegisterForReflection` on `Connection` and `Edge`.
+4. **Configuration precedence changes between JVM and native.** `application-lambda.properties` says
+   `quarkus.oidc.auth-server-url=${OIDC_ISSUER_URL}` with no profile; `application.properties` says
+   `%prod.quarkus.oidc.auth-server-url=...localhost:8081...`. On the JVM the first wins; in native, the
+   second — and the function comes up pointing at a Keycloak that does not exist. Public answers,
+   authenticated 500s. **It is not that the file stops loading**:
+   `axonposts.graphql.sse.keep-alive=2s`, from the same file, applies (measured: keep-alives every
+   2 s). It is the contest between a property WITH a profile and one WITHOUT. Fix:
+   `QUARKUS_OIDC_AUTH_SERVER_URL` as an environment variable in `environment.ts` — ordinal 300 beats any
+   file, in both packagings.
 
-**AS SEIS FUNÇÕES SÃO NATIVAS.** As três empacotadas pelas extensões `quarkus-amazon-lambda*`
-produzem um `function.zip` com um `bootstrap` nativo no lugar do handler Java — por isso
-`runtime: provided.al2023`. A de streaming é a única em `java21`: lá quem executa é o `run.sh` pela
-layer do Web Adapter, e esse gancho é do runtime GERENCIADO; o sandbox traz uma JVM que nunca roda.
+**ALL SIX FUNCTIONS ARE NATIVE.** The three packaged by the `quarkus-amazon-lambda*` extensions produce
+a `function.zip` with a native `bootstrap` in place of the Java handler — hence
+`runtime: provided.al2023`. The streaming one is the only `java21`: there what executes is `run.sh`
+through the Web Adapter layer, and that hook belongs to the MANAGED runtime; the sandbox ships a JVM
+that never runs.
 
-**A saga fecha em ~6 s** — era ~21 s com o `tagging` em JVM e ~50 s com tudo em JVM.
+**The saga closes in ~6 s** — it was ~21 s with `tagging` on the JVM and ~50 s with everything on the
+JVM.
 
-**MAIS DUAS FALHAS, e as duas só apareceram quando o SEGUNDO serviço virou binário:**
+**TWO MORE FAILURES, and both only appeared when the SECOND service became a binary:**
 
-5. **`apps/tagging` não declarava `axon-native-support`.** Só o `posts-api` a tinha. O binário é
-   gerado, sobe, e morre na PARTIDA com `No suitable constructor found for entity of type
-   [AnnotationBasedEventSourcedEntityFactoryDefinition]` — a primeira das falhas que o Javadoc daquela
-   extensão descreve. **Serviço que usa Axon e compila nativo declara a extensão**, e agora o pom diz
-   isso por escrito.
-6. **A reflexão de uma MENSAGEM não para na classe dela.** `PostCreatedEvent` é `@Event` e era
-   registrado; o `AssignedTag` que ele carrega dentro de `List<AssignedTag>` é um record ANINHADO, sem
-   anotação, e ficava de fora. O `tagging` consumia `PostPreCreated` (record PLANO, que serializa
-   bem), decidia a tag e não conseguia publicar o `PostCreated`:
+5. **`apps/tagging` did not declare `axon-native-support`.** Only `posts-api` had it. The binary is
+   produced, starts, and dies at STARTUP with `No suitable constructor found for entity of type
+   [AnnotationBasedEventSourcedEntityFactoryDefinition]` — the first of the failures that extension's
+   Javadoc describes. **A service that uses Axon and compiles native declares the extension**, and the
+   pom now says so in writing.
+6. **A MESSAGE's reflection does not stop at its own class.** `PostCreatedEvent` is `@Event` and was
+   registered; the `AssignedTag` it carries inside a `List<AssignedTag>` is a NESTED record, with no
+   annotation, and was left out. `tagging` consumed `PostPreCreated` (a FLAT record, which serializes
+   fine), decided the tag and could not publish the `PostCreated`:
 
    ```
    ConversionException: Exception when trying to convert object of type
      'dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent' to 'byte[]'
    ```
 
-   **O que tornava isso difícil de achar**: a saga parava na versão 1, o contador `Errors` do Lambda
-   ficava em ZERO (a exceção é tratada pelo interceptador), as filas ficavam VAZIAS e o SNS mostrava
-   `NumberOfMessagesPublished` positivo com zero falhas. Tudo apontava para o lugar errado. Quem
-   respondeu foi comparar as métricas: `TaggingDecide` com 7 invocações e 0 erros, `PostsApiInbox` com
-   NENHUMA — o elo quebrado estava no meio.
+   **What made this hard to find**: the saga stopped at version 1, Lambda's `Errors` counter stayed at
+   ZERO (the exception is handled by the interceptor), the queues were EMPTY and SNS showed a positive
+   `NumberOfMessagesPublished` with zero failures. Everything pointed at the wrong place. What answered
+   was comparing the metrics: `TaggingDecide` with 7 invocations and 0 errors, `PostsApiInbox` with
+   NONE — the broken link was in the middle.
    <p>
-   O conserto é uma regra, não uma lista: `AxonNativeImageProcessor` agora registra o **fecho
-   transitivo** dos tipos que compõem cada mensagem, parando no que o índice Jandex não conhece
-   (`String`, `Instant` e o resto do JDK não precisam).
+   The fix is a rule, not a list: `AxonNativeImageProcessor` now registers the **transitive closure** of
+   the types composing each message, stopping at whatever the Jandex index does not know (`String`,
+   `Instant` and the rest of the JDK do not need it).
 
-### A TELEMETRIA: o coletor do OpenTelemetry como layer, e o Better Stack no fim
+### THE TELEMETRY: the OpenTelemetry collector as a layer, and Better Stack at the end
 
-Toda função carrega a layer oficial do coletor (`opentelemetry-collector-arm64-0_23_0`), que lê
-`infra/lambda/collector.yaml` do próprio zip e reexporta para o Better Stack. A aplicação continua
-exportando OTLP para `localhost` — ela não sabe qual é o destino, e é isso que faz trocar de backend
-ser uma mudança de infraestrutura.
+Every function carries the official collector layer (`opentelemetry-collector-arm64-0_23_0`), which
+reads `infra/lambda/collector.yaml` from its own zip and re-exports to Better Stack. The application
+keeps exporting OTLP to `localhost` — it does not know what the destination is, and that is what makes
+switching backends an infrastructure change.
 
-**Por que um coletor, e não o exportador da aplicação falando direto.** Um Lambda é CONGELADO quando
-o handler retorna. Um exportador em processo perde o que ainda não saiu — e o que ainda não saiu é o
-fim da requisição. A layer é uma EXTENSÃO: recebe o gancho de fim de invocação e faz o flush antes do
-congelamento. É a explicação do que o `CLAUDE.md` já registrava — log não chegando enquanto o trace
-chegava.
+**Why a collector, and not the application's exporter talking directly.** A Lambda is FROZEN when the
+handler returns. An in-process exporter loses whatever has not gone out yet — and what has not gone out
+yet is the end of the request. The layer is an EXTENSION: it gets the end-of-invocation hook and
+flushes before the freeze. It is the explanation for what `CLAUDE.md` already recorded — logs not
+arriving while traces did.
 
-**A LAYER COBRE UM DOS DOIS SALTOS, E O DEFEITO ESTAVA NO OUTRO.** O caminho é
-`aplicação --(1) OTLP p/ localhost--> coletor (layer) --(2) HTTPS--> Better Stack`. A layer recebe o
-gancho de fim de invocação e despeja o que **já está dentro dela** — o salto (2). Quem decide quando
-acontece o salto (1) é o `BatchSpanProcessor` DENTRO do processo, numa thread que dispara a cada 5 s
-(1 s para logs), e o Lambda é congelado antes disso.
+**THE LAYER COVERS ONE OF THE TWO HOPS, AND THE DEFECT WAS IN THE OTHER.** The path is
+`application --(1) OTLP to localhost--> collector (layer) --(2) HTTPS--> Better Stack`. The layer gets
+the end-of-invocation hook and dumps what is **already inside it** — hop (2). What decides when hop (1)
+happens is the `BatchSpanProcessor` INSIDE the process, on a thread that fires every 5 s (1 s for
+logs), and Lambda is frozen before that.
 
-Medido, com os binários nativos: `TaggingDecide` 438 ms, `PostsApiInbox` 233 ms, `TaggingReplicate`
-195 ms — as três funções de fila com **zero spans e zero logs** no backend, enquanto o coletor subia,
-rodava e fazia flush sem um único erro, de um buffer vazio. Provado nos dois sentidos: depois de uma
-saga sem telemetria nenhuma, invocar a função com um lote VAZIO fez aparecer o span da invocação
-anterior, **com o carimbo de tempo original**. O dado não estava perdido — estava congelado do lado
-de cá do salto (1).
+Measured, with the native binaries: `TaggingDecide` 438 ms, `PostsApiInbox` 233 ms, `TaggingReplicate`
+195 ms — the three queue functions with **zero spans and zero logs** in the backend, while the collector
+came up, ran and flushed without a single error, from an empty buffer. Proven in both directions: after
+a saga with no telemetry at all, invoking the function with an EMPTY batch made the previous
+invocation's span appear, **with its original timestamp**. The data was not lost — it was frozen on this
+side of hop (1).
 
-**Só apareceu com o nativo**, e a razão é boa: na JVM o cold start de ~15 s acontecia DENTRO do
-handler e o lote disparava no meio dele. A telemetria chegava por uma janela acidental que a lentidão
-abria (o `tagging` chegou a ter 166 logs). O nativo sobe em 0,6 s e a janela fechou.
+**It only appeared with native**, and the reason is a good one: on the JVM the ~15 s cold start happened
+INSIDE the handler and the batch fired in the middle of it. The telemetry arrived through an accidental
+window that the slowness opened (`tagging` once had 166 logs). Native comes up in 0.6 s and the window
+closed.
 
-**O conserto é `TelemetryFlush`, em `libs/axon-lambda`**: um `forceFlush` dos três providers no fim do
-handler de SQS e no da migração. Depois dele, sem acordar nada: `axonposts-tagging` com spans e 65
-logs, e a saga num trace só.
+**The fix is `TelemetryFlush`, in `libs/axon-lambda`**: a `forceFlush` of the three providers at the end
+of the SQS handler and of the migration one. After it, without waking anything: `axonposts-tagging` with
+spans and 65 logs, and the saga in a single trace.
 
-**A ALTERNATIVA ÓBVIA FOI TENTADA E QUEBRA A SAGA.** A extensão tem `quarkus.otel.simple`
-(`OTelBuildConfig#simple`), que troca o processador em lote pelo `SimpleSpanProcessorWithBatchShutdown`
-— cada span sai na hora, e o lote passa a ser do `batch` do coletor. É a divisão de responsabilidade
-certa, foi implantada, e **a saga parou na versão 1**:
+**THE OBVIOUS ALTERNATIVE WAS TRIED AND IT BREAKS THE SAGA.** The extension has `quarkus.otel.simple`
+(`OTelBuildConfig#simple`), which swaps the batch processor for `SimpleSpanProcessorWithBatchShutdown` —
+each span goes out immediately, and the batching becomes the collector's `batch`. It is the right
+division of responsibility, it was deployed, and **the saga stopped at version 1**:
 
 ```
 ARJUNA012094: Commit of action ... invoked while multiple threads active within it.
@@ -1359,65 +1489,68 @@ ARJUNA012107: CheckedAction::check - atomic action ... commiting with 2 threads 
 Caused by: java.sql.SQLException: Enlisted connection used without active transaction
 ```
 
-Exportar no `onEnd` é exportar DENTRO da transação, e o exportador do Quarkus despacha num worker do
-Vert.x que entra na mesma transação. É a MESMA família de falha que a seção de subscriptions já
-registra para o `@Transactional` na ingestão — lá "aborting with 2 threads active", aqui "commiting".
-É também o que torna o flush explícito a escolha certa e não a que sobrou: ele roda **depois** do
-commit, na thread do handler, sem transação ativa.
+Exporting on `onEnd` means exporting INSIDE the transaction, and the Quarkus exporter dispatches on a
+Vert.x worker that joins the same transaction. It is the SAME family of failure the subscriptions
+section already records for `@Transactional` on ingestion — there "aborting with 2 threads active", here
+"commiting". It is also what makes the explicit flush the right choice and not the leftover one: it runs
+**after** the commit, on the handler's thread, with no active transaction.
 
-**O que ele NÃO resolve: métricas.** Elas não têm processador — têm leitor periódico
-(`MetricsRuntimeConfig` só expõe `exportInterval()`); o `forceFlush` do `SdkMeterProvider` entra junto,
-mas o que estiver fora do intervalo de coleta continua saindo na invocação seguinte.
+**What it does NOT solve: metrics.** They have no processor — they have a periodic reader
+(`MetricsRuntimeConfig` only exposes `exportInterval()`); the `SdkMeterProvider`'s `forceFlush` goes
+along, but whatever is outside the collection interval still goes out on the next invocation.
 
-**O flush NÃO entra nas funções de HTTP e de streaming**: a primeira é invocada em sequência (o lote de
-uma requisição sai na seguinte) e a segunda mantém o processo vivo — foram as duas únicas que
-exportaram durante todo o episódio.
+**The flush does NOT go into the HTTP and streaming functions**: the first is invoked in sequence (one
+request's batch goes out on the next) and the second keeps the process alive — they were the only two
+that exported throughout the entire episode.
 
-**O `collector.yaml` não tem `batch`** — ele segura dados esperando encher um lote, e um lote pela
-metade morre com o congelamento.
+**`collector.yaml` has no `batch`** — it holds data waiting to fill a batch, and a half-full batch dies
+with the freeze.
 
-**Mas TEM `decouple`, e essa linha é uma reversão que a medição impôs.** A versão anterior o excluía
-com o argumento de que ele "é a mesma aposta que o batch com outro nome". Medido na stack: **14
-falhas em 5 minutos, e só na função de streaming**, todas `context canceled`. Isso não é rede — é a
-INVOCAÇÃO TERMINANDO com o export em voo. Exportar dentro do ciclo da invocação só funciona quando a
-invocação dura mais que o export, e a função de streaming é justamente a que responde rápido e a que
-produz mais spans: sem `decouple`, o trace dela era o que mais se perdia.
+**But it DOES have `decouple`, and that line is a reversal the measurement forced.** The previous
+version excluded it with the argument that it "is the same bet as batch under another name". Measured on
+the stack: **14 failures in 5 minutes, and only on the streaming function**, all `context canceled`. That
+is not the network — it is the INVOCATION ENDING with the export in flight. Exporting inside the
+invocation's cycle only works when the invocation lasts longer than the export, and the streaming
+function is precisely the one that answers fast and produces the most spans: without `decouple`, its
+trace was the one most often lost.
 <p>
-Junto vieram `timeout: 30s` e `retry_on_failure` no exportador, e o número saiu de
-`net/http: TLS handshake timeout` no log: o primeiro export de um container novo paga DNS mais
-handshake TLS saindo de um VPC, por NAT, e o que se perdia era o trace do cold start — o mais
-interessante de todos.
+Along with it came `timeout: 30s` and `retry_on_failure` on the exporter, and the number came from
+`net/http: TLS handshake timeout` in the log: a new container's first export pays for DNS plus a TLS
+handshake going out of a VPC, through NAT, and what was being lost was the cold start's trace — the most
+interesting one of all.
 <p>
-**Depois**: `no more retries left` = **0** nas quatro funções. O que restou no log são tentativas
-(`dial tcp ... i/o timeout`) que a retry resolve — falha visível, dado entregue.
+**After**: `no more retries left` = **0** on all four functions. What remains in the log are attempts
+(`dial tcp ... i/o timeout`) that the retry resolves — a visible failure, with the data delivered.
 
-**As credenciais vêm do `.env` da raiz**, que o SST carrega sozinho; `support/functions.ts` as repassa
-a toda função e FALHA o deploy se faltarem — um coletor sem destino sobe, não reclama, e some com a
-telemetria em silêncio. Medido depois do deploy: zero `Exporting failed` nas três funções.
+**The credentials come from the root `.env`**, which SST loads on its own; `support/functions.ts` passes
+them to every function and FAILS the deploy if they are missing — a collector with no destination comes
+up, does not complain, and silently loses the telemetry. Measured after the deploy: zero
+`Exporting failed` on the three functions.
 
-### A PROPAGAÇÃO DO TRACE ENTRE OS SERVIÇOS
+### TRACE PROPAGATION BETWEEN THE SERVICES
 
-Com o RabbitMQ a saga inteira era **um trace só**, de graça: o `tracing.enabled` do conector já vinha
-ligado dos dois lados. Na AWS isso regrediu por uma assimetria que este documento já registrava —
-`smallrye-reactive-messaging-aws-sqs` traz um instrumentador e injeta; **`aws-sns` 4.37.0 não tem
-pacote de tracing nenhum** —, e a saída deste sistema é SNS.
+With RabbitMQ the whole saga was **a single trace**, for free: the connector's `tracing.enabled` was
+already on on both sides. On AWS that regressed because of an asymmetry this document already recorded —
+`smallrye-reactive-messaging-aws-sqs` brings an instrumenter and injects; **`aws-sns` 4.37.0 has no
+tracing package at all** — and this system's outbound side is SNS.
 
-**A saída passou a injetar à mão**, em `AwsEventAttributes.inject`: o `traceparent` do W3C entra no
-mapa de atributos, ao lado de `axon-routing-key` e companhia. É o único lugar por onde passam os
-atributos das DUAS saídas (SNS e SQS), e para o fio o `traceparent` é um atributo como os outros.
+**The outbound side now injects by hand**, in `AwsEventAttributes.inject`: the W3C `traceparent` goes
+into the attribute map, next to `axon-routing-key` and friends. It is the only place both outbound
+paths (SNS and SQS) pass through, and to the wire the `traceparent` is an attribute like any other.
 
-**A entrada extrai**, em `SqsChannelIngress`: não há conector para instrumentar (o Lambda entrega o
-`SQSEvent` direto ao handler), então o contexto é lido dos atributos e ativado com `makeCurrent`.
+**The inbound side extracts**, in `SqsChannelIngress`: there is no connector to instrument (Lambda hands
+the `SQSEvent` straight to the handler), so the context is read from the attributes and activated with
+`makeCurrent`.
 
-**MEDIDO na stack**, no log do publish:
+**MEASURED on the stack**, in the publish log:
 
 ```
-sns → grupo=939a4535-… atributos={axon-message-name=PostPreCreated, …,
+sns → group=939a4535-… attributes={axon-message-name=PostPreCreated, …,
       traceparent=00-7fc419aec2bb7739d0472b62d998f8d1-7c487761ccc959e1-03}
 ```
 
-**A IDA ESTÁ FECHADA, e foi confirmada no backend** — não só no log do publish. Um trace único, com
-os dois serviços dentro:
+**THE OUTBOUND LEG IS CLOSED, and it was confirmed in the backend** — not just in the publish log. A
+single trace, with both services inside:
 
 ```
 quarkus-axon-graphql-posts   POST                         server
@@ -1425,79 +1558,79 @@ quarkus-axon-graphql-posts   GraphQL                      internal
 axonposts-tagging            post-precreated-in receive   consumer
 ```
 
-Quem cria o span do lado de lá é `SqsChannelIngress`: não há conector para instrumentar (o Lambda
-entrega o `SQSEvent` direto ao handler), então ele extrai o contexto dos atributos e abre um CONSUMER
-à mão. Sem esse span o `tagging` não aparecia em trace nenhum — e vale lembrar que ele ficou invisível
-por um SEGUNDO motivo, independente deste: o lote congelado, que a seção da telemetria descreve.
+What creates the span on the other side is `SqsChannelIngress`: there is no connector to instrument
+(Lambda hands the `SQSEvent` straight to the handler), so it extracts the context from the attributes
+and opens a CONSUMER span by hand. Without that span `tagging` did not appear in any trace — and it is
+worth remembering it was invisible for a SECOND, independent reason: the frozen batch, which the
+telemetry section describes.
 
-**MEDIDO, com uma raiz injetada à mão no proxy** (fazendo o papel do navegador): a ida fecha
-`navegador → web → posts-api → GraphQL:Criar → tagging`, tudo sob o mesmo trace e com o aninhamento
-certo. A VOLTA não:
+**MEASURED, with a root injected by hand at the proxy** (playing the browser's part): the outbound leg
+closes `browser → web → posts-api → GraphQL:Create → tagging`, all under the same trace and with the
+right nesting. The RETURN leg does not:
 
 ```
-post-precreated-in receive   tagging     e090ff06…   o trace do navegador   tem pai
-post-completed-in receive    posts-api   92d47d4b…   TRACE NOVO             (raiz)
-post-changes-in receive      tagging     8bddc39d…   -                      tem pai
+post-precreated-in receive   tagging     e090ff06…   the browser's trace   has a parent
+post-completed-in receive    posts-api   92d47d4b…   A NEW TRACE           (root)
+post-changes-in receive      tagging     8bddc39d…   -                     has a parent
 ```
 
-A terceira linha é a que fecha o diagnóstico: a réplica do `updatePost` TEM pai, então não é o
-SNS/SQS que perde o contexto — ele o carrega bem quando quem publica é o `posts-api` a partir da
-thread da requisição HTTP. Quebra só quando o publish vem DEPOIS de uma ingestão.
+The third line is what closes the diagnosis: the `updatePost` replica HAS a parent, so it is not SNS/SQS
+losing the context — it carries it fine when the publisher is `posts-api` from the HTTP request's
+thread. It breaks only when the publish comes AFTER an ingestion.
 
-**O QUE AINDA NÃO ATRAVESSA, e a causa é conhecida.** O `apps/tagging` recebe o contexto, mas o
-`PostCreated` que ele publica de volta sai **sem** `traceparent`. O `Context` do OpenTelemetry é
-thread-local, e a ingestão entrega a mensagem a um canal in-memory que roda o trabalho em OUTRA
-thread (`source.runOnVertxContext(true)`): o `makeCurrent` vale na thread que espera o ack, não na
-que faz o append e o publish. O conserto é carregar o contexto na METADATA da mensagem e restaurá-lo
-em `ChannelEventIngestion` — infraestrutura, sem tocar nos listeners, que por regra só entregam e
-saem.
+**WHAT STILL DOES NOT CROSS, and the cause is known.** `apps/tagging` receives the context, but the
+`PostCreated` it publishes back goes out **without** `traceparent`. OpenTelemetry's `Context` is
+thread-local, and ingestion hands the message to an in-memory channel that runs the work on ANOTHER
+thread (`source.runOnVertxContext(true)`): the `makeCurrent` holds on the thread waiting for the ack, not
+on the one doing the append and the publish. The fix is to carry the context in the message METADATA and
+restore it in `ChannelEventIngestion` — infrastructure, without touching the listeners, which by rule
+only hand off and leave.
 
-### OS SPANS DE GRAPHQL
+### THE GRAPHQL SPANS
 
-Eram uma linha, e não código. O SmallRye traz um `TracingService` em `smallrye-graphql-cdi` que fala
-a API do OpenTelemetry direto; ele é um `EventingService` descoberto por ServiceLoader e **gateado
-por `quarkus.smallrye-graphql.tracing.enabled`**. Desligado, nada acontece e nada avisa.
+They were one line, and not code. SmallRye ships a `TracingService` in `smallrye-graphql-cdi` that talks
+the OpenTelemetry API directly; it is an `EventingService` discovered by ServiceLoader and **gated by
+`quarkus.smallrye-graphql.tracing.enabled`**. Off, nothing happens and nothing warns.
 
-E o registro para o binário nativo vem junto: o `SmallRyeGraphQLProcessor` do Quarkus tem um
-`activateTracing` que emite o `ServiceProviderBuildItem` quando a propriedade está ligada. Houve aqui
-um `@RegisterForReflection` à mão mais um `quarkus.native.resources.includes`; **os dois saíram**
-quando isso foi conferido no bytecode da extensão — o que a plataforma já faz não precisa ser
-reescrito.
+And the registration for the native binary comes along with it: Quarkus's `SmallRyeGraphQLProcessor` has
+an `activateTracing` that emits the `ServiceProviderBuildItem` when the property is on. There was a
+hand-written `@RegisterForReflection` here plus a `quarkus.native.resources.includes`; **both left** when
+this was checked in the extension's bytecode — what the platform already does does not need rewriting.
 
-### O CLIENTE WEB TAMBÉM EXPORTA
+### THE WEB CLIENT EXPORTS TOO
 
-`apps/web/src/instrumentation.ts` é o gancho do Next, e ele é só um `if`: o SDK do Node depende de
-`async_hooks` e de patch de módulo, então importá-lo no topo quebraria o BUILD do bundle de edge.
-`instrumentation.node.ts` liga o `@vercel/otel` com `fetch` e a instrumentação de GraphQL;
-`instrumentation.edge.ts` liga só `fetch` — `@opentelemetry/instrumentation-graphql` não roda em
-edge, e deixá-la lá é um build quebrado esperando a primeira rota de edge.
+`apps/web/src/instrumentation.ts` is Next's hook, and it is just an `if`: the Node SDK depends on
+`async_hooks` and module patching, so importing it at the top would break the edge bundle's BUILD.
+`instrumentation.node.ts` turns on `@vercel/otel` with `fetch` and the GraphQL instrumentation;
+`instrumentation.edge.ts` turns on `fetch` only — `@opentelemetry/instrumentation-graphql` does not run
+on edge, and leaving it there is a broken build waiting for the first edge route.
 
-A função do Next carrega a MESMA layer do coletor, com o `collector.yaml` injetado por
-`transform.server` (o `server` do componente não expõe `copyFiles`). Ela exporta para `localhost:4318`
-— HTTP, que é o que o `@vercel/otel` fala; as funções Java usam 4317 (gRPC), e o mesmo `collector.yaml`
-abre as duas portas.
+The Next function carries the SAME collector layer, with `collector.yaml` injected by
+`transform.server` (the component's `server` does not expose `copyFiles`). It exports to
+`localhost:4318` — HTTP, which is what `@vercel/otel` speaks; the Java functions use 4317 (gRPC), and
+the same `collector.yaml` opens both ports.
 
-**O que isso acrescenta**: o salto que faltava. Uma operação do navegador atravessa DUAS funções — o
-proxy de `/api/graphql` e o `posts-api` — e só a segunda aparecia.
+**What this adds**: the missing hop. A browser operation crosses TWO functions — the `/api/graphql` proxy
+and `posts-api` — and only the second used to appear.
 
-**E a instrumentação de `fetch` precisa de `propagateContextUrls`, que começa VAZIO.** No
-`@vercel/otel` o default é `[]` (fora as URLs de deploy da Vercel): ela cria o span da chamada — ele
-aparece no trace — e **não injeta o `traceparent`**. O resultado é enganoso, porque o salto está
-desenhado e mesmo assim o serviço do outro lado abre um trace novo. Medido antes: 317 spans de
-`axonposts-web` e 127 de `quarkus-axon-graphql-posts` na mesma hora, e ZERO traces com os dois. Depois
-da linha, o `POST /graphql` do `posts-api` passou a chegar com PAI REMOTO.
+**And the `fetch` instrumentation needs `propagateContextUrls`, which starts EMPTY.** In `@vercel/otel`
+the default is `[]` (apart from Vercel's deployment URLs): it creates the call's span — it shows up in
+the trace — and **does not inject the `traceparent`**. The result is misleading, because the hop is drawn
+and even so the service on the other side opens a new trace. Measured before: 317 `axonposts-web` spans
+and 127 `quarkus-axon-graphql-posts` spans in the same hour, and ZERO traces with both. After the line,
+`posts-api`'s `POST /graphql` started arriving with a REMOTE PARENT.
 
-**Limite conhecido, e é o mesmo da seção da telemetria**: a função do Next também é congelada ao
-retornar, e o `@vercel/otel` também usa processador em lote. Os spans dela chegam, mas **atrasados de
-uma invocação** — num site com tráfego isso não se nota, e num ambiente parado sim. O
-`TelemetryFlush` não a alcança: ele é Java, e ali quem exporta é o SDK de Node.
+**Known limit, and it is the same as the telemetry section's**: the Next function is also frozen on
+return, and `@vercel/otel` also uses a batch processor. Its spans do arrive, but **delayed by one
+invocation** — on a site with traffic that goes unnoticed, and in an idle environment it does not.
+`TelemetryFlush` does not reach it: it is Java, and there the exporter is the Node SDK.
 
-### O BUILD É UM ALVO DO NX, E O ALVO VIVE NO GRAFO DE RECURSOS
+### THE BUILD IS AN NX TARGET, AND THE TARGET LIVES IN THE RESOURCE GRAPH
 
-Declarar uma função é declarar o build dela. `QuarkusFunction` recebe em `code` ou um
-{@code QuarkusBuild} — artefato, **comando de build**, **caminho do zip**, bucket e fontes — ou o
-`code` de outra função, porque são **seis funções e quatro artefatos**, e três delas compartilham zip
-com outra.
+Declaring a function is declaring its build. `QuarkusFunction` receives in `code` either a
+{@code QuarkusBuild} — artifact, **build command**, **zip path**, bucket and sources — or another
+function's `code`, because there are **six functions and four artifacts**, and three of them share a zip
+with another.
 
 ```ts
 export const postsInbox = new QueueWorker("PostsApiInbox", {
@@ -1512,473 +1645,480 @@ export const postsInbox = new QueueWorker("PostsApiInbox", {
 export const postsMigrate = new Migrator("PostsMigrate", { code: postsInbox.code });
 ```
 
-**Quem constrói é um alvo do Nx — a mesma decisão que o `apps/web` já tinha.** Eram ~250 linhas de
-`infra/scripts/package.sh` fazendo à mão o que uma ferramenta de monorepo faz: escolher o que
-reconstruir, guardar o resultado, e ser o mesmo comando na máquina, em CI e no deploy. Hoje o script
-tem 76 linhas e **não sabe construir nada**: ele traduz as flags antigas para os alvos e roda os
-quatro em série.
+**What builds is an Nx target — the same decision `apps/web` already had.** There were ~250 lines of
+`infra/scripts/package.sh` doing by hand what a monorepo tool does: choosing what to rebuild, storing
+the result, and being the same command on the machine, in CI and at deploy. Today the script has 76
+lines and **does not know how to build anything**: it translates the old flags into the targets and runs
+all four serially.
 
-| alvo | perfil do Maven | zip |
+| target | Maven profile | zip |
 |---|---|---|
 | `lambda-http` (posts-api) | `-Plambda-http` | `infra/dist/posts-api-http.zip` |
 | `lambda-sqs` (posts-api) | `-Plambda-sqs` | `infra/dist/posts-api-sqs.zip` |
 | `lambda-stream` (posts-api) | `-Plambda-stream` | `infra/dist/posts-api-stream.zip` |
 | `lambda` (tagging) | `-Plambda` | `infra/dist/tagging.zip` |
 
-**Um alvo por ARTEFATO, e não um com o artefato em `--args`.** O Nx interpola `{args.x}` no comando,
-mas em `outputs` ele só interpola `{options.x}` — então um alvo genérico teria o caminho do zip
-dependendo de um argumento da linha de comando, e rodá-lo sem o argumento produziria
-`infra/dist/.zip` em silêncio. Com um alvo por artefato o `outputs` é literal e o cache tem uma
-entrada estável por artefato.
+**One target per ARTIFACT, and not one with the artifact in `--args`.** Nx interpolates `{args.x}` in the
+command, but in `outputs` it only interpolates `{options.x}` — so a generic target would have the zip
+path depending on a command-line argument, and running it without the argument would silently produce
+`infra/dist/.zip`. With one target per artifact the `outputs` is a literal and the cache has a stable
+entry per artifact.
 
-**O NOME NÃO PODE SER `package`.** O `@nx/maven` infere 132 alvos para cada app, um por fase do ciclo
-de vida e um por execução de mojo — e `package` é um deles, com `dependsOn: ["^install"]`. Um alvo de
-mesmo nome no `project.json` não substitui o inferido: ele se FUNDE com ele, e herdaria aquele
-`dependsOn` — que é exatamente a armadilha do `nx-build-state.json` já documentada mais acima. Daí
-`lambda-*`, que são os nomes dos perfis do Maven e não colidem com fase nenhuma.
+**THE NAME CANNOT BE `package`.** `@nx/maven` infers 132 targets for each app, one per lifecycle phase
+and one per mojo execution — and `package` is one of them, with `dependsOn: ["^install"]`. A
+same-named target in `project.json` does not replace the inferred one: it MERGES with it, and would
+inherit that `dependsOn` — which is exactly the `nx-build-state.json` trap documented further up. Hence
+`lambda-*`, which are the Maven profile names and collide with no phase.
 
-**As configurações são as DUAS maneiras de compilar nativo, mais a de JVM:**
+**The configurations are the TWO ways of compiling native, plus the JVM one:**
 
-| configuração | o que passa ao Maven | o que produz |
+| configuration | what it passes to Maven | what it produces |
 |---|---|---|
-| `native` (default) | `-Dnative` | binário da GraalVM **desta máquina** |
-| `native-container` | `-Dnative -Pnative-container` | binário ELF/Linux, no builder do Mandrel |
-| `jvm` | nada | o `quarkus-app`/`function.zip` de sempre |
+| `native` (default) | `-Dnative` | a binary from THIS machine's GraalVM |
+| `native-container` | `-Dnative -Pnative-container` | an ELF/Linux binary, in the Mandrel builder |
+| `jvm` | nothing | the usual `quarkus-app`/`function.zip` |
 
-No `apps/tagging` o gatilho é `-Dnative.tagging`, e isso é do desenho: como `-pl` não funciona neste
-reator, um gatilho compartilhado faria aquele módulo compilar um binário em toda invocação que pede
-native para o outro app. A configuração faz parte do comando escrito no componente do SST, que é onde se lê qual
-empacotamento cada função recebe.
+In `apps/tagging` the trigger is `-Dnative.tagging`, and that is by design: since `-pl` does not work in
+this reactor, a shared trigger would make that module compile a binary on every invocation that asks for
+native on the other app. The configuration is part of the command written in the SST component, which is
+where you read which packaging each function receives.
 
-**O QUE VAI PARA A AWS É `:native-container`, e o default `:native` NÃO serve.** `native-image`
-gera um executável do SISTEMA onde roda e não cruza: num Mac o `cc` tem alvo
-`arm64-apple-darwin`, o `bootstrap` sai **Mach-O**, e o `provided.al2023` só executa ELF/Linux.
-O modo de falhar é o pior que há — o deploy publica o zip e imprime `✓ Complete`, e a função
-morre na invocação. O default continua sendo `native` porque quem constrói na máquina quase
-sempre quer rodar a aplicação ali.
+**WHAT GOES TO AWS IS `:native-container`, and the default `:native` DOES NOT do.** `native-image`
+produces an executable for the SYSTEM it runs on and does not cross: on a Mac the `cc` targets
+`arm64-apple-darwin`, the `bootstrap` comes out **Mach-O**, and `provided.al2023` only executes
+ELF/Linux. The failure mode is the worst there is — the deploy publishes the zip and prints
+`✓ Complete`, and the function dies on invocation. The default stays `native` because whoever builds on
+the machine almost always wants to run the application there.
 
-**E `native-container` NÃO bastava: há um SEGUNDO eixo, e ele custou um deploy inteiro.** O builder
-image do Mandrel é MULTI-ARCH (`linux/arm64` e `linux/amd64`, conferido no manifesto), e o Docker
-escolhe a variante pela arquitetura do HOST, sem dizer nada. Num Mac Apple Silicon sai aarch64 e
-casa com o `architectures: ['arm64']` das seis funções; num runner `ubuntu-latest` (x86_64) sai
-amd64, e a função recusa executar:
+**And `native-container` was NOT enough: there is a SECOND axis, and it cost a whole deploy.** The
+Mandrel builder image is MULTI-ARCH (`linux/arm64` and `linux/amd64`, checked in the manifest), and
+Docker picks the variant by the HOST's architecture, silently. On an Apple Silicon Mac it comes out
+aarch64 and matches the six functions' `architectures: ['arm64']`; on an `ubuntu-latest` runner
+(x86_64) it comes out amd64, and the function refuses to execute:
 
 ```
 PostsMigrate axonposts:aws:QuarkusFunction → PostsMigrateInvocation aws:lambda:Invocation
 {"errorMessage":"failed to exec /var/task/bootstrap","errorType":"Runtime.InvalidEntrypoint"}
 ```
 
-É o MESMO modo de falhar do parágrafo acima com outro eixo — lá o sistema operacional, aqui a
-arquitetura —, e a mensagem **não menciona arquitetura em lugar nenhum**. Quem o pegou foi o
-`Migrator`: ele INVOCA a função dentro do deploy, então migration que não roda vira deploy que
-falha. Sem essa invocação o deploy teria impresso `✓ Complete` e as seis funções estariam mortas.
+It is the SAME failure mode as the paragraph above on another axis — there the operating system, here
+the architecture — and the message **mentions architecture nowhere**. What caught it was the
+`Migrator`: it INVOKES the function inside the deploy, so a migration that does not run becomes a
+deploy that fails. Without that invocation the deploy would have printed `✓ Complete` and the six
+functions would have been dead.
 
-**Dois consertos, e os dois são necessários:**
+**Two fixes, and both are necessary:**
 
-1. **a plataforma é DECLARADA** — `quarkus.native.container-runtime-options=--platform=linux/arm64`
-   no perfil `native-container` da RAIZ. Fica só lá: medido com `help:effective-pom`, a propriedade
-   alcança `apps/tagging` **e** `apps/posts-api`, mesmo este declarando um perfil de mesmo id (ele
-   redefine as outras duas propriedades e não esta). Num host arm64 o pino não custa nada — é a
-   variante que o Docker já escolheria;
-2. **o job de deploy roda em `ubuntu-24.04-arm`** (gratuito: o repositório é público). Sem ele o pino
-   ainda estaria certo, mas exigiria binfmt/QEMU no runner e o `native-image` emulado é inviável em
-   quatro artefatos.
+1. **the platform is DECLARED** — `quarkus.native.container-runtime-options=--platform=linux/arm64`
+   in the ROOT's `native-container` profile. It stays only there: measured with
+   `help:effective-pom`, the property reaches `apps/tagging` **and** `apps/posts-api`, even though the
+   latter declares a profile with the same id (it redefines the other two properties and not this
+   one). On an arm64 host the pin costs nothing — it is the variant Docker would already pick;
+2. **the deploy job runs on `ubuntu-24.04-arm`** (free: the repository is public). Without it the pin
+   would still be right, but it would require binfmt/QEMU on the runner, and an emulated
+   `native-image` is unviable across four artifacts.
 
-**E há um argumento de passagem**: `--extraFlags='...'` entra no comando do Maven e — por ser uma
-opção do alvo — **entra no hash**, então o cache continua correto quando alguém experimenta uma flag.
+**And there is a pass-through argument**: `--extraFlags='...'` goes into the Maven command and — being a
+target option — **enters the hash**, so the cache stays correct when somebody experiments with a flag.
 
-**O cache, medido:** a primeira execução leva o que o Maven levar; a segunda, **96 ms**. Apagar o zip
-e rodar de novo o **restaura do cache** em vez de reconstruir — que é o caso do clone novo e o do
-`sst refresh`. E `touch` num fonte **não** invalida nada: o Nx compara CONTEÚDO, não data.
+**The cache, measured:** the first run takes whatever Maven takes; the second, **96 ms**. Deleting the
+zip and running again **restores it from the cache** instead of rebuilding — which is the fresh-clone
+case and the `sst refresh` case. And a `touch` on a source **does not** invalidate anything: Nx compares
+CONTENT, not dates.
 
-Os `inputs` são o named input `quarkusLambda`, no `nx.json`, e o que ele diz é o que importa:
-`production` do próprio app (que já exclui `src/test/**` e `*.md`), mais `libs/**/pom.xml`,
-`libs/**/src/main/**`, o `mvnw`, o `.mvn/` e o `collector.yaml`. Conferido com o
-inspetor de hash do próprio Nx: **207 arquivos** para o `posts-api`, **118** para o `tagging`, e
-ZERO vindos de `target/`, de `src/test/` ou de `.DS_Store` — o Nx monta o mapa de arquivos
-respeitando o `.gitignore`, então os dois modos de falhar que custaram ~25 min de rebuild num deploy
-deixaram de ser possíveis. E os dois apps ficam isolados: mexer no `apps/tagging` não invalida
-artefato nenhum do `posts-api`.
+The `inputs` are the `quarkusLambda` named input, in `nx.json`, and what it says is what matters: the
+app's own `production` (which already excludes `src/test/**` and `*.md`), plus `libs/**/pom.xml`,
+`libs/**/src/main/**`, the `mvnw`, the `.mvn/` and the `collector.yaml`. Checked with Nx's own hash
+inspector: **207 files** for `posts-api`, **118** for `tagging`, and ZERO coming from `target/`, from
+`src/test/` or from `.DS_Store` — Nx builds the file map respecting `.gitignore`, so the two failure
+modes that cost ~25 min of rebuild in one deploy are no longer possible. And the two apps stay isolated:
+touching `apps/tagging` invalidates no `posts-api` artifact.
 
-**Três mecanismos, e cada um cobre o que o outro não cobre:**
+**Three mechanisms, and each covers what the others do not:**
 
-- **`triggers`** com o fingerprint dos FONTES **mais a existência do zip** decide se o COMANDO roda.
-  A primeira metade é dos fontes e não do zip porque na primeira vez o zip não existe — ele é produto
-  do recurso, não insumo. **A segunda metade foi acrescentada depois, e custou um deploy inteiro para
-  aparecer:** fingerprint igual faz o Pulumi PULAR o comando, e comando pulado não produz arquivo.
-  Num runner efêmero, onde `infra/dist/` nasce vazio, o `assetPaths` passa a apontar para um caminho
-  que só existia na máquina do deploy ANTERIOR; o `BucketObjectv2` tenta lê-lo ao ser criado, não
-  acha, e o deploy morre **antes de criar coisa alguma** — imprimindo `✓ Complete` e saindo com
-  código 1.
+- **`triggers`** with the SOURCES' fingerprint **plus the zip's existence** decides whether the COMMAND
+  runs. The first half is from the sources and not from the zip because the first time the zip does not
+  exist — it is a product of the resource, not an input to it. **The second half was added later, and it
+  cost a whole deploy to surface:** an unchanged fingerprint makes Pulumi SKIP the command, and a skipped
+  command produces no file. On an ephemeral runner, where `infra/dist/` starts empty, `assetPaths` then
+  points at a path that only existed on the PREVIOUS deploy's machine; the `BucketObjectv2` tries to read
+  it as it is created, does not find it, and the deploy dies **before creating anything at all** —
+  printing `✓ Complete` and exiting with code 1.
   <p>
-  MEDIDO: o deploy que mudou só arquivos de `infra/` (que não estão em `sources`, e nem deveriam
-  estar) não construiu nada, não criou nada e levou **2m59s de silêncio** entre `~ Deploy` e
-  `✓ Complete`. Precisa das DUAS condições para aparecer: objeto do S3 por CRIAR **e** comando
-  PULADO — por isso as funções do `posts-api`, cujos objetos já existiam, sobreviveram, e as três do
-  `tagging` não.
+  MEASURED: the deploy that changed only files under `infra/` (which are not in `sources`, and should not
+  be) built nothing, created nothing and took **2m59s of silence** between `~ Deploy` and `✓ Complete`.
+  It needs BOTH conditions to appear: an S3 object yet to be CREATED **and** a SKIPPED command — which is
+  why the `posts-api` functions, whose objects already existed, survived, and the three `tagging` ones did
+  not.
   <p>
-  `QuarkusFunction.artifactPresence` é assimétrico de propósito: zip presente devolve um literal
-  estável (o build segue pulado), zip ausente devolve um valor novo a cada avaliação. Um literal como
-  `"missing"` seria gravado no estado e casaria no runner seguinte — onde o zip também falta —,
-  pulando o comando de novo;
-- **o cache do Nx** decide se rodar o comando RECONSTRÓI alguma coisa. É o que substituiu a checagem
-  de mtime do script, e ganha nos três pontos em que aquela doía: compara conteúdo, respeita o
-  `.gitignore` e conhece o grafo;
-- **`assetPaths`** lê o zip DEPOIS do build e o entrega ao S3 como asset do Pulumi. A doc é explícita:
-  *"a list of path globs to read after the command completes"*. **Eles não decidem se o build roda** —
-  isso é `triggers`.
+  `QuarkusFunction.artifactPresence` is asymmetric on purpose: a present zip returns a stable literal (the
+  build stays skipped), an absent zip returns a fresh value on every evaluation. A literal like
+  `"missing"` would be recorded in the state and would match on the next runner — where the zip is also
+  absent — skipping the command again;
+- **Nx's cache** decides whether running the command REBUILDS anything. It is what replaced the script's
+  mtime check, and it wins on the three points where that hurt: it compares content, it respects
+  `.gitignore` and it knows the graph;
+- **`assetPaths`** reads the zip AFTER the build and hands it to S3 as a Pulumi asset. The documentation
+  is explicit: *"a list of path globs to read after the command completes"*. **They do not decide whether
+  the build runs** — that is `triggers`.
 
-**Dois detalhes que custaram tempo de verdade:**
+**Two details that genuinely cost time:**
 
-- os quatro builds são **serializados** por `dependsOn` encadeado, porque os perfis do Maven escrevem
-  todos em `target/function.zip` e dois em paralelo se apagam. É a mesma necessidade que faz o
-  `siteBuilder` do próprio SST usar um semáforo de 1. **O Nx não sabe disso**: rodar os alvos à mão
-  com `run-many` exige `--parallel=1`, que é o que o `package.sh` passa;
-- o `build-env.sh` existia porque o JDK e a toolchain nativa estavam errados NO AMBIENTE, e ele os
-  consertava a cada invocação. Os dois consertos foram feitos onde deviam — `~/.zshenv` e
-  `xcode-select` — e o único resíduo que precisava de código virou o perfil `native-clt-toolchain`,
-  que a configuração `native` destes alvos ativa. Ver *O `build-env.sh` FOI APAGADO*.
+- the four builds are **serialized** by a chained `dependsOn`, because the Maven profiles all write to
+  `target/function.zip` and two in parallel erase each other. It is the same necessity that makes SST's
+  own `siteBuilder` use a semaphore of 1. **Nx does not know this**: running the targets by hand with
+  `run-many` requires `--parallel=1`, which is what `package.sh` passes;
+- `build-env.sh` existed because the JDK and the native toolchain were wrong IN THE ENVIRONMENT, and it
+  fixed them on every invocation. Both fixes were applied where they belonged — `~/.zshenv` and
+  `xcode-select` — and the only residue that needed code became the `native-clt-toolchain` profile, which
+  these targets' `native` configuration activates. See *`build-env.sh` WAS DELETED*.
 
-**O laço de desenvolvimento que tornou isso viável**: rodar o binário num container local
-(`arm64v8/ubuntu` + o `application` montado) contra um Postgres de Dev Services. Cada ciclo
-build→deploy→teste custa 11 minutos; build→container custa 7 e responde a mesma pergunta. Duas das
-quatro falhas foram achadas assim. O que NÃO dá para testar assim é o que depende do ambiente do
-Lambda — `AWS_REGION` (sem ela o publish no SNS falha com `Unable to load region`) e o DNS, que na
-bridge do Docker devolve só IPv6.
+**The development loop that made this viable**: running the binary in a local container
+(`arm64v8/ubuntu` + the mounted `application`) against a Dev Services Postgres. Each
+build→deploy→test cycle costs 11 minutes; build→container costs 7 and answers the same question. Two of
+the four failures were found that way. What you CANNOT test that way is whatever depends on the Lambda
+environment — `AWS_REGION` (without it the SNS publish fails with `Unable to load region`) and DNS,
+which on the Docker bridge returns only IPv6.
 
-**E há um efeito colateral que custou duas falhas de teste, porque ele não está no caminho da
-subscription.** A estatística do Hibernate é da `SessionFactory` — ela conta os `PreparedStatement` de
-TODAS as threads. Com um processor streaming lendo a linha de cada post que passa pelo event store, a
-PRIMEIRA medição de `BatchLoadingE2ETest` e de `FederationEntitiesE2ETest` cai em cima da varredura
-dele e a segunda não: medido, 11 statements para 1 post contra 4 para 5 posts. O teste acusava um N+1
-inexistente e, pior, passaria a esconder um N+1 de verdade sob o ruído. Quem conserta é
-`AbstractGraphQlE2ETest.statisticsOfAQuietDatabase()`, que abre a janela de medição só depois de duas
-amostras iguais da contagem. **Medição que conta statements de uma aplicação com processor assíncrono
-precisa esperar o silêncio** — e é isso que o controle provou: as mesmas duas classes passam 2/2 sem
-nenhum processor pooled e falham 3/3 com ele.
+**And there is a side effect that cost two test failures, because it is not on the subscription path.**
+Hibernate statistics belong to the `SessionFactory` — it counts `PreparedStatement`s from ALL threads.
+With a streaming processor reading the row of every post that passes through the event store, the FIRST
+measurement of `BatchLoadingE2ETest` and `FederationEntitiesE2ETest` lands on top of its sweep and the
+second does not: measured, 11 statements for 1 post against 4 for 5 posts. The test reported a
+non-existent N+1 and, worse, would have started hiding a real N+1 under the noise. What fixes it is
+`AbstractGraphQlE2ETest.statisticsOfAQuietDatabase()`, which opens the measurement window only after two
+equal samples of the count. **A measurement counting statements in an application with an asynchronous
+processor has to wait for silence** — and that is what the control proved: the same two classes pass 2/2
+with no pooled processor and fail 3/3 with one.
 
-**E há uma quarta razão, que é ARITMÉTICA e não arquitetura.** Uma subscription é uma conexão longa, e
-o Lambda cobra e limita exatamente isso: o ambiente é CONGELADO entre invocações (um assinante parado
-não recebe keep-alive nem escrita) e a conexão só existe enquanto o handler não retorna. Segurar um
-assinante é, portanto, manter uma invocação viva — teto de 15 min, cobrada por duração.
+**And there is a fourth reason, which is ARITHMETIC and not architecture.** A subscription is a long
+connection, and Lambda charges for and limits exactly that: the environment is FROZEN between
+invocations (a parked subscriber receives neither keep-alive nor writes) and the connection only exists
+while the handler has not returned. Holding a subscriber therefore means keeping an invocation alive — a
+15-minute ceiling, billed by duration.
 
-Nesta função (arm64, 2048 MB): 2 GB × 900 s = 1800 GB-s × US$ 0,0000133334 = **US$ 0,024 por
-assinante a cada 15 min**, ou **US$ 0,096/hora por assinante conectado**. Uma task Fargate de
-0,25 vCPU / 0,5 GB custa US$ 0,0123/hora e atende todos eles. <b>UM assinante em Lambda custa oito
-vezes a máquina inteira que serviria todos</b> — e ainda cai a cada 15 minutos.
+On this function (arm64, 2048 MB): 2 GB × 900 s = 1800 GB-s × US$ 0.0000133334 = **US$ 0.024 per
+subscriber every 15 min**, or **US$ 0.096/hour per connected subscriber**. A Fargate task of
+0.25 vCPU / 0.5 GB costs US$ 0.0123/hour and serves all of them. <b>ONE subscriber on Lambda costs eight
+times the whole machine that would serve everyone</b> — and it still drops every 15 minutes.
 
-**O que NÃO atravessa, medido e não deduzido:**
+**What does NOT get through, measured and not deduced:**
 
-- **subscriptions, por WebSocket ou SSE.** O JAR do `quarkus-amazon-lambda-http` 3.39.2 não tem uma
-  ocorrência de `vnd.awslambda.http-integration-response` nem de `RESPONSE_STREAM`: a resposta é um
-  `APIGatewayV2HTTPResponse` montado inteiro em memória. E o `RequestStreamHandler` do
-  `quarkus-amazon-lambda` **não é** response streaming — ele dá `InputStream`/`OutputStream` sobre o
-  payload da invocação, bufferizado. Mas o transporte é a metade menor: `SimpleQueryBus.emitUpdate` é
-  **em processo**, e quem apenda o `PostCreated` é outra função. Não há de onde emitir, e reconectar
-  não resolve porque não é a conexão que falta, é a fonte;
-- **o trace único.** Na entrada não há conector para instrumentar; na saída,
-  `smallrye-reactive-messaging-aws-sns` 4.37.0 não tem pacote de tracing (o de SQS tem). Vale a regra
-  que já está escrita mais abaixo: um trace pela metade é pior que nenhum, porque a lacuna parece
-  latência. Quem responde por enquanto é o `AxonMetrics`.
+- **subscriptions, over WebSocket or SSE.** The `quarkus-amazon-lambda-http` 3.39.2 JAR has not one
+  occurrence of `vnd.awslambda.http-integration-response` or `RESPONSE_STREAM`: the response is an
+  `APIGatewayV2HTTPResponse` assembled whole in memory. And `quarkus-amazon-lambda`'s
+  `RequestStreamHandler` is **not** response streaming — it gives an `InputStream`/`OutputStream` over
+  the invocation payload, buffered. But the transport is the smaller half:
+  `SimpleQueryBus.emitUpdate` is **in-process**, and whoever appends the `PostCreated` is another
+  function. There is nowhere to emit from, and reconnecting does not help because it is not the
+  connection that is missing, it is the source;
+- **the single trace.** On the inbound side there is no connector to instrument; on the outbound side,
+  `smallrye-reactive-messaging-aws-sns` 4.37.0 has no tracing package (the SQS one does). The rule
+  already written further down applies: half a trace is worse than none, because the gap looks like
+  latency. What answers for now is `AxonMetrics`.
 
-**RODADO NA CONTA DE VERDADE** (`us-east-1`, via `./infra/aws/e2e.sh`): a saga fecha — post nasce na
-versão 1 sem tag, volta na 2 com `Untagged` em ~50s, atualiza para a 3; as seis filas (três de
-trabalho, três de DLQ) ficam vazias; `_entities` responde sem token. Os ~50s são quase todos cold
-start de duas JVMs de 72 MB numa VPC — é o número que justifica o binário nativo.
+**RUN ON THE REAL ACCOUNT** (`us-east-1`, via `./infra/aws/e2e.sh`): the saga closes — the post is born
+at version 1 with no tag, comes back at 2 with `Untagged` in ~50s, updates to 3; the six queues (three
+work, three DLQ) stay empty; `_entities` answers without a token. Those ~50s are almost all cold start
+of two 72 MB JVMs inside a VPC — it is the number that justifies the native binary.
 
-E as duas afirmações sobre subscriptions foram confirmadas na stack, não só no JAR: `Accept:
-text/event-stream` fica **25 segundos sem receber um byte** (nem o keep-alive de 15s chega) e o
-upgrade de WebSocket morre no load balancer com **HTTP 400**.
+And the two claims about subscriptions were confirmed on the stack, not just in the JAR:
+`Accept: text/event-stream` goes **25 seconds without receiving a byte** (not even the 15 s keep-alive
+arrives) and the WebSocket upgrade dies at the load balancer with **HTTP 400**.
 
-**Três coisas que só apareceram na AWS**, e as três falham de forma enganosa:
+**Three things that only appeared on AWS**, and all three fail misleadingly:
 
-1. **A função de migração não subia — pelo problema que ela existe para resolver.** O recorder do Axon
-   toca o EntityManager na PARTIDA, o `validate` roda contra banco vazio e a aplicação morre com
-   `missing table [accounts]` antes de qualquer handler existir. A saída é
-   `QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY=none` **só nessa função**; as outras quatro
-   mantêm o `validate` e continuam recusando subir se entidade e schema divergirem.
+1. **The migration function would not come up — because of the problem it exists to solve.** Axon's
+   recorder touches the EntityManager at STARTUP, `validate` runs against an empty database and the
+   application dies with `missing table [accounts]` before any handler exists. The way out is
+   `QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY=none` **on that function only**; the other four
+   keep `validate` and keep refusing to start if entity and schema diverge.
 
-   **E AQUELA LINHA NÃO BASTOU: o mesmo ovo e galinha tem uma SEGUNDA camada**, que só apareceu
-   quando o binário arm64 finalmente executou e a função chegou a subir. O `validate` apenas
-   CONFERE o schema, e desligá-lo resolve o que ele conferia; o `PooledStreamingEventProcessor`
-   o **consulta**, e nenhum `strategy` o alcança:
+   **AND THAT LINE WAS NOT ENOUGH: the same chicken and egg has a SECOND layer**, which only appeared
+   once the arm64 binary finally executed and the function got as far as starting. `validate` only
+   CHECKS the schema, and switching it off solves what it was checking; the
+   `PooledStreamingEventProcessor` **queries** it, and no `strategy` reaches that:
 
    ```
    Coordinator: Processor [post-subscriptions]. Initializing (16) segments
    ERROR: relation "aggregateevententry" does not exist        (SQLState 42P01)
    ProcessRetriesExhaustedException: Tried invoking the action for 30 times
-   → AxonExtension.init falha → Runtime.ExitError, exit status 1
+   → AxonExtension.init fails → Runtime.ExitError, exit status 1
    ```
 
-   O Coordinator lê o event store para achar o HEAD — a tabela que a **V2 cria e que esta função
-   existe para criar**. Trinta tentativas em ~3 s e a partida inteira cai. Não é nome de tabela
-   divergente: a V2 cria `aggregateevententry` e `tokenentry`, exatamente os nomes que o Axon 5
-   espera.
+   The Coordinator reads the event store to find HEAD — the table that **V2 creates and that this
+   function exists to create**. Thirty attempts in ~3 s and the whole startup falls over. It is not a
+   diverging table name: V2 creates `aggregateevententry` and `tokenentry`, exactly the names Axon 5
+   expects.
 
-   A saída é `QUARKUS_AXON_SUBSCRIBINGPROCESSOR_NAMESPACES` **só nessa função**
-   (`infra/aws/compute/migrations.ts`), listando os DOIS pacotes com `@EventHandler`: um processor
-   subscribing liga-se ao event bus e não toca no banco na partida. Funciona porque as duas listas
-   **particionam** — conferido no bytecode, `DefaultAxonFrameworkConfigurer.eventhandlersForPoolProcessors(todos, namespacesDoSubscribing)`
-   filtra do pool o que o subscribing reivindicou —, e porque `quarkus.axon.subscribingprocessor`
-   é `@ConfigRoot(phase = RUN_TIME)`, então o ordinal 300 do ambiente diferencia DUAS funções que
-   compartilham o mesmo zip. O bloco `pooledprocessor.post-subscriptions.*` fica órfão ali e isso
-   é inofensivo: o configurador do pool é dirigido pelos handlers DESCOBERTOS, e uma entrada que
-   nenhum namespace casa nunca é consultada.
+   The way out is `QUARKUS_AXON_SUBSCRIBINGPROCESSOR_NAMESPACES` **on that function only**
+   (`infra/aws/compute/migrations.ts`), listing BOTH packages with `@EventHandler`: a subscribing
+   processor binds to the event bus and does not touch the database at startup. It works because the two
+   lists **partition** — checked in the bytecode,
+   `DefaultAxonFrameworkConfigurer.eventhandlersForPoolProcessors(all, subscribingNamespaces)` filters
+   out of the pool whatever the subscribing one claimed — and because
+   `quarkus.axon.subscribingprocessor` is `@ConfigRoot(phase = RUN_TIME)`, so the environment's ordinal
+   300 differentiates TWO functions that share the same zip. The `pooledprocessor.post-subscriptions.*`
+   block is left orphaned there and that is harmless: the pool configurator is driven by the DISCOVERED
+   handlers, and an entry no namespace matches is never consulted.
 
-   **`apps/tagging` não precisa disso**: ele só tem processor subscribing e ainda exclui o
-   `PooledEventProcessingConfigurer`. **A lista em `migrations.ts` espelha o
-   `application.properties` e nada a confere** — pacote novo com handler entra nos dois lugares, e
-   quem ficar de fora só reaparece como uma função de migração morrendo contra banco vazio.
-2. **O atributo do conector SNS é `topic.arn`, com PONTO.** Com hífen é ignorado em silêncio
-   (`SRMSG19504: Topic arn ... : null`) e a primeira publicação morre com
-   `InvalidParameterException: TopicArn or TargetArn ... no value for required parameter`, que chega
-   ao cliente GraphQL como `System error`/`invalid-parameter` sem mencionar configuração. O nome foi
-   lido do BYTECODE do conector; ele também usa `group.id` e `email.subject`.
-3. **O `iss` do Keycloak vem em minúsculas** — o DNS do ALB tem maiúsculas, mas o `iss` é montado do
-   cabeçalho `Host`. DNS é insensível a caixa; `iss` não é.
+   **`apps/tagging` does not need this**: it only has a subscribing processor and it also excludes
+   `PooledEventProcessingConfigurer`. **The list in `migrations.ts` mirrors `application.properties` and
+   nothing checks it** — a new package with a handler goes into both places, and whoever is left out only
+   reappears as a migration function dying against an empty database.
+2. **The SNS connector attribute is `topic.arn`, with a DOT.** With a hyphen it is silently ignored
+   (`SRMSG19504: Topic arn ... : null`) and the first publish dies with
+   `InvalidParameterException: TopicArn or TargetArn ... no value for required parameter`, which reaches
+   the GraphQL client as `System error`/`invalid-parameter` with no mention of configuration. The name
+   was read from the connector's BYTECODE; it also uses `group.id` and `email.subject`.
+3. **Keycloak's `iss` comes in lowercase** — the ALB's DNS has uppercase letters, but the `iss` is
+   assembled from the `Host` header. DNS is case-insensitive; `iss` is not.
 
-**E a troca do Keycloak pelo Cognito cobrou o que o `V1__initial_schema.sql` tinha prometido.** A
-primeira execução falhou com `usuário … já tem conta em KEYCLOAK` — não um bug, a regra de domínio: o
-`sub` do Cognito não é o do Keycloak, e sem `identity_provider` no token os dois viravam o mesmo
-provedor. O conserto foi o caminho que aquela migration já documentava: `COGNITO` no enum
-`AuthProvider`, a `V6__cognito_provider.sql` refazendo o `ck_accounts_provider`, e um trigger
-*pre token generation* **V1_0** pondo `identity_provider: "cognito"` no ID token. Resultado melhor que
-"voltou a funcionar": a mesma pessoa atravessou a troca de emissor sem virar dois usuários —
-`account linking: … de COGNITO ligada ao usuário …`, uma linha em `users` e duas em `accounts`.
-**ENUM `AuthProvider` NOVO = MIGRATION NOVA**, e agora há precedente.
+**And swapping Keycloak for Cognito collected on what `V1__initial_schema.sql` had promised.** The first
+run failed with `user … already has an account in KEYCLOAK` — not a bug, the domain rule: Cognito's `sub`
+is not Keycloak's, and without `identity_provider` in the token both became the same provider. The fix
+was the path that migration already documented: `COGNITO` in the `AuthProvider` enum, the
+`V6__cognito_provider.sql` rebuilding `ck_accounts_provider`, and a *pre token generation* trigger
+**V1_0** putting `identity_provider: "cognito"` into the ID token. The result is better than "it works
+again": the same person crossed the issuer swap without becoming two users —
+`account linking: … from COGNITO linked to user …`, one row in `users` and two in `accounts`.
+**A NEW `AuthProvider` ENUM VALUE = A NEW MIGRATION**, and there is now a precedent.
 
-**Variável de ambiente sem default derruba a partida, inclusive de quem não serve HTTP.**
-`quarkus.oidc.auth-server-url=${OIDC_ISSUER_URL}` não tem default (a `%prod.` que ela substitui tinha),
-e dar a variável só à função de API matou as outras duas do `posts-api` na partida: a extensão OIDC
-inicializa com a APLICAÇÃO, não com a primeira requisição. Por isso o OIDC mora em `postsEnv`.
+**An environment variable with no default kills startup, including for something that serves no HTTP.**
+`quarkus.oidc.auth-server-url=${OIDC_ISSUER_URL}` has no default (the `%prod.` one it replaces did), and
+giving the variable only to the API function killed the other two `posts-api` functions at startup: the
+OIDC extension initializes with the APPLICATION, not with the first request. That is why OIDC lives in
+`postsEnv`.
 
-E uma de ferramenta: **`sst outputs` não existe no 4.17.1** (o comando imprime o help) — os outputs
-só saem no `sst deploy`. Daí `infra/aws/discover.sh`, que pergunta à AWS pelos prefixos dos nomes.
+And one about tooling: **`sst outputs` does not exist in 4.17.1** (the command prints the help) — the
+outputs only come out of `sst deploy`. Hence `infra/aws/discover.sh`, which asks AWS for the name
+prefixes.
 
-O documento dessa migração, decisão por decisão, é `infra/aws/README.md`.
+The document of that migration, decision by decision, is `infra/aws/README.md`.
 
+## The test client (`apps/web`)
 
-## O cliente de teste (`apps/web`)
+A Next.js (App Router) app with Apollo Client, **additive like the rest**: no Java application file was
+changed for it to exist. Seven pages, one per flow, and each one exists to prove something — the full
+table and the decisions are in `apps/web/README.md`. What needs to be known from here:
 
-Um Next.js (App Router) com Apollo Client, **aditivo como o resto**: nenhum arquivo de aplicação Java
-foi alterado para ele existir. Sete páginas, uma por fluxo, e cada uma existe para provar uma coisa —
-a tabela completa e as decisões estão em `apps/web/README.md`. O que precisa ser sabido daqui:
+**File organization is by FEATURE; atomic design is by COMPOSITION.** There is no `atoms/` or
+`organisms/` folder: there is the route and what it needs (`app/<feature>/_components`, `_hooks`), plus
+`app/_components` for what crosses features and `components/ui` for the shadcn primitives. The atomic
+scale still exists — it just is not a folder.
 
-**Organização de arquivos é por FEATURE; atomic design é por COMPOSIÇÃO.** Não há pasta `atoms/` nem
-`organisms/`: há a rota e o que ela precisa (`app/<feature>/_components`, `_hooks`), mais
-`app/_components` para o que atravessa features e `components/ui` para as primitivas do shadcn. A
-escala atômica continua existindo — ela só não é uma pasta.
+**The props come from FRAGMENTS, and that is checked by the compiler.** The graphql-codegen
+`client-preset` generates *fragment masking*: the component declares the fragment it needs and receives
+`FragmentType<typeof Fragment>`, an opaque type. Reading a field outside the fragment **does not
+compile**, even if the page's query brought it. The demonstration is in the `PostCard_post` /
+`PostArticle_post` pair — the card **does not ask for `content`**. A new component = a new fragment in
+the same file; the page only spreads (`...PostList_connection`) and enumerates no field.
 
-**As props vêm de FRAGMENTOS, e isso é verificado pelo compilador.** O `client-preset` do
-graphql-codegen gera *fragment masking*: o componente declara o fragmento de que precisa e recebe
-`FragmentType<typeof Fragmento>`, um tipo opaco. Ler um campo fora do fragmento **não compila**, mesmo
-que a query da página o tenha trazido. A demonstração está no par `PostCard_post` / `PostArticle_post`
-— o card **não pede `content`**. Componente novo = fragmento novo no mesmo arquivo; a página só
-espalha (`...PostList_connection`) e não enumera campo nenhum.
+**THE QUERY BELONGS TO THE PAGE, and it is prefetched on the server.** Every page with a query has a
+`query.ts` next to its `page.tsx`; the server component passes it to `PreloadQuery` from
+`@apollo/client-integration-nextjs` and the client component reads the SAME document with
+`useSuspenseQuery`. The result comes across React's stream — the HTML arrives already filled and
+hydration does not repeat the request. The variables are shared constants (`FEED_PAGE_SIZE`,
+`LIVE_SNAPSHOT_SIZE`): server and client asking for different sizes is not an error, it is a second
+request, and only the network tab will tell. `errorPolicy: "all"` on both sides, because with the
+default an error becomes an exception in the RSC render and the whole route falls over. Two pages have no
+prefetch, and both say why in the file itself: `/saga` measures a post that does not exist yet, and a
+subscription never terminates.
 
-**A QUERY É DA PÁGINA, e ela é prefetchada no servidor.** Cada página com query tem um `query.ts` ao
-lado do `page.tsx`; o server component a passa ao `PreloadQuery` de
-`@apollo/client-integration-nextjs` e o componente de cliente lê o MESMO documento com
-`useSuspenseQuery`. O resultado atravessa pelo stream do React — o HTML já chega preenchido e a
-hidratação não refaz a requisição. As variáveis são constantes compartilhadas (`FEED_PAGE_SIZE`,
-`LIVE_SNAPSHOT_SIZE`): servidor e cliente pedindo tamanhos diferentes não dá erro, dá uma segunda
-requisição, e só a aba de rede conta. `errorPolicy: "all"` dos dois lados, porque com o default um
-erro vira exceção no render do RSC e a rota inteira cai. Duas páginas não têm prefetch, e as duas
-dizem o porquê no próprio arquivo: `/saga` mede um post que ainda não existe, e subscription não
-termina.
+**`possibleTypes` is generated, not written.** `me` returns the `User` interface and `_entities` the
+`_Entity` union; without the map, matching `... on Author` in the cache is heuristic and silently applies
+the fragment to the wrong type. What generates it is the `fragment-matcher` plugin (`codegen.ts`), and
+what consumes it is `lib/apollo/cache.ts`.
 
-**`possibleTypes` é gerado, não escrito.** `me` devolve a interface `User` e `_entities` a união
-`_Entity`; sem o mapa, o casamento de `... on Author` no cache é heurístico e aplica o fragmento ao
-tipo errado em silêncio. Quem o gera é o plugin `fragment-matcher` (`codegen.ts`), e quem o consome é
-`lib/apollo/cache.ts`.
+**Authentication is by SERVER ACTION.** `app/actions/auth.ts` is the only door to Cognito: the password
+goes to the Next server, which calls `InitiateAuth` and stores both tokens in `httpOnly` cookies. The
+browser never sees the refresh token, and the ID token only reaches it in memory. The bearer is the **ID
+token** for the reason already documented in `infra/aws/identity/index.ts`.
 
-**A autenticação é por SERVER ACTION.** `app/actions/auth.ts` é a única porta para o Cognito: a senha
-vai para o servidor do Next, que chama `InitiateAuth` e guarda os dois tokens em cookies `httpOnly`. O
-navegador nunca vê o refresh token, e o ID token só chega a ele em memória. O bearer é o **ID token**
-pela razão já documentada em `infra/aws/identity/index.ts`.
+**THE BROWSER ONLY KNOWS `/api/graphql`** — the application's own proxy (`app/api/graphql/route.ts`).
+Three things this solves: the ID token **stops existing in the browser** (the proxy is what puts it in
+the header, reading the `httpOnly` cookie; `lib/apollo/token.ts` and the `auth-link` are gone, and the
+`Session` that goes down to the client no longer has the field); there is no CORS on the path; and there
+is a single place where streaming can be solved. The SERVER does not go through the proxy — `PreloadQuery`
+talks to the API directly, because opening an HTTP connection to itself would cost another invocation and
+latency.
 
-**O NAVEGADOR SÓ CONHECE `/api/graphql`** — o proxy da própria aplicação
-(`app/api/graphql/route.ts`). Três coisas que isso resolve: o ID token **para de existir no
-navegador** (quem o põe no header é o proxy, lendo o cookie `httpOnly`; `lib/apollo/token.ts` e o
-`auth-link` sumiram, e o `Session` que desce para o cliente não tem mais o campo); não há CORS no
-caminho; e existe um lugar só onde o streaming pode ser resolvido. O SERVIDOR não passa pelo proxy —
-o `PreloadQuery` fala direto com a API, porque abrir uma conexão HTTP para si mesma custaria mais uma
-invocação e latência.
+**Subscriptions: the proxy RELAYS, and nothing else.** `/api/graphql` does a `fetch` to the upstream and
+returns `upstream.body` — the response body, as it came. It does not interpret the protocol, assembles no
+frames and does not know what a subscription is. The semantics belong to the domain, served by
+`posts-api`: `onPostCreated` when the post REACHES version 2, `onPostUpdated` on every change from there
+on.
 
-**Subscriptions: o proxy REPASSA, e mais nada.** `/api/graphql` faz um `fetch` para o upstream e
-devolve `upstream.body` — o corpo da resposta, como veio. Ele não interpreta o protocolo, não monta
-frame nenhum e não sabe o que é uma subscription. A semântica é do domínio, servida pelo `posts-api`:
-`onPostCreated` quando o post ALCANÇA a versão 2, `onPostUpdated` a cada mudança daí para a frente.
+**There was an EMULATION here, and it died of a good cause.** While the upstream was the API Gateway —
+which assembles the whole response in memory — the stream did not open, and the proxy polled in a loop,
+reshaping the client's selection into a `post(id:)` query with an alias. It stopped having a purpose when
+`NEXT_PUBLIC_GRAPHQL_URL` came to point at the Function URL with response streaming: the relay always
+works, and an alternative path that never executes is a path nobody fixes. The `subscription-probe.ts`,
+the mode-announcement frame and the "real stream / emulated" badge on the `/live` page went with it.
 
-**Houve uma EMULAÇÃO aqui, e ela morreu de causa boa.** Enquanto o upstream era o API Gateway — que
-monta a resposta inteira em memória —, o stream não abria, e o proxy consultava em laço recortando a
-seleção do cliente para uma query `post(id:)` com alias. Deixou de ter função quando
-`NEXT_PUBLIC_GRAPHQL_URL` passou a apontar para a Function URL com response streaming: o repasse
-sempre funciona, e um caminho alternativo que nunca executa é um caminho que ninguém conserta. Saíram
-com ela o `subscription-probe.ts`, o frame de anúncio de modo e o distintivo "stream real / emulado"
-da página `/live`.
+**WHAT HOLDS THAT RELAY UP IS A CDN NUMBER**, and it is not in the proxy's code. CloudFront cuts off an
+origin that stays silent longer than the `OriginReadTimeout`, and a BARE `sst.aws.Nextjs` creates its
+distribution with a literal **20 s** (`ssr-site.ts:996`) — verified on the account. A `posts-api` cold
+start takes 15–26 s (timed twice) and in that window the proxy has no byte to relay: half the cold starts
+became 504s. The proxy once had keep-alives purely to fill that silence. **A silent proxy is NOT a
+stalled proxy — but the CDN cannot tell the difference.**
 
-**O QUE SEGURA ESSE REPASSE É UM NÚMERO DE CDN**, e ele não está no código do proxy. O CloudFront
-corta a origem que ficar calada por mais que o `OriginReadTimeout`, e um `sst.aws.Nextjs` SOLTO cria
-a distribuição dele com **20 s literais** (`ssr-site.ts:996`) — conferido na conta. Um cold start do
-`posts-api` leva 15–26 s (cronometrado duas vezes) e nesse intervalo o proxy não tem byte para
-repassar: metade dos cold starts virava 504. O proxy já teve keep-alives só para preencher esse
-silêncio. **Proxy calado NÃO é proxy parado — mas o CDN não sabe a diferença.**
+What solves it is the `sst.aws.Router` in `infra/aws/edge/`: with the site ROUTED, SST mirrors the
+server's `timeout` into the route's metadata (`ssr-site.ts:1857`), and the number stops being written
+twice. **60 s is the ceiling**, and not by taste: it is CloudFront's maximum for a dynamically chosen
+origin, and going past it makes the edge refuse the origin — an attempt with 360 s took the whole site
+down with 502.
 
-Quem resolve é o `sst.aws.Router` de `infra/aws/edge/`: com o site ROTEADO, o SST espelha o `timeout`
-do servidor na metadata da rota (`ssr-site.ts:1857`), e o número deixa de ser escrito duas vezes. **60
-s é o teto**, e não por gosto: é o máximo do CloudFront para origem escolhida dinamicamente, e passar
-disso faz a borda recusar a origem — uma tentativa com 360 s derrubou o site inteiro com 502.
+**MEASURED on the stack after the swap**: a subscription through the proxy took **26 s to the first
+byte** and delivered the event normally. With the previous 20 s, that connection would have been cut —
+which is the proof that the ceiling was the bottleneck, and not the proxy.
 
-**MEDIDO na stack depois da troca**: uma subscription pelo proxy levou **26 s até o primeiro byte** e
-entregou o evento normalmente. Com os 20 s de antes, essa conexão teria sido cortada — é a prova de
-que o teto era o gargalo, e não o proxy.
+**And there is an effect no configuration fixes: EVERY CONCURRENT SUBSCRIBER PAYS A COLD START.** An SSE
+connection holds the invocation for as long as it is open, and a Lambda container serves one invocation
+at a time — so the second simultaneous subscriber necessarily lands in a new container. Measured: two
+connections opened together took 27 s, with the function already warm. It is the same arithmetic that
+makes `warm: 1` insufficient here: it warms ONE container, and the second subscriber does not find it
+free. What removes this is provisioned concurrency (≈US$ 21/month for a 2 GB container) or the native
+binary — `libs/axon-native-support` exists for that.
 
-**E há um efeito que nenhuma configuração conserta: CADA ASSINANTE CONCORRENTE PAGA UM COLD START.**
-Uma conexão SSE segura a invocação enquanto estiver aberta, e um container do Lambda atende uma
-invocação por vez — então o segundo assinante simultâneo cai obrigatoriamente num container novo.
-Medido: duas conexões abertas juntas levaram 27 s, com a função já quente. É a mesma aritmética que
-torna `warm: 1` insuficiente aqui: ele aquece UM container, e o segundo assinante não o encontra
-livre. O que remove isso é concorrência provisionada (≈US$ 21/mês para um container de 2 GB) ou o
-binário nativo — o `libs/axon-native-support` existe para isso.
+**CORS belongs to the API GATEWAY, not to the application** (`infra/aws/support/http-api.ts`). That way
+the preflight does not wake a 72 MB JVM. `allowOrigins: ["*"]` because allowing the site's URL would
+create a circular dependency with the component that needs the API's URL. In dev Quarkus has no CORS on:
+use `QUARKUS_HTTP_CORS=true QUARKUS_HTTP_CORS_ORIGINS='http://localhost:3000'` with `quarkus:dev`.
 
-**CORS é do API GATEWAY, não da aplicação** (`infra/aws/support/http-api.ts`). Assim o preflight não
-acorda uma JVM de 72 MB. `allowOrigins: ["*"]` porque liberar a URL do site criaria dependência
-circular com o componente que precisa da URL da API. Em dev o Quarkus não tem CORS ligado: use
-`QUARKUS_HTTP_CORS=true QUARKUS_HTTP_CORS_ORIGINS='http://localhost:3000'` no `quarkus:dev`.
+**Nx builds, OpenNext packages, SST publishes.** The `web:open-next-build` target depends on `build`, and
+it is what `sst.aws.Nextjs` calls (`buildCommand`) — a single definition of how the site is built, with
+caching. Two lines of `next.config.ts` exist because of this and neither is tuning:
+`outputFileTracingRoot` pointing at the monorepo root (without it the bundle comes out missing the
+packages pnpm left as symlinks, and the error only shows up at runtime) and `output: "standalone"` turned
+on by `INFRA_PROVIDER=aws` (which the component's `environment` injects into the build).
 
-**O build é do Nx, o empacotamento é do OpenNext, a publicação é do SST.** O alvo
-`web:open-next-build` depende de `build`, e é ele que o `sst.aws.Nextjs` chama (`buildCommand`) — uma
-definição só de como se constrói o site, com cache. Duas linhas do `next.config.ts` existem por causa
-disso e nenhuma é afinamento: `outputFileTracingRoot` apontando a raiz do monorepo (sem ela o bundle
-sai sem os pacotes que o pnpm deixou em symlink, e o erro só aparece em runtime) e `output:
-"standalone"` ligado por `INFRA_PROVIDER=aws` (que o `environment` do componente injeta no build).
+**Traps already paid for**, and the first ones fail silently:
 
-**Armadilhas já pagas**, e as primeiras falham em silêncio:
-
-0. **NÃO deixe `next dev` rodando durante um `sst deploy`.** O `open-next.config.ts` tem
-   `buildCommand: "exit 0"` — ele EMPACOTA `.next`, não o constrói —, e o dev server reescreve esse
-   diretório continuamente. O que sobe vira um build de desenvolvimento: o HTML referencia
-   `/_next/static/chunks/main-app.js` (sem hash, nome que só o dev usa), o S3 responde 403, a página
-   não hidrata, o formulário cai no POST nativo e a server action morre com
-   `TypeError: a[d] is not a function` no `webpack-runtime`. Nenhuma dessas mensagens aponta para a
-   causa.
-1. **Login: toda navegação SUAVE para `/feed` quebrava o cabeçalho.** O layout lê o cookie, e o Next
-   faz prefetch dos `<Link>` visíveis — o payload ANÔNIMO do layout já está no Router Cache quando o
-   login acontece. Em `next dev` (sem prefetch) nada aparece. Foram TRÊS fontes de navegação suave,
-   removidas uma a uma: o `redirect()` da própria ação; o `revalidatePath("/", "layout")` nela (que
-   revalida `/login`); e — a que sobreviveu às outras duas — o fato de **o Next re-renderizar a rota
-   atual depois de toda server action**, o que disparava o `redirect` que havia no `page.tsx` de
-   `/login`. Desenho final: a página de login não redireciona (quem tem sessão vê um cartão), e o
-   formulário chama `signIn` à mão — não por `useActionState` — para `window.location.assign` rodar
-   no mesmo tick da resposta. Sessão nova é documento novo.
-2. **`Query.posts` é ordem de criação CRESCENTE.** `posts(first: 10)` são os dez mais ANTIGOS; um post
-   criado agora entra no fim. O painel de tempo real ficou mudo por isso. Sem `last`/`before` no
-   schema, `/live` pede a página inteira (teto 100) e olha a cauda — acima de 100 posts os mais novos
-   somem, e o conserto honesto é paginação reversa na API.
-3. **`relayStylePagination()` sem `keyArgs` funde TODA leitura de `posts`** — a de `/live`
-   (`first: 100`) com a do feed (`first: 6`), e o feed voltava com cem cards. `keyArgs: ["first"]`
-   separa as duas sem quebrar o "carregar mais".
-4. `@graphql-typed-document-node/core` precisa ser dependência DIRETA (o pnpm não expõe transitiva, e
-   sem ela todo `graphql()` vira `unknown`); o `Button` do shadcn *base-nova* é Base UI e usa
-   `render={<Link/>}`, não `asChild`; e `secure: true` no cookie mata o login em `next dev`, porque a
-   origem é http.
+0. **DO NOT leave `next dev` running during an `sst deploy`.** `open-next.config.ts` has
+   `buildCommand: "exit 0"` — it PACKAGES `.next`, it does not build it — and the dev server rewrites
+   that directory continuously. What ships becomes a development build: the HTML references
+   `/_next/static/chunks/main-app.js` (no hash, a name only dev uses), S3 answers 403, the page does not
+   hydrate, the form falls back to a native POST and the server action dies with
+   `TypeError: a[d] is not a function` in `webpack-runtime`. None of those messages points at the cause.
+1. **Login: every SOFT navigation to `/feed` broke the header.** The layout reads the cookie, and Next
+   prefetches visible `<Link>`s — the ANONYMOUS layout payload is already in the Router Cache when the
+   login happens. Under `next dev` (no prefetch) nothing shows up. There were THREE sources of soft
+   navigation, removed one at a time: the action's own `redirect()`; the `revalidatePath("/", "layout")`
+   in it (which revalidates `/login`); and — the one that survived the other two — the fact that **Next
+   re-renders the current route after every server action**, which fired the `redirect` that was in
+   `/login`'s `page.tsx`. Final design: the login page does not redirect (whoever has a session sees a
+   card), and the form calls `signIn` by hand — not through `useActionState` — so that
+   `window.location.assign` runs in the same tick as the response. A new session is a new document.
+2. **`Query.posts` is ASCENDING creation order.** `posts(first: 10)` are the ten OLDEST; a post created
+   now goes to the end. The real-time panel was silent because of this. With no `last`/`before` in the
+   schema, `/live` asks for the whole page (ceiling 100) and looks at the tail — above 100 posts the
+   newest disappear, and the honest fix is reverse pagination in the API.
+3. **`relayStylePagination()` without `keyArgs` merges EVERY read of `posts`** — `/live`'s
+   (`first: 100`) with the feed's (`first: 6`), and the feed came back with a hundred cards.
+   `keyArgs: ["first"]` separates the two without breaking "load more".
+4. `@graphql-typed-document-node/core` has to be a DIRECT dependency (pnpm does not expose transitive
+   ones, and without it every `graphql()` becomes `unknown`); the shadcn *base-nova* `Button` is Base UI
+   and uses `render={<Link/>}`, not `asChild`; and `secure: true` on the cookie kills login under
+   `next dev`, because the origin is http.
 
 ```bash
 pnpm --filter @axonposts/web dev        # http://localhost:3000
-pnpm --filter @axonposts/web codegen    # regenera src/gql/ (roda junto com o build)
-pnpm --filter @axonposts/web schema:pull GRAPHQL_URL   # atualiza apps/web/schema.graphql
-npx nx run web:open-next-build          # o que o SST chama no deploy
+pnpm --filter @axonposts/web codegen    # regenerates src/gql/ (runs along with the build)
+pnpm --filter @axonposts/web schema:pull GRAPHQL_URL   # updates apps/web/schema.graphql
+npx nx run web:open-next-build          # what SST calls at deploy
 ```
 
-## Testes
+## Tests
 
-Surefire roda tudo em `./mvnw test`, inclusive os `*E2ETest` — **Docker precisa estar de pé**.
+Surefire runs everything under `./mvnw test`, including the `*E2ETest` classes — **Docker has to be
+up**.
 
-### O TESTE MORA NO MÓDULO QUE ELE TESTA
+### THE TEST LIVES IN THE MODULE IT TESTS
 
-Era tudo em `apps/posts-api/src/test`, inclusive o que prova o domínio que vive em `libs/`. Hoje:
+It all used to be in `apps/posts-api/src/test`, including what proves the domain that lives in `libs/`.
+Today:
 
-| módulo | testes | o que ele prova |
+| module | tests | what it proves |
 |---|---|---|
 | `libs/platform` | 7 | `SoftDeletable` |
-| `libs/users` | 7 | `Authenticatable` e o account linking |
-| `libs/posts` | 24 | `Post` e `Tag` — as invariantes do domínio |
-| `libs/axon-channels` | 19 | endereçamento e codificação de tags: o contrato de FIO |
-| `libs/axon-aws` | 6 | os atributos que a filter policy do SNS casa |
-| `libs/test-support` | 7 | a ordem das migrations, no formato de versão do Flyway |
-| `apps/posts-api` | 117 | aplicação, GraphQL, fiação e os 8 `*E2ETest` |
-| `apps/tagging` | 10 | a decisão, a fiação e o caminho inteiro sem broker |
-| `apps/web` | 26 | as claims do ID token e a semântica de versão da saga na interface |
+| `libs/users` | 7 | `Authenticatable` and account linking |
+| `libs/posts` | 24 | `Post` and `Tag` — the domain invariants |
+| `libs/axon-channels` | 19 | addressing and tag encoding: the WIRE contract |
+| `libs/axon-aws` | 6 | the attributes the SNS filter policy matches |
+| `libs/test-support` | 7 | migration order, in Flyway's version format |
+| `apps/posts-api` | 117 | application, GraphQL, wiring and the 8 `*E2ETest` classes |
+| `apps/tagging` | 10 | the decision, the wiring and the whole path with no broker |
+| `apps/web` | 26 | the ID token claims and the saga's version semantics in the UI |
 
-**O argumento é `apps/tagging`:** ele importa `libs/posts` para ganhar as regras do `Post`. Enquanto
-essas regras eram provadas na pasta de teste de OUTRO app, a lib não se sustentava sozinha.
+**The argument is `apps/tagging`:** it imports `libs/posts` to get the `Post` rules. While those rules
+were proven in ANOTHER app's test folder, the lib did not stand on its own.
 
-**`libs/test-support` é a exceção declarada à regra de que `libs/` só tem domínio e infraestrutura.**
-Ele guarda os dois fixtures que mais de um módulo usa (`RecordingDomainEvents`, `UserFixtures`), em
-`src/main` e consumido com `<scope>test</scope>` — não num `test-jar`, que exigiria uma `<execution>`
-do maven-jar-plugin em cada lib que exporta fixture, com os alvos de mojo que o `@nx/maven` infere
-junto. O pacote é `...testing` e não `...support` para não haver split package com o `support/` que
-ficou em `apps/posts-api`.
+**`libs/test-support` is the declared exception to the rule that `libs/` holds only domain and
+infrastructure.** It keeps the two fixtures more than one module uses (`RecordingDomainEvents`,
+`UserFixtures`), in `src/main` and consumed with `<scope>test</scope>` — not in a `test-jar`, which
+would require a maven-jar-plugin `<execution>` in every lib that exports a fixture, with the mojo targets
+`@nx/maven` infers along with it. The package is `...testing` and not `...support` so there is no split
+package with the `support/` left in `apps/posts-api`.
 
-**`AuthenticatableTest` monta os próprios objetos, e não por descuido.** Usar o fixture compartilhado
-faria `libs/users` depender de um módulo que depende DELE, e o reator do Maven recusa — ele não
-distingue escopo de teste ao detectar ciclo. O que sobrou é melhor que o contorno: uma lib que
-exercita as próprias invariantes pela própria API pública não precisa de ninguém.
+**`AuthenticatableTest` builds its own objects, and not out of carelessness.** Using the shared fixture
+would make `libs/users` depend on a module that depends ON IT, and the Maven reactor refuses — it does
+not distinguish test scope when detecting a cycle. What is left is better than the workaround: a lib
+exercising its own invariants through its own public API needs nobody.
 
-### `apps/tagging` tinha ZERO teste, e agora tem três níveis
+### `apps/tagging` had ZERO tests, and now has three levels
 
-| arquivo | nível | o que ele pega |
+| file | level | what it catches |
 |---|---|---|
-| `CompletePostWithDefaultTagCommandTest` | unidade, sem Quarkus | a DECISÃO: tag padrão, versão 2, e a terceira guarda contra entrega duplicada |
-| `TaggingWiringTest` | `@QuarkusTest` | a FIAÇÃO: o que falha em silêncio |
-| `TagDecisionE2ETest` | `@QuarkusTest` | o CAMINHO inteiro, do byte de entrada ao envelope de saída |
+| `CompletePostWithDefaultTagCommandTest` | unit, no Quarkus | the DECISION: default tag, version 2, and the third guard against duplicate delivery |
+| `TaggingWiringTest` | `@QuarkusTest` | the WIRING: what fails silently |
+| `TagDecisionE2ETest` | `@QuarkusTest` | the whole PATH, from the inbound byte to the outbound envelope |
 
-**O caminho inteiro sem broker, e isso não é dublagem.** Três linhas de `%test.` trocam o conector do
-RabbitMQ pelo `smallrye-in-memory`. O que muda é só o TRANSPORTE: a ingestão continua desserializando
-o envelope de verdade, apendando no event store de verdade e acionando o processor de verdade, e a
-saída continua passando pelo `OutboxRouting` e por uma `ChannelAddressing`. O teste empurra um
-`byte[]` na entrada e LÊ o envelope que saiu.
+**The whole path with no broker, and that is not doubling.** Three `%test.` lines swap the RabbitMQ
+connector for `smallrye-in-memory`. What changes is only the TRANSPORT: ingestion still deserializes the
+real envelope, appends to the real event store and fires the real processor, and the outbound side still
+goes through `OutboxRouting` and a `ChannelAddressing`. The test pushes a `byte[]` in and READS the
+envelope that came out.
 
-**O guarda de fiação daqui é mais severo que o do outro app.** Lá, um pacote fora de
-`subscribingprocessor.namespaces` cai num pooled anônimo e vira eventualmente consistente. Aqui o
-`PooledEventProcessingConfigurer` está excluído — não há pooled para onde cair, e o handler
-simplesmente NÃO RODA. A saga para na versão 1 e nada no log diz por quê.
+**The wiring guard here is stricter than the other app's.** There, a package outside
+`subscribingprocessor.namespaces` falls into an anonymous pooled processor and becomes eventually
+consistent. Here `PooledEventProcessingConfigurer` is excluded — there is no pooled processor to fall
+into, and the handler simply DOES NOT RUN. The saga stops at version 1 and nothing in the log says why.
 
-### `libs/axon-native-support` tinha ZERO teste — e era o módulo com mais a perder
+### `libs/axon-native-support` had ZERO tests — and was the module with the most to lose
 
-Ele não tinha nenhum, e é o que mais precisava: **nenhuma das falhas que ele previne aparece na JVM**,
-e três das quatro só aparecem em RUNTIME, na AWS, com mensagens que apontam para o lugar errado.
+It had none, and it is the one that needed them most: **none of the failures it prevents appears on the
+JVM**, and three of the four appear only at RUNTIME, on AWS, with messages that point at the wrong place.
 
-`AxonNativeImageProcessorTest` indexa as classes de `Fixtures` com o **Jandex de verdade** — o mesmo do
-augmentation — e chama os `@BuildStep` direto, coletando o que eles produzem. Não há Quarkus subindo:
-um build step é um método, e o que ele devolve é um objeto. O `BuildProducer` é uma interface de um
-método só, então o teste coleta com um duplo de cinco linhas.
+`AxonNativeImageProcessorTest` indexes the `Fixtures` classes with the **real Jandex** — the same one
+augmentation uses — and calls the `@BuildStep` methods directly, collecting what they produce. There is
+no Quarkus starting up: a build step is a method, and what it returns is an object. `BuildProducer` is a
+single-method interface, so the test collects with a five-line double.
 
-Os fixtures são as formas do domínio real, reduzidas, e cada uma existe por uma falha que já
-aconteceu — em especial um evento com um record ANINHADO dentro de um `List<>`, que é exatamente a
-forma que parou a saga na versão 1 com o contador `Errors` do Lambda em ZERO e as filas vazias.
+The fixtures are the real domain's shapes, reduced, and each one exists because of a failure that has
+already happened — in particular an event with a NESTED record inside a `List<>`, which is exactly the
+shape that stopped the saga at version 1 with Lambda's `Errors` counter at ZERO and the queues empty.
 
-**Provado que os testes NÃO são vazios:** comentando o `types.addAll(composedTypesOf(types, index))`,
-falham exatamente `registersTypesNestedInsideAMessagePayload` e
-`theClosureIsTransitiveAndNotOneLevelDeep` — os dois daquela falha, e só eles.
+**Proven that the tests are NOT empty:** commenting out `types.addAll(composedTypesOf(types, index))`
+fails exactly `registersTypesNestedInsideAMessagePayload` and
+`theClosureIsTransitiveAndNotOneLevelDeep` — the two from that failure, and only those.
 
-O módulo saiu de **0% (invisível, sem relatório) para 88,7%**.
+The module went from **0% (invisible, with no report) to 88.7%**.
 
-**O Axon entra no pom do deployment só em `<scope>test</scope>`, e para os FIXTURES.** O processor não
-depende do Axon para compilar: ele trabalha sobre o índice e nomeia as anotações por `DotName`, como
-string. Mas um teste honesto precisa de classes anotadas DE VERDADE para indexar — senão estaria
-afirmando sobre um índice que ele mesmo inventou.
+**Axon enters the deployment pom only in `<scope>test</scope>`, and for the FIXTURES.** The processor
+does not depend on Axon to compile: it works over the index and names the annotations by `DotName`, as
+strings. But an honest test needs REAL annotated classes to index — otherwise it would be asserting
+about an index it invented itself.
 
-### COBERTURA: 60,3%, e o número anterior era mais bonito porque MENTIA
+### COVERAGE: 60.3%, and the previous number was prettier because it LIED
 
-`quarkus-jacoco` nos dois apps, `jacoco-maven-plugin` (do pom raiz) nas libs — e `<skip>` do segundo
-nos apps, porque dois agentes no mesmo módulo dão dois `.exec` que não somam.
+`quarkus-jacoco` in both apps, `jacoco-maven-plugin` (from the root pom) in the libs — and `<skip>` for
+the second in the apps, because two agents in the same module produce two `.exec` files that do not sum.
 
-**Ligar a cobertura das libs BAIXOU o total de 64,3% para 60,3%, e essa queda é a notícia:**
-`libs/axon-channels` (1378 instruções) e `libs/axon-aws` (219) não tinham teste nenhum, então não
-geravam relatório — e o que não gera relatório não entra no denominador. Eram 1597 instruções
-invisíveis.
+**Turning on coverage for the libs LOWERED the total from 64.3% to 60.3%, and that drop is the news:**
+`libs/axon-channels` (1378 instructions) and `libs/axon-aws` (219) had no tests at all, so they generated
+no report — and what generates no report does not enter the denominator. That was 1597 invisible
+instructions.
 
 ```
 libs/axon-channels   19.2%      apps/tagging      43.2%
@@ -1987,713 +2127,729 @@ libs/platform        46.8%      libs/posts        76.9%
 libs/users           43.9%      TOTAL             60.3%
 ```
 
-### MOCKITO: onde ele entra, e onde ele deliberadamente NÃO entra
+### MOCKITO: where it goes in, and where it deliberately does NOT
 
-- **NÃO no domínio.** `PostTest`, `TagTest` e `AuthenticatableTest` seguem sem mock nenhum. O domínio
-  decide sozinho, e o único colaborador dele é uma porta que um lambda de três linhas dubla melhor
-  que qualquer framework. Mock ali acoplaria o teste à FORMA da chamada em vez de ao resultado dela.
-- **SIM na infraestrutura.** `EventAddress` lê um `EventMessage` — tipo de biblioteca, com um punhado
-  de métodos que este código não usa. Implementá-lo à mão seriam trinta linhas que ninguém lê para
-  afirmar duas.
-- **`quarkus-junit5-mockito` nos apps**, e não `mockito-core` puro: ele traz o `@InjectMock`, que
-  SUBSTITUI um bean do CDI dentro de um `@QuarkusTest` — a diferença entre testar o grafo de verdade
-  com uma peça trocada e testar uma peça sozinha.
+- **NOT in the domain.** `PostTest`, `TagTest` and `AuthenticatableTest` still use no mocks. The domain
+  decides on its own, and its only collaborator is a port that a three-line lambda doubles better than
+  any framework. A mock there would couple the test to the SHAPE of the call instead of to its result.
+- **YES in infrastructure.** `EventAddress` reads an `EventMessage` — a library type, with a handful of
+  methods this code does not use. Implementing it by hand would be thirty lines nobody reads in order to
+  assert two.
+- **`quarkus-junit5-mockito` in the apps**, and not plain `mockito-core`: it brings `@InjectMock`, which
+  REPLACES a CDI bean inside a `@QuarkusTest` — the difference between testing the real graph with one
+  piece swapped and testing a piece on its own.
 
-**O alvo `test-unit` roda `clean`, e foi medido duas vezes.** Sem ele, depois de uma série de
-`package` falhados a suíte passa a falhar com `NoClassDefFoundError` no `FacadeClassLoader` do
-Quarkus (2 de 2), e volta a passar com `clean`. Custa ~9s no cache MISS; no hit o comando nem roda.
+**The `test-unit` target runs `clean`, and it was measured twice.** Without it, after a series of failed
+`package` runs the suite starts failing with `NoClassDefFoundError` in Quarkus's `FacadeClassLoader`
+(2 out of 2), and passes again with `clean`. It costs ~9s on a cache MISS; on a hit the command does not
+even run.
 
-### DOIS COMANDOS, UM ALVO POR MÓDULO — o Nx orquestra, o Maven executa
+### TWO COMMANDS, ONE TARGET PER MODULE — Nx orchestrates, Maven executes
 
 ```
-pnpm test       nx run-many -t test         → 10 projetos (9 Maven + o `web`)
-pnpm test:e2e   nx run-many -t test:e2e --parallel=1   → 3 projetos
+pnpm test       nx run-many -t test         → 10 projects (9 Maven + `web`)
+pnpm test:e2e   nx run-many -t test:e2e --parallel=1   → 3 projects
 ```
 
-**Nenhum dos dois lista ninguém.** Cada módulo com teste declara o próprio alvo, e o `run-many`
-resolve. Antes era UM alvo em `apps/posts-api` que rodava `./mvnw test` da raiz: os 190 testes rodavam,
-mas o Nx enxergava um projeto só — sem cache por módulo e sem `affected`.
+**Neither one lists anybody.** Every module with tests declares its own target, and `run-many` resolves
+it. It used to be ONE target in `apps/posts-api` running `./mvnw test` from the root: the 190 tests ran,
+but Nx saw a single project — with no per-module cache and no `affected`.
 
-#### O LADO JAVASCRIPT NÃO DECLARA ALVO NENHUM: quem o infere é o `@nx/vitest`
+#### THE JAVASCRIPT SIDE DECLARES NO TARGET: `@nx/vitest` infers it
 
-Do lado Maven o alvo é escrito à mão em cada `project.json`, porque o `@nx/maven` não sabe o que é
-"o nível de baixo". Do lado JavaScript não é: o `@nx/vitest` cria o alvo a partir do
-`vitest.config`, com comando, `cwd`, cache, `outputs` de cobertura e — o que mais importa — os
-`inputs` certos, incluindo `{ "externalDependencies": ["vitest"] }` e `{ "env": "CI" }`. Esse
-segundo não é detalhe: os dois configs escolhem o reporter por `process.env.CI`, e sem ele um
-resultado cacheado na máquina seria REPLAYADO na esteira, sem nunca escrever o XML do junit.
+On the Maven side the target is hand-written in each `project.json`, because `@nx/maven` does not know
+what "the lower level" is. On the JavaScript side it is not: `@nx/vitest` creates the target from the
+`vitest.config`, with the command, `cwd`, cache, coverage `outputs` and — what matters most — the right
+`inputs`, including `{ "externalDependencies": ["vitest"] }` and `{ "env": "CI" }`. The second one is not
+a detail: both configs choose the reporter by `process.env.CI`, and without it a result cached on the
+machine would be REPLAYED in the pipeline, never writing the junit XML.
 
-**É `@nx/vitest` e não `@nx/vite`.** Desde o Nx 23.2 o Vitest tem pacote próprio, e é o que serve a
-um projeto que só TESTA com Vite. Nenhum dos dois apps JS constrói com Vite — o `web` constrói com o
-Next e o `posts-api-e2e` não constrói nada.
+**It is `@nx/vitest` and not `@nx/vite`.** Since Nx 23.2 Vitest has its own package, and it is the one
+that serves a project that only TESTS with Vite. Neither JS app builds with Vite — `web` builds with
+Next and `posts-api-e2e` builds nothing.
 
-**São DUAS registrações no `nx.json`, e a divisão é a mesma que separa os dois comandos:**
+**There are TWO registrations in `nx.json`, and the split is the same one that separates the two
+commands:**
 
-| registração | escopo | alvo |
+| registration | scope | target |
 |---|---|---|
-| `testTargetName: "test"` | `exclude: ["apps/posts-api-e2e/**"]` | o nível de baixo — hoje só o `web` |
-| `testTargetName: "test:e2e"` | `include: ["apps/posts-api-e2e/**"]` | a saga entre processos |
+| `testTargetName: "test"` | `exclude: ["apps/posts-api-e2e/**"]` | the lower level — today only `web` |
+| `testTargetName: "test:e2e"` | `include: ["apps/posts-api-e2e/**"]` | the cross-process saga |
 
-Sem a segunda, o app da saga ganharia um alvo chamado `test` e `pnpm test` passaria a subir dois
-JVMs e um broker — calado, porque o comando continuaria verde, só que dez vezes mais lento. A
-primeira é a que faz um `vitest.config` novo em qualquer outro projeto nascer JÁ no nível certo,
-sem ninguém editar o `nx.json`.
+Without the second one, the saga app would get a target called `test` and `pnpm test` would start
+bringing up two JVMs and a broker — silently, because the command would stay green, just ten times
+slower. The first one is what makes a new `vitest.config` in any other project be born AT the right
+level, with nobody editing `nx.json`.
 
-**`testMode: "run"` nas duas, e não o default `watch`.** Com o default o comando inferido é
-`vitest` puro, que só roda uma vez quando `CI` está setada — na máquina, `pnpm test` entraria em
-modo observador e NUNCA terminaria. Quem quiser observar roda
-`pnpm --filter @axonposts/web exec vitest`.
+**`testMode: "run"` on both, and not the `watch` default.** With the default the inferred command is
+plain `vitest`, which only runs once when `CI` is set — on the machine, `pnpm test` would enter watch
+mode and NEVER finish. Whoever wants to watch runs `pnpm --filter @axonposts/web exec vitest`.
 
-**O que sobra no `project.json` é só o que o plugin não tem como saber**: o `dependsOn` (`codegen`
-no `web`, `build` no `posts-api-e2e`) e o `outputs` do XML do junit — o plugin deduz o diretório de
-COBERTURA a partir do config, e o `outputFile` dos reporters ele não lê.
+**What is left in `project.json` is only what the plugin has no way to know**: the `dependsOn`
+(`codegen` in `web`, `build` in `posts-api-e2e`) and the junit XML `outputs` — the plugin deduces the
+COVERAGE directory from the config, and the reporters' `outputFile` it does not read.
 
-**Cuidado ao declarar `inputs` ali: eles SUBSTITUEM os inferidos, não somam.** É por isso que o
-`test:e2e` repete `externalDependencies` e `CI` ao lado do `quarkusStack` que só ele precisa. O
-`web` não declara `inputs` nenhum, e é o caso normal.
+**Careful when declaring `inputs` there: they REPLACE the inferred ones, they do not add.** That is why
+`test:e2e` repeats `externalDependencies` and `CI` next to the `quarkusStack` only it needs. `web`
+declares no `inputs`, and that is the normal case.
 
-| | antes | agora |
+| | before | now |
 |---|---|---|
-| execução a frio | 1m17 | 1m32 |
-| **sem mexer em nada** | 1m17 | **8,1s** (95% de cache) |
-| **mexendo numa lib** | 1m17 | **8,8s** (97% de cache) |
+| cold run | 1m17 | 1m32 |
+| **with nothing changed** | 1m17 | **8.1s** (95% cache) |
+| **after touching a lib** | 1m17 | **8.8s** (97% cache) |
 
-O custo é 15s a mais na primeira vez; o ganho é o dia inteiro de trabalho depois dela.
+The cost is 15s more the first time; the gain is the whole working day after it.
 
-**QUEM PUBLICA NO `~/.m2` É O NX.** `-pl <módulo>` resolve as dependências do repositório local, não
-do reator — então elas precisam estar instaladas. Isso é `dependsOn: ["^mvn-install"]`, o alvo
-INFERIDO pelo `@nx/maven`: a ordem vem do grafo, não de uma lista escrita à mão.
+**NX IS WHAT PUBLISHES INTO `~/.m2`.** `-pl <module>` resolves dependencies from the local repository,
+not from the reactor — so they have to be installed. That is `dependsOn: ["^mvn-install"]`, the target
+INFERRED by `@nx/maven`: the order comes from the graph, not from a hand-written list.
 
-**`targetNamePrefix: "mvn-"` é o que torna tudo isso possível**, e ele resolve de uma vez a família de
-armadilhas que esta seção documentava. Com os alvos inferidos prefixados (`mvn-test`, `mvn-install`,
-`mvn-package`), um alvo `test` declarado à mão não tem com o que colidir — nem no módulo, nem na
-RAIZ, onde o `test` inferido rodava o reator inteiro e duplicava tudo.
+**`targetNamePrefix: "mvn-"` is what makes all of this possible**, and it resolves in one go the family
+of traps this section used to document. With the inferred targets prefixed (`mvn-test`, `mvn-install`,
+`mvn-package`), a hand-declared `test` target has nothing to collide with — neither in the module, nor at
+the ROOT, where the inferred `test` ran the whole reactor and duplicated everything.
 
-**`-pl` FUNCIONA para `test`**, e isto corrige o que estava escrito mais acima: a validação do
-`quarkus-extension-maven-plugin` só atinge os goals de BUILD. Medido — `-pl apps/posts-api` roda os 56
-testes em 26s, `-pl libs/axon-channels` roda 19 em 2,3s.
+**`-pl` WORKS for `test`**, and this corrects what is written further up: the
+`quarkus-extension-maven-plugin` validation only hits BUILD goals. Measured — `-pl apps/posts-api` runs
+the 56 tests in 26s, `-pl libs/axon-channels` runs 19 in 2.3s.
 
-**E não há mais `build-env.sh` na frente de nada disso.** Ver a próxima seção.
+**And there is no longer a `build-env.sh` in front of any of this.** See the next section.
 
-#### O `~/.m2` FRIO é um ambiente diferente, e ele só existe na ESTEIRA e no clone novo
+#### A COLD `~/.m2` is a different environment, and it only exists in CI and on a fresh clone
 
-Três coisas quebravam aqui e NENHUMA aparece na máquina de quem já rodou `./mvnw install` uma vez —
-porque o que falta é sempre um artefato que aquele comando deixou no repositório local anos-luz atrás.
-Foi a primeira execução da esteira que as revelou, as três de uma vez, e as três com mensagem que
-aponta para o lugar errado:
+Three things broke here and NONE of them shows up on the machine of somebody who has run `./mvnw
+install` once — because what is missing is always an artifact that command left in the local repository
+ages ago. It was CI's first run that revealed them, all three at once, and all three with a message that
+points at the wrong place:
 
-| o que falta | o que a mensagem diz | onde se conserta |
+| what is missing | what the message says | where it is fixed |
 |---|---|---|
-| o POM PAI | `Could not find artifact dev.manuelantunes:quarkus-axon-graphql:pom (absent)`, dentro de um `Could not collect dependencies for project axonposts-users` | `root:publish-local`, no `project.json` da RAIZ |
-| o artefato de DEPLOYMENT da extensão | `Deployment artifact ...-deployment is missing the following dependencies: axon-native-support::jar, quarkus-core-deployment::jar` | o `-pl` do `axon-native-support`, que passou a levar o PAR |
-| `apps/web/src/gql` | `Cannot find module '@/gql'` mais 44 erros em cascata de `implicitly has an 'any' type` | `dependsOn: ["codegen"]` no `typecheck` do `web` |
+| the PARENT POM | `Could not find artifact dev.manuelantunes:quarkus-axon-graphql:pom (absent)`, inside a `Could not collect dependencies for project axonposts-users` | `root:publish-local`, in the ROOT's `project.json` |
+| the extension's DEPLOYMENT artifact | `Deployment artifact ...-deployment is missing the following dependencies: axon-native-support::jar, quarkus-core-deployment::jar` | the `-pl` for `axon-native-support`, which now takes the PAIR |
+| `apps/web/src/gql` | `Cannot find module '@/gql'` plus 44 cascading `implicitly has an 'any' type` errors | `dependsOn: ["codegen"]` on `web`'s `typecheck` |
 
-**O POM pai não é dependência de ninguém, e é de TODO mundo.** `-pl libs/users` resolve
-`axonposts-platform` do `~/.m2` — e ler o DESCRITOR daquele artefato exige o pai que o POM dele
-declara. Ninguém instalava o pai, porque `-pl <módulo>` nunca o inclui no reator. Quem o instala agora
-é `./mvnw install -N -DskipTests -q`, não-recursivo, num alvo do projeto `root`. **Não há lista
-escrita à mão ligando esse alvo ao resto**: o `@nx/maven` já põe uma aresta de TODO módulo para
-`root` — é a relação de parent do POM —, então o `dependsOn: ["^publish-local"]` que cada módulo já
-tinha alcança o alvo novo e a ordem continua vindo do grafo.
+**The parent POM is nobody's dependency, and it is EVERYBODY's.** `-pl libs/users` resolves
+`axonposts-platform` from `~/.m2` — and reading that artifact's DESCRIPTOR requires the parent its POM
+declares. Nobody installed the parent, because `-pl <module>` never includes it in the reactor. What
+installs it now is `./mvnw install -N -DskipTests -q`, non-recursive, in a `root` project target.
+**There is no hand-written list tying that target to the rest**: `@nx/maven` already puts an edge from
+EVERY module to `root` — that is the POM parent relationship — so the `dependsOn: ["^publish-local"]`
+each module already had reaches the new target and the order still comes from the graph.
 
-**A validação da extensão não exige o reator inteiro: exige o PAR.** É a mesma do aviso lá de cima
-(`-pl` não serve para os goals de build), e ela roda no artefato de RUNTIME, conferindo o que o de
-DEPLOYMENT declara. Com o deployment fora do reator e fora do `~/.m2`, não há de onde resolvê-lo. Daí
-`-pl libs/axon-native-support/runtime,libs/axon-native-support/deployment` — os dois no mesmo comando,
-que é o mínimo que a validação aceita.
+**The extension's validation does not require the whole reactor: it requires the PAIR.** It is the same
+one from the warning at the top (`-pl` does not serve build goals), and it runs on the RUNTIME artifact,
+checking what the DEPLOYMENT one declares. With the deployment outside the reactor and outside `~/.m2`,
+there is nowhere to resolve it from. Hence
+`-pl libs/axon-native-support/runtime,libs/axon-native-support/deployment` — both in the same command,
+which is the minimum the validation accepts.
 
-**E `src/gql/` é gerado e gitignored**, então o `typecheck` do cliente afirmava sobre um diretório que
-só existe depois de um `pnpm dev` ou `pnpm build`. O `build` roda o codegen por dentro e por isso nunca
-notou; quem confere SEM construir precisava dizer no grafo que depende dele.
+**And `src/gql/` is generated and gitignored**, so the client's `typecheck` was asserting about a
+directory that only exists after a `pnpm dev` or `pnpm build`. `build` runs codegen internally and so
+never noticed; whoever checks WITHOUT building had to say in the graph that it depends on it.
 
-**MEDIDO, com `~/.m2/repository/dev/manuelantunes` apagado — que é exatamente o estado da esteira**:
-`pnpm test` passa, 15 tarefas em 57s, com o `root:publish-local` na frente das outras oito.
+**MEASURED, with `~/.m2/repository/dev/manuelantunes` deleted — which is exactly CI's state**:
+`pnpm test` passes, 15 tasks in 57s, with `root:publish-local` ahead of the other eight.
 
-### O `build-env.sh` FOI APAGADO — e o que ele sabia está aqui
+### `build-env.sh` WAS DELETED — and what it knew is here
 
-Ele existia porque o `JAVA_HOME` desta máquina estava errado para tudo que não fosse um terminal: a
-linha morava no `~/.zshrc`, que o zsh lê **só em shell interativo**. O Nx, a IDE e qualquer script
-nasciam de um shell não-interativo, não viam aquela linha e herdavam um JDK 17 do processo pai.
+It existed because this machine's `JAVA_HOME` was wrong for everything that was not a terminal: the line
+lived in `~/.zshrc`, which zsh reads **only in an interactive shell**. Nx, the IDE and any script were
+born from a non-interactive shell, did not see that line and inherited a JDK 17 from the parent process.
 
-**Os dois consertos que o substituíram, os dois fora do código:**
+**The two fixes that replaced it, both outside the code:**
 
-1. **`JAVA_HOME` e `GRAALVM_HOME` foram para o `~/.zshenv`**, que o zsh lê em TODA invocação. É o que
-   fez o `./mvnw` funcionar sem prefixo nenhum e destravou os alvos inferidos do `@nx/maven`;
-2. **`sudo xcode-select --switch /Library/Developer/CommandLineTools`**, porque o `cc` que vinha do
-   `Xcode.app` nem carregava (`dlopen(libxcodebuildLoader.dylib): Symbol not found: _XPCTypeBool`).
-   Com a troca, o `cc` do sistema voltou a funcionar e o `PATH` que o script injetava deixou de ser
-   necessário.
+1. **`JAVA_HOME` and `GRAALVM_HOME` moved to `~/.zshenv`**, which zsh reads on EVERY invocation. That is
+   what made `./mvnw` work with no prefix and unblocked the `@nx/maven` inferred targets;
+2. **`sudo xcode-select --switch /Library/Developer/CommandLineTools`**, because the `cc` coming from
+   `Xcode.app` did not even load (`dlopen(libxcodebuildLoader.dylib): Symbol not found: _XPCTypeBool`).
+   With the switch, the system `cc` works again and the `PATH` the script injected stopped being
+   necessary.
 
-**O que a troca do `xcode-select` NÃO resolveu, e virou um perfil do Maven:** o `xcrun` passou a
-entregar o **SDK 27** por default, e o `ld` das Command Line Tools não o digere —
+**What the `xcode-select` switch did NOT solve, and became a Maven profile:** `xcrun` started handing
+over **SDK 27** by default, and the Command Line Tools' `ld` cannot digest it —
 
 ```
 /Library/Developer/CommandLineTools/SDKs/MacOSX27.0.sdk/usr/lib/libSystem.B.tbd:4:20:
 error: unknown architecture
 ```
 
-O conserto é o `-isysroot` apontando para o **symlink** `MacOSX.sdk` (hoje → 26.5; symlink e não
-versão fixa, para não quebrar na próxima atualização das CLT). Isso é propriedade do Quarkus, então
-mora no perfil **`native-clt-toolchain`**, que os DOIS apps agora têm, e que a configuração `native`
-dos alvos `lambda-*` ativa. **Não** vai na `native-container`: lá a compilação é dentro do builder
-image do Mandrel, onde esse caminho não existe.
+The fix is `-isysroot` pointing at the **symlink** `MacOSX.sdk` (today → 26.5; a symlink and not a fixed
+version, so it does not break on the next CLT update). That is a Quarkus property, so it lives in the
+**`native-clt-toolchain`** profile, which BOTH apps now have, and which the `lambda-*` targets' `native`
+configuration activates. It does **not** go into `native-container`: there the compilation happens inside
+the Mandrel builder image, where that path does not exist.
 
-**As três checagens que o script fazia e que NÃO viraram código**, porque eram diagnóstico e não
-conserto — ficam aqui, que é onde alguém procura quando a mensagem não ajuda:
+**The three checks the script did and that did NOT become code**, because they were diagnosis and not
+fixes — they stay here, which is where somebody looks when the message does not help:
 
-| sintoma | o que é de verdade |
+| symptom | what it really is |
 |---|---|
-| `exit 137` no `[1/8] Initializing`, sem falar em memória | o Docker tem menos de ~12 GiB para o build em container |
-| `Unable to detect supported DARWIN native software development toolchain` | o `cc` do sistema não carrega — é o Xcode, e a saída é o `xcode-select` acima |
-| `error: release version 21 not supported`, ou `class file version 65.0 ... up to 61.0` | `JAVA_HOME` veio de um shell não-interativo. A linha tem de estar no `~/.zshenv`, nunca só no `~/.zshrc` |
-| `libSystem.B.tbd: error: unknown architecture` | o SDK default não serve; é o `-Pnative-clt-toolchain` que falta |
+| `exit 137` in `[1/8] Initializing`, with no mention of memory | Docker has less than ~12 GiB for the container build |
+| `Unable to detect supported DARWIN native software development toolchain` | the system `cc` does not load — it is Xcode, and the way out is the `xcode-select` above |
+| `error: release version 21 not supported`, or `class file version 65.0 ... up to 61.0` | `JAVA_HOME` came from a non-interactive shell. The line has to be in `~/.zshenv`, never only in `~/.zshrc` |
+| `libSystem.B.tbd: error: unknown architecture` | the default SDK does not serve; it is the missing `-Pnative-clt-toolchain` |
 
-### Os `*NativeIT` DIZEM o que precisam, em vez de estourar no framework
+### The `*NativeIT` classes SAY what they need, instead of blowing up in the framework
 
-Um `@QuarkusIntegrationTest` é caixa-preta: ele não sobe a aplicação em processo, executa o BINÁRIO que
-o `package` produziu. Rodado sem esse binário — clicando a classe na IDE — a falha era
+A `@QuarkusIntegrationTest` is black-box: it does not start the application in-process, it executes the
+BINARY that `package` produced. Run without that binary — by clicking the class in the IDE — the failure
+was
 
 ```
 IllegalStateException: Unable to locate the artifact metadata file created that must be
 created by Quarkus in order to run integration tests.
 ```
 
-Tecnicamente correta e praticamente inútil: não diz QUAL comando produz o artefato, e aparece como
-ERRO, o que sugere defeito no código — quando o código não foi nem executado.
+Technically correct and practically useless: it does not say WHICH command produces the artifact, and it
+appears as an ERROR, which suggests a defect in the code — when the code was never executed.
 
-`@RequiresNativeArtifact` é uma `ExecutionCondition` do JUnit que procura
-`target/quarkus-artifact.properties` e, não achando, **SALTA com a razão escrita**, incluindo a linha
-de comando que constrói. A condição roda ANTES do `beforeAll` da extensão do Quarkus, então a tentativa
-de boot nem acontece; a razão vai para o XML do surefire, que é o que a IDE mostra ao lado do teste.
+`@RequiresNativeArtifact` is a JUnit `ExecutionCondition` that looks for
+`target/quarkus-artifact.properties` and, not finding it, **SKIPS with the reason written out**,
+including the command line that builds it. The condition runs BEFORE the Quarkus extension's `beforeAll`,
+so the boot attempt never happens; the reason goes into the surefire XML, which is what the IDE shows
+next to the test.
 
-**Saltar e não falhar, porque não há o que afirmar.** Um teste sem sujeito não está falhando, está
-fora de contexto. E isso NÃO esconde regressão: no fluxo que importa o artefato sempre existe — quem
-roda os `*IT` é o failsafe, na fase `integration-test`, depois do `package`, e só com o perfil
-`native`, que é o que vira o `skipITs` para `false`. Lá a condição nunca salta.
+**Skipping and not failing, because there is nothing to assert.** A test with no subject is not failing,
+it is out of context. And this does NOT hide a regression: in the flow that matters the artifact always
+exists — the ones running the `*IT` classes are failsafe, in the `integration-test` phase, after
+`package`, and only with the `native` profile, which is what flips `skipITs` to `false`. There the
+condition never skips.
 
-### A MEDIÇÃO de statements é o MENOR de três execuções, e isso é o FIRST
+### The statement MEASUREMENT is the SMALLEST of three runs, and that is FIRST
 
-`BatchLoadingE2ETest` e `FederationEntitiesE2ETest` contam `PreparedStatement` para provar que o lote
-funciona. O `statisticsOfAQuietDatabase()` prova que o banco estava quieto ANTES da janela — e não que
-ele fica quieto DURANTE. O processor que notifica os assinantes é assíncrono e conta na MESMA
-`Statistics` (ela é da `SessionFactory`, não da sessão), então ele acorda no meio da medição.
+`BatchLoadingE2ETest` and `FederationEntitiesE2ETest` count `PreparedStatement`s to prove the batch
+works. `statisticsOfAQuietDatabase()` proves the database was quiet BEFORE the window — not that it stays
+quiet DURING it. The processor that notifies the subscribers is asynchronous and counts in the SAME
+`Statistics` (it belongs to the `SessionFactory`, not to the session), so it wakes up in the middle of the
+measurement.
 
-O sintoma era uma violação de REPEATABLE de manual: as mesmas classes passavam **3 de 3 isoladas** e
-falhavam com as oito ponta a ponta juntas —
-`dois autores custaram 7 statements contra 4 de um autor`. Com mais posts no event store o processor
-varre mais, e a chance de cair em cima da janela cresce: **o resultado passou a depender de quem mais
-estava rodando.**
+The symptom was a textbook REPEATABLE violation: the same classes passed **3 out of 3 in isolation** and
+failed with the eight end-to-end classes together —
+`two authors cost 7 statements against 4 for one author`. With more posts in the event store the
+processor sweeps more, and the chance of landing on the window grows: **the result came to depend on who
+else was running.**
 
-**O conserto vem de uma observação, não de uma tolerância:** o processor só ACRESCENTA. A consulta
-custa sempre o mesmo, e interferência só faz a conta subir — então o MENOR de várias execuções é o
-custo real. `cheapestStatementCount` faz três e fica com o mínimo.
+**The fix comes from an observation, not from a tolerance:** the processor only ADDS. The query always
+costs the same, and interference can only push the count up — so the SMALLEST of several runs is the real
+cost. `cheapestStatementCount` does three and keeps the minimum.
 
-E a propriedade continua intacta: um N+1 de verdade encarece TODAS as execuções, inclusive a mais
-barata — o mínimo sobe junto e a asserção quebra. **Três** porque com uma não há mínimo e com duas uma
-janela azarada em cada estraga as duas; a consulta é de leitura, repeti-la não muda estado.
+And the property stays intact: a real N+1 makes EVERY run more expensive, including the cheapest — the
+minimum goes up with it and the assertion breaks. **Three** because with one there is no minimum and with
+two an unlucky window in each ruins both; the query is read-only, repeating it changes no state.
 
-### `apps/posts-api-e2e`: a saga como APP, e não como script
+### `apps/posts-api-e2e`: the saga as an APP, not as a script
 
-O que era `docker/e2e/run.sh` é hoje um app de teste do Nx — Vitest e TypeScript, porque o teste da
-saga **já era** TypeScript (`saga-choreography.mjs`), e o que estava em shell era só a provisão. Os
-dois arquivos FORAM REMOVIDOS quando o app passou verde: a mesma saga afirmada em dois lugares é a
-mesma regra em dois lugares, e o primeiro ajuste as separa em silêncio.
+What used to be `docker/e2e/run.sh` is today an Nx test app — Vitest and TypeScript, because the saga
+test **already was** TypeScript (`saga-choreography.mjs`), and what was in shell was only the
+provisioning. Both files WERE REMOVED when the app went green: the same saga asserted in two places is
+the same rule in two places, and the first adjustment separates them silently.
 
-Ele declara `implicitDependencies` nos DOIS serviços, e é isso que o põe no grafo: mexer em
-`apps/tagging` invalida o artefato dele, e um `nx affected` o alcança sem ninguém listar nada.
+It declares `implicitDependencies` on BOTH services, and that is what puts it in the graph: touching
+`apps/tagging` invalidates its artifact, and an `nx affected` reaches it with nobody listing anything.
 
 ```
 apps/posts-api-e2e/
-  src/specs/     as SPECS, com sufixo `.e2e.spec.ts` — o sufixo diz o NÍVEL
-  src/support/   o MECANISMO: a stack, os dois processos, o event store, o broker, a borda
+  src/specs/     the SPECS, with the `.e2e.spec.ts` suffix — the suffix says the LEVEL
+  src/support/   the MECHANISM: the stack, the two processes, the event store, the broker, the edge
   src/global-setup.ts
 ```
 
-**A spec leva `.e2e.spec.ts` e mora em `src/specs/`**, e as duas coisas dizem a mesma: o `include` do
-Vitest é `src/specs/**/*.e2e.spec.ts`, então `src/support/` fica de fora do padrão de propósito — o
-que há lá é mecanismo, e mecanismo não é spec. Um nível novo (`*.integration.spec.ts`, digamos) entra
-como um `include` a mais, sem mover nada.
+**The spec carries `.e2e.spec.ts` and lives in `src/specs/`**, and both say the same thing: Vitest's
+`include` is `src/specs/**/*.e2e.spec.ts`, so `src/support/` falls outside the pattern on purpose — what
+is there is mechanism, and mechanism is not a spec. A new level (`*.integration.spec.ts`, say) goes in as
+one more `include`, with nothing moved.
 
-**EMPACOTAR saiu do teste.** O script fazia `clean package` "para medir o que um build do zero
-produz"; aqui isso é o alvo `build`, do qual o `test-e2e` depende, e quem garante o mesmo é o hash do
-CONTEÚDO das fontes que o Nx calcula. **E o `clean` não volta**, porque ele foi MEDIDO de novo
-neste recorte: seis empacotamentos idênticos, três com `clean` e três sem, deram **1 sucesso em 3 dos
-dois lados** — a intermitência do augmentation é a mesma com ou sem ele. É a confirmação
-independente do que a seção do `posts-api` já dizia ao descartar "estado sujo em `target/`". **UM alvo e não dois**, porque `-pl` não funciona neste reator:
-um `./mvnw package` produz os `quarkus-app` dos dois serviços, e dois alvos rodariam o reator inteiro
-duas vezes disputando `target/`.
+**PACKAGING left the test.** The script did a `clean package` "to measure what a from-scratch build
+produces"; here that is the `build` target, which `test-e2e` depends on, and what guarantees the same
+thing is the CONTENT hash Nx computes for the sources. **And the `clean` is not coming back**, because it
+was MEASURED again in this shape: six identical packagings, three with `clean` and three without, gave
+**1 success out of 3 on both sides** — augmentation's intermittency is the same with or without it. It is
+the independent confirmation of what the `posts-api` section already said when it ruled out "dirty state
+in `target/`". **ONE target and not two**, because `-pl` does not work in this reactor: a single
+`./mvnw package` produces both services' `quarkus-app`, and two targets would run the whole reactor twice
+fighting over `target/`.
 
-**E O ARTEFATO É COPIADO PARA O `target/` DESTE PROJETO, que é de onde o teste sobe os processos.** O
-Maven escreve em `apps/posts-api/target/quarkus-app`, que é o diretório de build de OUTRO módulo — e o
-`test:e2e` daquele módulo roda `./mvnw clean`. Rodando os dois níveis na mesma invocação, que é
-exatamente o que `pnpm test:e2e` faz, a ordem decidia o resultado: MEDIDO — `posts-api-e2e:build` ✔,
-`posts-api:test:e2e` ✔ (limpando), e a saga morrendo em
-`Unable to access jarfile .../apps/posts-api/target/quarkus-app/quarkus-run.jar`. **A mensagem não
-menciona `clean` em lugar nenhum**, e o alvo que apagou tinha passado. Com a cópia em
-`apps/posts-api-e2e/target/stack/`, a ordem entre os alvos deixa de importar e o `--parallel=1` volta a
-significar só o que sempre significou: dois Mavens não disputam o mesmo `target/`. Os `outputs` do
-alvo foram junto — um cache que restaura dentro do `target/` de outro módulo escreve por cima de quem
-é dono dele. O fast-jar é RELOCÁVEL (o `quarkus-run.jar` acha `lib/`, `app/` e `quarkus/` pelo próprio
-diretório), então nada no empacotamento mudou.
+**AND THE ARTIFACT IS COPIED INTO THIS PROJECT'S `target/`, which is where the test starts the processes
+from.** Maven writes into `apps/posts-api/target/quarkus-app`, which is ANOTHER module's build directory
+— and that module's `test:e2e` runs `./mvnw clean`. Running both levels in the same invocation, which is
+exactly what `pnpm test:e2e` does, the order decided the result: MEASURED — `posts-api-e2e:build` ✔,
+`posts-api:test:e2e` ✔ (cleaning), and the saga dying with
+`Unable to access jarfile .../apps/posts-api/target/quarkus-app/quarkus-run.jar`. **The message mentions
+`clean` nowhere**, and the target that deleted it had passed. With the copy in
+`apps/posts-api-e2e/target/stack/`, the order between the targets stops mattering and `--parallel=1` goes
+back to meaning only what it always meant: two Mavens do not fight over the same `target/`. The target's
+`outputs` went along with it — a cache that restores inside another module's `target/` writes over its
+owner. The fast-jar is RELOCATABLE (the `quarkus-run.jar` finds `lib/`, `app/` and `quarkus/` through its
+own directory), so nothing in the packaging changed.
 
-**Por que isso só apareceu agora:** enquanto o `^publish-local` falhava na esteira, o `test:e2e` dos
-dois apps Java nem rodava — o job passava pelo `build` e pela saga e morria antes. Consertado o
-`~/.m2` frio, o alvo que limpa passou a rodar, e o defeito que estava escondido atrás dele apareceu.
+**Why this only showed up now:** while `^publish-local` was failing in CI, neither Java app's `test:e2e`
+even ran — the job went through `build` and the saga and died before. With the cold `~/.m2` fixed, the
+target that cleans started running, and the defect hiding behind it appeared.
 
-**A prontidão é uma estratégia, não um `if`** (`support/service.ts`). O `posts-api` tem `/q/health`;
-o `tagging` **não tem porta nenhuma** — `quarkus-opentelemetry` depende de `quarkus-vertx` e não de
-`quarkus-vertx-http`, que é o que permite instrumentá-lo sem lhe dar um endpoint. O único sinal de que
-ele subiu é a linha no log dele. Duas respostas para a mesma pergunta é o que faz de `HttpHealth` e
-`LogLine` duas implementações de `Readiness`.
+**Readiness is a strategy, not an `if`** (`support/service.ts`). `posts-api` has `/q/health`; `tagging`
+has **no port at all** — `quarkus-opentelemetry` depends on `quarkus-vertx` and not on
+`quarkus-vertx-http`, which is what allows instrumenting it without giving it an endpoint. The only sign
+that it came up is the line in its log. Two answers to the same question is what makes `HttpHealth` and
+`LogLine` two implementations of `Readiness`.
 
-**`fileParallelism: false` e `singleFork`**: os testes disputariam o MESMO event store e o mesmo
-broker. Paralelismo aqui não acelera nada — ele muda o que está sendo medido. E `retry: 0`, pelo mesmo
-motivo: um teste que só passa na segunda tentativa esconde exatamente o que este app existe para medir.
+**`fileParallelism: false` and `singleFork`**: the tests would fight over the SAME event store and the
+same broker. Parallelism here speeds up nothing — it changes what is being measured. And `retry: 0`, for
+the same reason: a test that only passes on the second attempt hides exactly what this app exists to
+measure.
 
-**O `globalSetup` roda NOUTRO PROCESSO**, então o objeto que ele cria não atravessa para os testes.
-Não é problema: `ChoreographyStack` é uma fachada sem estado sobre o Docker e o HTTP, e o arquivo de
-teste constrói a dele olhando para a mesma stack. O que não atravessa é o processo filho de cada
-serviço — por isso quem os derruba é o `teardown` de lá.
+**`globalSetup` runs in ANOTHER PROCESS**, so the object it creates does not cross into the tests. Not a
+problem: `ChoreographyStack` is a stateless facade over Docker and HTTP, and the test file builds its own
+looking at the same stack. What does not cross is each service's child process — which is why the one
+tearing them down is the `teardown` over there.
 
+**`Service` honours `JAVA_HOME` before the PATH**, which is what Maven itself does — and ever since the
+variable moved to `~/.zshenv` both point at the same JDK, here and in any tool without a terminal.
+`vitest` once ran behind `build-env.sh` because of this and today runs directly, with `cwd` in the
+project.
 
-**`Service` honra `JAVA_HOME` antes do PATH**, que é o que o próprio Maven faz — e desde que a
-variável foi para o `~/.zshenv` as duas apontam para o mesmo JDK, aqui e em qualquer ferramenta sem
-terminal. O `vitest` já rodou atrás do `build-env.sh` por causa disso e hoje roda direto, com `cwd`
-no projeto.
+**The distinction still matters because of the FAILURE MODE, which is the worst there is:** MEASURED — a
+`quarkus-run.jar` compiled with `release 21` under a JDK 17 exits with **code 1 and an empty log**, with
+no `UnsupportedClassVersionError` and not a line on stderr. The symptom is indistinguishable from "the
+application died at startup", and the readiness wait took 120s to say nothing. Hence `Service`
+**reporting an early death**: a process `exit` interrupts the wait immediately, with the exit code and —
+when the log is empty — the sentence that points at the JDK.
 
-**A distinção continua importando pelo MODO DE FALHAR, que é o pior que há:** MEDIDO — um
-`quarkus-run.jar` compilado com `release 21` sob um JDK 17 sai com **código 1 e log vazio**, sem
-`UnsupportedClassVersionError` e sem uma linha em stderr. O sintoma é indistinguível de "a aplicação
-morreu na partida", e a espera de prontidão levava 120s para dizer nada. Daí `Service` **delatar a
-morte precoce**: um `exit` do processo interrompe a espera na hora, com o código de saída e — quando
-o log está vazio — a frase que aponta para o JDK.
+- **Pure domain** (`PostTest`, `TagTest`, `SoftDeletableTest`, `AuthenticatableTest`): no Axon, no CDI,
+  no JPA. The only collaborator is `RecordingDomainEvents`, a double of the domain's own port. These
+  tests crossed the conversion **without a line changed**.
+- **Command** (`*CommandTest`): `AxonTestFixture` given-when-then, one per command, with an in-memory
+  repository — which is how you prove the command saved, and what.
+- **Relay** (`ConnectionsTest`): cursor ↔ offset, type prefix, page ceiling and connection assembly. In
+  the Spring project that part belonged to the framework; here it is our code, so here it has a test.
+- **Schema** (`RelaySchemaTest`): reads the generated SDL and fails if `Connection_`/`Edge_` come back,
+  or if the `interface User` disappears. It is the guard for the generics mechanism, which no compiler
+  checks.
+- **Axon wiring** (`AxonWiringTest`): three things the extension decides by default and that this project
+  decides differently — the `TransactionManager`, each entity's id type, and the coverage of the
+  processor properties (`subscribingprocessor.namespaces` plus the `pooledprocessor.<name>` ones). The
+  first two hold by **absence** of `@DefaultBean` (disappearing breaks no compilation); the third sweeps
+  the `BeanManager` for `@EventHandler` and fails if any package was left out of BOTH lists — the
+  subscribing one and each named pooled one. Whoever is left out gets no error: it falls into an
+  anonymous pooled processor, with a JPA token store, and the delivery that package needed silently stops
+  applying.
+- **Federation** (`FederationSchemaTest`, `FederationEntitiesE2ETest`): the first reads
+  `_service { sdl }` — which is what `rover` would read, and where `@key`/`@shareable` appear, something
+  introspection does not show. The second calls the real `_entities`: it is the only place where a
+  renamed argument, an extra `@Id` or a `@NonNull` on the list element fails. It includes the cost, by
+  the same property as `BatchLoadingE2ETest`: N representations have to cost the same statements as 1.
+- **Cross-PROCESS** (`apps/posts-api-e2e`, via `pnpm test:e2e`): brings up the infrastructure, runs the
+  migrations out of process, packages, starts BOTH applications and asserts the whole saga — including
+  that each service's event store holds exactly the expected events (which is what would catch a resend
+  loop, as a growing count) and that redelivering the same message does not produce a second decision. It
+  is deliberately outside Surefire: what it proves is what a `@QuarkusTest` cannot assemble — two
+  processes, two event stores, one broker.
+- **End-to-end** (`e2e/*`): Dev Services brings up Postgres and Keycloak; a single application is shared
+  by every class. Each method starts with `truncate ... cascade` **including the Axon tables**: with a
+  persistent event store, clearing only the read model leaves incoherent state — the tag's row
+  disappears, the Tag aggregate's stream is still there, and the next `CreateTag` fails against an
+  aggregate that exists in the store and not in the projection. A subclass that adds `@TestProfile` gets
+  its own application and the suite pays for another startup.
+- **`@QuarkusTest` goes on each concrete class**, not on the `AbstractGraphQlE2ETest` base: it is the
+  annotation that registers the test class as a bean for its `@Inject` fields. Only on the base, every
+  subclass fails with "No bean found for required type".
+- The test realm is **the same file** compose mounts (`docker/keycloak/realm-*.json` lands on the
+  classpath through the pom's `<resources>`, and `quarkus.keycloak.devservices.realm-path` points at it)
+  — two copies would diverge silently.
+- `BatchLoadingE2ETest` measures the batch through Hibernate statistics: the same query with 1 and with 5
+  posts has to cost the **same number of statements** — the property, not a magic number.
+- An assertion about a gateway exception walks the **chain** (`PostCommandFixtures.hasCause`), not the
+  root: Quarkus delivered the raw exception where Spring delivered it wrapped — and with the extension it
+  comes back wrapped in a `CommandExecutionException`. Walking the chain is what survives both shapes;
+  AssertJ's `rootCause()` does not.
 
-- **Domínio puro** (`PostTest`, `TagTest`, `SoftDeletableTest`, `AuthenticatableTest`): sem Axon, sem CDI,
-  sem JPA. O único colaborador é `RecordingDomainEvents`, um duplo da porta do próprio domínio. Estes
-  testes atravessaram a conversão **sem uma linha alterada**.
-- **Command** (`*CommandTest`): `AxonTestFixture` given-when-then, um por command, com repositório em
-  memória — que é como se prova que o command salvou, e o quê.
-- **Relay** (`ConnectionsTest`): cursor ↔ offset, prefixo de tipo, teto de página e montagem da connection.
-  No projeto Spring essa parte era do framework; aqui é código nosso, então aqui tem teste.
-- **Schema** (`RelaySchemaTest`): lê o SDL gerado e falha se `Connection_`/`Edge_` voltarem a aparecer, ou
-  se a `interface User` sumir. É o guarda do mecanismo dos genéricos, que nenhum compilador confere.
-- **Wiring do Axon** (`AxonWiringTest`): três coisas que a extensão decide por default e que este projeto
-  decide diferente — o `TransactionManager`, o tipo do id de cada entidade, e a cobertura das
-  propriedades de processor (`subscribingprocessor.namespaces` mais os `pooledprocessor.<nome>`). As duas primeiras valem por **ausência** de `@DefaultBean` (sumir não
-  quebra compilação); a terceira varre o `BeanManager` atrás de `@EventHandler` e falha se algum pacote
-  ficou de fora das DUAS listas — a do subscribing e a de cada pooled nomeado. Quem fica de fora não dá
-  erro: cai num pooled anônimo, com token store JPA, e a entrega que aquele pacote precisava deixa de
-  valer em silêncio.
-- **Federação** (`FederationSchemaTest`, `FederationEntitiesE2ETest`): o primeiro lê o `_service { sdl }`
-  — que é o que o `rover` leria, e onde `@key`/`@shareable` aparecem, coisa que a introspecção não mostra.
-  O segundo chama o `_entities` de verdade: é o único lugar onde um argumento renomeado, um `@Id` a mais
-  ou um `@NonNull` no elemento da lista falham. Inclui o custo, pela mesma propriedade do
-  `BatchLoadingE2ETest`: N representações precisam custar os mesmos statements que 1.
-- **Entre PROCESSOS** (`apps/posts-api-e2e`, via `pnpm test:e2e`): sobe a infraestrutura, roda as migrations fora do processo,
-  empacota, sobe as DUAS aplicações e afirma a saga inteira — inclusive que o event store de cada serviço
-  tem exatamente os eventos esperados (é o que pegaria um laço de reenvio, como contagem crescendo) e que
-  reentregar a mesma mensagem não produz uma segunda decisão. Fica fora do Surefire de propósito: o que
-  ele prova é o que um `@QuarkusTest` não consegue montar — dois processos, dois event stores, um broker.
-- **Ponta a ponta** (`e2e/*`): Dev Services sobem Postgres e Keycloak; uma única aplicação é compartilhada
-  por todas as classes. Cada método começa com `truncate ... cascade` **incluindo as tabelas do
-  Axon**: com o event store persistente, limpar só o read model deixa estado incoerente — a linha da tag
-  some, o stream do agregado Tag continua lá, e o `CreateTag` seguinte falha contra um agregado que existe
-  no store e não na projeção. Uma subclasse que acrescente `@TestProfile` ganha aplicação própria e a suíte paga
-  outra subida.
-- **`@QuarkusTest` vai em cada classe concreta**, não na base `AbstractGraphQlE2ETest`: é a anotação que
-  registra a classe de teste como bean para os `@Inject` dela. Só na base, cada subclasse falha com
-  "No bean found for required type".
-- O realm de teste é **o mesmo arquivo** que o compose monta (`docker/keycloak/realm-*.json` entra no
-  classpath pelo `<resources>` do pom, e o `quarkus.keycloak.devservices.realm-path` o aponta) — duas
-  cópias divergiriam em silêncio.
-- `BatchLoadingE2ETest` afere o lote pela estatística do Hibernate: a mesma query com 1 e com 5 posts
-  precisa custar o **mesmo número de statements** — a propriedade, não um número mágico.
-- Asserção sobre exceção do gateway percorre a **cadeia** (`PostCommandFixtures.hasCause`), não a raiz: o
-  Quarkus entregava a exceção crua onde o Spring entregava embrulhada — e com a extensão ela volta
-  embrulhada numa `CommandExecutionException`. Percorrer a cadeia é o que sobrevive às duas formas;
-  `rootCause()` do AssertJ, não.
+## CI (`tools/github/` and `.github/workflows/`)
 
-## A esteira (`tools/github/` e `.github/workflows/`)
-
-**A REGRA: uma action principal, composta de subactions.** As subactions fazem uma coisa cada; os
-workflows não conhecem nenhuma delas, só a principal. Trocar como se roda um teste é mexer num
-arquivo, e nenhum workflow sabe que mudou.
+**THE RULE: one main action, composed of subactions.** The subactions do one thing each; the workflows
+know none of them, only the main one. Changing how a test runs means touching one file, and no workflow
+knows it changed.
 
 ```
 tools/github/
-  setup/        Node, pnpm, JDK e os dois caches (~/.m2 e .nx/cache)
-  test/         `pnpm test` + os relatórios do Surefire como artefato
-  test-e2e/     `pnpm test:e2e` + relatórios E OS LOGS DAS DUAS APLICAÇÕES
-  web/          lint, typecheck e build do cliente, num `run-many` só
-  deploy-sst/   o `sst deploy` e o GitHub Deployment  ← a subaction que já existia
-  ci/           A PRINCIPAL da integração: `setup` + as checagens pedidas
-  deploy/       A PRINCIPAL do deploy: `setup` + credenciais da AWS + `deploy-sst`
+  setup/        Node, pnpm, JDK and the two caches (~/.m2 and .nx/cache)
+  test/         `pnpm test` + the Surefire reports as an artifact
+  test-e2e/     `pnpm test:e2e` + reports AND BOTH APPLICATIONS' LOGS
+  web/          lint, typecheck and build of the client, in a single `run-many`
+  deploy-sst/   the `sst deploy` and the GitHub Deployment  ← the subaction that already existed
+  ci/           the integration MAIN: `setup` + the requested checks
+  deploy/       the deploy MAIN: `setup` + AWS credentials + `deploy-sst`
 .github/workflows/
-  ci.yml        três jobs, os três chamando `ci` com um `checks` diferente
-  deploy.yml    workflow_dispatch com o stage
+  ci.yml        three jobs, all three calling `ci` with a different `checks`
+  deploy.yml    workflow_dispatch with the stage
 ```
 
-**A action `ci` tem um input `checks`, e ele existe por um motivo estrutural.** Uma action composta
-roda num job só — então uma principal que fizesse as três checagens em sequência poria o lint do
-cliente web atrás de um nível que sobe Postgres, Keycloak, RabbitMQ e duas JVMs. Com o `checks`, o
-MESMO ponto de entrada serve a um job por checagem: paralelismo no workflow, e a preparação do
-ambiente declarada em um lugar só. `checks: all` também funciona, e é o que faz sentido num gancho
-local.
+**The `ci` action has a `checks` input, and it exists for a structural reason.** A composite action runs
+in a single job — so a main action doing the three checks in sequence would put the web client's lint
+behind a level that brings up Postgres, Keycloak, RabbitMQ and two JVMs. With `checks`, the SAME entry
+point serves one job per check: parallelism in the workflow, and the environment preparation declared in
+one place. `checks: all` also works, and it is what makes sense in a local hook.
 
-O casamento é com vírgulas nas pontas (`,${checks},`) e não com `contains` cru: sem elas, `test`
-casaria dentro de `test-e2e` e o nível de baixo rodaria junto com o de cima, calado.
+The match uses commas on both ends (`,${checks},`) and not a raw `contains`: without them, `test` would
+match inside `test-e2e` and the lower level would run along with the upper one, silently.
 
-**O JDK da esteira é o 21, e não o 25.** O `release` do projeto é 21, e este documento registra o
-augmentation do Quarkus 3.39 falhando de forma INTERMITENTE sob a JVM 25 — que ele não suporta. Numa
-esteira, intermitência é pior que lentidão.
+**CI's JDK is 21, and not 25.** The project's `release` is 21, and this document records Quarkus 3.39's
+augmentation failing INTERMITTENTLY under JVM 25 — which it does not support. In a pipeline,
+intermittency is worse than slowness.
 
-**O `test-e2e` derruba o compose ao fim (`down -v`), e o local não.** Na máquina os containers ficam
-de pé de propósito, para a próxima execução não pagar a subida; num runner efêmero isso não vale
-nada, e um volume sobrevivente entre jobs valeria menos ainda.
+**`test-e2e` tears compose down at the end (`down -v`), and the local one does not.** On the machine the
+containers stay up on purpose, so the next run does not pay for the startup; on an ephemeral runner that
+is worth nothing, and a surviving volume between jobs would be worth less still.
 
-**Não há passo de empacotamento antes do `deploy`.** Cada função declara o alvo do Nx que a empacota
-(`QuarkusBuild.buildCommand`, em `infra/aws/support/functions.ts`) e o `triggers` do Pulumi decide se
-o comando roda. Um `package.sh` antes do deploy construiria FORA do grafo, e o SST reconstruiria
-mesmo assim.
+**There is no packaging step before `deploy`.** Each function declares the Nx target that packages it
+(`QuarkusBuild.buildCommand`, in `infra/aws/support/functions.ts`) and Pulumi's `triggers` decides
+whether the command runs. A `package.sh` before the deploy would build OUTSIDE the graph, and SST would
+rebuild anyway.
 
-**E é por isso que o RUNNER do deploy é `ubuntu-24.04-arm` e o da CI não.** Quem constrói os quatro
-binários nativos é o próprio `sst deploy`, dentro do job — então a arquitetura do runner É a
-arquitetura do artefato. Os jobs da `ci.yml` não empacotam nada nativo e seguem em `ubuntu-latest`.
-A explicação inteira está em *O BINÁRIO NATIVO*; o resumo é que um runner x86_64 produzia um
-`bootstrap` amd64 para funções declaradas `arm64`.
+**And that is why the deploy RUNNER is `ubuntu-24.04-arm` and CI's is not.** What builds the four native
+binaries is `sst deploy` itself, inside the job — so the runner's architecture IS the artifact's
+architecture. The `ci.yml` jobs package nothing native and stay on `ubuntu-latest`. The full explanation
+is in *THE NATIVE BINARY*; the short version is that an x86_64 runner produced an amd64 `bootstrap` for
+functions declared `arm64`.
 
-**As credenciais do Better Stack são obrigatórias no deploy**, e vão pelo `GITHUB_ENV` e não por um
-`env:` no passo: assim todo passo seguinte as enxerga, inclusive os de dentro do `deploy-sst`. Na
-máquina elas vêm do `.env` da raiz, que o SST carrega sozinho; num runner não há `.env`, e
-`requiredEnv` FALHA o deploy — de propósito, porque um coletor sem destino sobe, não reclama, e some
-com a telemetria em silêncio.
+**The Better Stack credentials are mandatory at deploy**, and they go through `GITHUB_ENV` and not
+through a step-level `env:`: that way every following step sees them, including those inside
+`deploy-sst`. On the machine they come from the root `.env`, which SST loads on its own; on a runner
+there is no `.env`, and `requiredEnv` FAILS the deploy — on purpose, because a collector with no
+destination comes up, does not complain, and silently loses the telemetry.
 
-Segredos que o `deploy.yml` espera: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `BETTER_STACK_URL`
-e `BETTER_STACK_API_KEY`.
+Secrets `deploy.yml` expects: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `BETTER_STACK_URL` and
+`BETTER_STACK_API_KEY`.
 
-### O LINT — e as DUAS armadilhas de um monorepo que é quase todo Java
+### THE LINT — and the TWO traps of a monorepo that is almost all Java
 
-**CADA SISTEMA TEM O SEU**, e a herança é um import. `eslint.base.config.mjs` na raiz é o que todos
-compartilham; cada projeto tem um `eslint.config.mjs` que começa por `...baseConfig` e acrescenta só o
-que é dele. `pnpm lint` é `nx run-many -t lint` e **não lista ninguém** — quem tem o alvo é quem tem a
-config.
+**EACH SYSTEM HAS ITS OWN**, and inheritance is an import. `eslint.base.config.mjs` at the root is what
+everyone shares; each project has an `eslint.config.mjs` that starts with `...baseConfig` and adds only
+what is its own. `pnpm lint` is `nx run-many -t lint` and **lists nobody** — whoever has the target is
+whoever has the config.
 
-| projeto | config | o que acrescenta |
+| project | config | what it adds |
 |---|---|---|
-| `web` | `apps/web/eslint.config.mjs` | o preset do Next, o Vitest, o Tailwind e o GraphQL |
-| `posts-api-e2e` | `apps/posts-api-e2e/eslint.config.mjs` | as regras do Vitest |
-| `infra` | `infra/eslint.config.mjs` | as duas exceções do SST |
-| `dev.manuelantunes:quarkus-axon-graphql-posts` | — | Spotless, nos OITO módulos Maven |
+| `web` | `apps/web/eslint.config.mjs` | the Next preset, Vitest, Tailwind and GraphQL |
+| `posts-api-e2e` | `apps/posts-api-e2e/eslint.config.mjs` | the Vitest rules |
+| `infra` | `infra/eslint.config.mjs` | the two SST exceptions |
+| `dev.manuelantunes:quarkus-axon-graphql-posts` | — | Spotless, across the EIGHT Maven modules |
 
-**A forma é do Nx, e ela existe por um motivo mecânico**: em flat config o ESLint usa **UM** arquivo,
-o mais próximo do diretório de onde ele roda, e cada alvo `lint` roda com `cwd` no próprio projeto.
-**Não há herança automática entre arquivos de config** — a herança é o `import baseConfig`.
+**The shape comes from Nx, and it exists for a mechanical reason**: in flat config ESLint uses **ONE**
+file, the closest one to the directory it runs from, and each `lint` target runs with `cwd` in its own
+project. **There is no automatic inheritance between config files** — inheritance is the
+`import baseConfig`.
 
-O que fica na BASE é o que não pode divergir: o plugin do Nx, os ignores globais, o
-`@nx/enforce-module-boundaries` (que lê o grafo do workspace INTEIRO, então escrevê-lo duas vezes
-seria a mesma regra em dois lugares) e as três regras de TypeScript que descrevem como este monorepo
-escreve código.
+What stays in the BASE is what cannot diverge: the Nx plugin, the global ignores,
+`@nx/enforce-module-boundaries` (which reads the WHOLE workspace's graph, so writing it twice would be the
+same rule in two places) and the three TypeScript rules that describe how this monorepo writes code.
 
-**`infra` é projeto do Nx por UMA razão: ter o próprio lint.** São 22 arquivos TypeScript que não
-pertenciam a pacote nenhum do workspace, e por isso não eram lintados por nada. O `infra/project.json`
-existe só para o `@nx/eslint/plugin` inferir o alvo a partir do `infra/eslint.config.mjs`.
+**`infra` is an Nx project for ONE reason: to have its own lint.** Those are 22 TypeScript files that
+belonged to no workspace package, and so were linted by nothing. `infra/project.json` exists only so
+`@nx/eslint/plugin` can infer the target from `infra/eslint.config.mjs`.
 
-**Ele custou DUAS exceções, e nas duas o SST está certo e a regra errada:**
+**It cost TWO exceptions, and in both SST is right and the rule is wrong:**
 
-- `triple-slash-reference` — eram **21 das 27** violações do diretório, a única sistemática. O
-  `/// <reference path=".sst/platform/config.d.ts" />` é como o SST põe os tipos gerados dele em
-  escopo (`$config`, `$app`, `sst.aws.*`, o global `aws`). Não há import equivalente porque não há
-  módulo: é um arquivo de declarações. Trocar por `import` deixaria o arquivo SEM TIPO NENHUM;
-- `no-empty-object-type` com `allowInterfaces: "with-single-extends"` — não desligada, CONFIGURADA.
-  `interface MigratorArgs extends Omit<QuarkusFunctionArgs, "timeout" | "memory"> {}` é o padrão de
-  dar nome a um tipo derivado numa API pública. A predecessora depreciada `no-empty-interface` saiu,
-  porque acusava as mesmas linhas uma segunda vez.
+- `triple-slash-reference` — those were **21 of the directory's 27** violations, the only systematic one.
+  The `/// <reference path=".sst/platform/config.d.ts" />` is how SST brings its generated types into
+  scope (`$config`, `$app`, `sst.aws.*`, the global `aws`). There is no equivalent import because there
+  is no module: it is a declarations file. Swapping it for an `import` would leave the file WITH NO TYPES
+  AT ALL;
+- `no-empty-object-type` with `allowInterfaces: "with-single-extends"` — not disabled, CONFIGURED.
+  `interface MigratorArgs extends Omit<QuarkusFunctionArgs, "timeout" | "memory"> {}` is the pattern for
+  naming a derived type in a public API. The deprecated predecessor `no-empty-interface` left, because it
+  flagged the same lines a second time.
 
-Sobraram **2 avisos**, os dois no código de infraestrutura: um `userGroup` atribuído e nunca usado
-(`identity/index.ts`) e um `!` (`support/functions.ts`). Ficaram como AVISO de propósito — são
-decisões de quem escreveu a infra, não do lint.
+Two warnings remain, both in infrastructure code: a `userGroup` assigned and never used
+(`identity/index.ts`) and a `!` (`support/functions.ts`). They stayed as WARNINGS on purpose — they are
+decisions by whoever wrote the infra, not by the lint.
 
-**NÃO HÁ alvo `lint` na raiz, e a ausência é o desenho.** O projeto `root` do Nx é o **reator Maven**
-(o `@nx/maven` reivindica a raiz), não um projeto de JavaScript — o `nx show project root` traz as 50
-fases do ciclo de vida. `nx run-many -t lint` resolve os projetos sozinho; um alvo na raiz seria uma
-lista escrita à mão para dizer o que o grafo já sabe.
+**There is NO `lint` target at the root, and the absence is the design.** Nx's `root` project is the
+**Maven reactor** (`@nx/maven` claims the root), not a JavaScript project — `nx show project root` lists
+the 50 lifecycle phases. `nx run-many -t lint` resolves the projects on its own; a target at the root
+would be a hand-written list saying what the graph already knows.
 
-A consequência, e ela é real: **o `sst.config.ts` não é lintado por alvo nenhum.** Ele tem de morar na
-raiz porque é onde o CLI do SST o procura. O `eslint.config.mjs` da raiz continua existindo — é o que
-o editor resolve e o que um `npx eslint sst.config.ts` usa —, e ele traz as exceções daquele arquivo,
-incluindo `enforce-module-boundaries` desligada: o `await import("./infra/aws")` É um import relativo
-para dentro de outro projeto, e tem de ser, porque os módulos de `infra/` criam recursos no topo e
-importá-los estaticamente os avaliaria antes de `app()` rodar.
+The consequence, and it is real: **`sst.config.ts` is linted by no target.** It has to live at the root
+because that is where the SST CLI looks for it. The root `eslint.config.mjs` still exists — it is what
+the editor resolves and what an `npx eslint sst.config.ts` uses — and it carries that file's exceptions,
+including `enforce-module-boundaries` turned off: the `await import("./infra/aws")` IS a relative import
+into another project, and it has to be, because the `infra/` modules create resources at the top and
+importing them statically would evaluate them before `app()` ran.
 
-**O plugin EXCLUI os módulos Maven, por escrito.** Ele já não inferiria o alvo para um projeto sem
-um `.ts`/`.js` sequer, mas o `exclude` do `nx.json` diz isso de propósito: uma garantia implícita é
-uma garantia que ninguém lê antes de quebrar.
+**The plugin EXCLUDES the Maven modules, in writing.** It would not infer the target for a project
+without a single `.ts`/`.js` anyway, but the `nx.json` `exclude` says so on purpose: an implicit
+guarantee is a guarantee nobody reads until it breaks.
 
-**O `includedScripts: []` no bloco `nx` da RAIZ conserta uma recursão, e ela foi observada.** A raiz
-é um projeto Nx (`"nx": { "name": "root" }`), então cada script do `package.json` dela vira um alvo —
-inclusive `lint`, que É `nx run-many -t lint`. O resultado é `root:lint -> root:lint`, e o Nx o
-detecta e falha a esteira inteira. `includedScripts: []` diz o que esses scripts são: portas de
-entrada para gente, não alvos. Vale para `dev`, `test` e `test:e2e` pela mesma razão — os quatro são
-invólucros de `nx run-many`.
+**`includedScripts: []` in the ROOT's `nx` block fixes a recursion, and it was observed.** The root is an
+Nx project (`"nx": { "name": "root" }`), so each of its `package.json` scripts becomes a target —
+including `lint`, which IS `nx run-many -t lint`. The result is `root:lint -> root:lint`, which Nx
+detects and uses to fail the whole pipeline. `includedScripts: []` says what those scripts are: entry
+points for people, not targets. The same applies to `dev`, `test` and `test:e2e` — all four are wrappers
+around `nx run-many`.
 
-**O `enforce-module-boundaries` precisa de um `allow` para a própria config.** `apps/web/eslint.config.mjs`
-IMPORTA a da raiz — um import relativo que atravessa a fronteira do projeto, que é exatamente o que a
-regra proíbe. Sem a exceção, compor as configs em vez de duplicá-las seria um erro de lint.
+**`enforce-module-boundaries` needs an `allow` for its own config.** `apps/web/eslint.config.mjs`
+IMPORTS the root one — a relative import crossing a project boundary, which is exactly what the rule
+forbids. Without the exception, composing the configs instead of duplicating them would be a lint error.
 
-As `depConstraints` são uma só e permissiva, e isso é deliberado: hoje não há lib JS compartilhada
-neste monorepo — o domínio compartilhado é Java, e quem o separa é o reator do Maven. Uma matriz de
-`scope:`/`type:` seria fronteira desenhada contra dependência que não existe, e regra que nunca
-dispara é regra que ninguém mantém. Quando nascer a primeira lib JS, o lugar de apertar é essa lista.
+The `depConstraints` are a single permissive one, and that is deliberate: today there is no shared JS lib
+in this monorepo — the shared domain is Java, and what separates it is the Maven reactor. A matrix of
+`scope:`/`type:` would be a boundary drawn against a dependency that does not exist, and a rule that
+never fires is a rule nobody maintains. When the first JS lib is born, that list is the place to tighten.
 
-**`apps/posts-api-e2e` tem config PRÓPRIA**, e o que ela acrescenta não é estilo. As regras do
-`@vitest/eslint-plugin` ligadas ali pegam os jeitos de uma suíte MENTIR que nenhum compilador vê —
-`it` sem `expect`, `it.only` esquecido, título repetido, `expect` fora de um teste. Num app cujo
-trabalho inteiro é afirmar coisas sobre dois processos e um broker, uma suíte que mente é pior que
-suíte nenhuma: ela fica verde enquanto a saga não fecha. E `src/support/` fica de fora dessas regras
-pela mesma razão que fica de fora do `include` do Vitest — ali é mecanismo, não spec.
+**`apps/posts-api-e2e` has its OWN config**, and what it adds is not style. The
+`@vitest/eslint-plugin` rules turned on there catch the ways a suite can LIE that no compiler sees — `it`
+with no `expect`, a forgotten `it.only`, a repeated title, an `expect` outside a test. In an app whose
+whole job is asserting things about two processes and a broker, a lying suite is worse than no suite: it
+stays green while the saga does not close. And `src/support/` is outside those rules for the same reason
+it is outside Vitest's `include` — that is mechanism, not spec.
 
-A regra `no-standalone-expect` pegou uma de verdade na primeira execução: havia um `expect` dentro do
-`beforeAll`, que falha como erro de HOOK e não nomeia o que se esperava. O conserto não foi calar a
-regra — foi `PostsApi.subscribe` passar a RECUSAR um status diferente de 200, porque uma subscription
-que não abriu não é uma subscription.
+The `no-standalone-expect` rule caught a real one on the first run: there was an `expect` inside
+`beforeAll`, which fails as a HOOK error and does not name what was expected. The fix was not silencing
+the rule — it was making `PostsApi.subscribe` REFUSE a status other than 200, because a subscription that
+did not open is not a subscription.
 
-**As mesmas seis regras valem no `apps/web`**, sobre `src/**/*.spec.{ts,tsx}`. Um spec de unidade
-mente do mesmo jeito que um de saga.
+**The same six rules apply in `apps/web`**, over `src/**/*.spec.{ts,tsx}`. A unit spec lies in the same
+way a saga one does.
 
-#### TAILWIND e GRAPHQL no `web`: o que ENTROU foi MEDIDO, como o `importOrder` foi
+#### TAILWIND and GRAPHQL in `web`: what WENT IN was MEASURED, as `importOrder` was
 
-As duas famílias novas seguem a regra que este documento já aplica ao Spotless e ao Error Prone —
-**o que aponta defeito entra; o que só impõe uma convenção que o código nunca teve, fica de fora** —
-e em nenhum dos dois casos a linha foi escolhida por gosto: as 15 regras do Tailwind e as 37 do
-GraphQL foram rodadas contra os 71 fontes do app antes de qualquer decisão.
+The two new families follow the rule this document already applies to Spotless and Error Prone — **what
+points at a defect goes in; what only imposes a convention the code never had stays out** — and in
+neither case was the line chosen by taste: Tailwind's 15 rules and GraphQL's 37 were run against the
+app's 71 sources before any decision.
 
-**Tailwind: `eslint-plugin-better-tailwindcss`, e não o `eslint-plugin-tailwindcss`.** Os dois têm
-versão estável para a v4 hoje, e a escolha é pelo modelo de configuração: na v4 a config é o PRÓPRIO
-CSS (`@theme` dentro do `globals.css`) e não existe `tailwind.config.ts` neste projeto. Esse plugin
-recebe `entryPoint: "src/app/globals.css"` e lê o tema de lá; o outro nasceu em volta do arquivo JS.
+**Tailwind: `eslint-plugin-better-tailwindcss`, and not `eslint-plugin-tailwindcss`.** Both have a stable
+version for v4 today, and the choice is about the configuration model: in v4 the config is the CSS ITSELF
+(`@theme` inside `globals.css`) and there is no `tailwind.config.ts` in this project. That plugin takes
+`entryPoint: "src/app/globals.css"` and reads the theme from there; the other one was born around the JS
+file.
 
 ```
-172  enforce-logical-properties        `mt-1` → `mbs-1`, `size-7` → `block-7 inline-7`    FORA
-101  enforce-consistent-line-wrapping  um FORMATTER de className                          FORA
- 12  enforce-canonical-classes         `text-sm leading-relaxed` → `text-sm/relaxed`      FORA
-  2  enforce-shorthand-classes         `-translate-x-1/2 -translate-y-1/2`                FORA
-  1  enforce-consistent-class-order                                                       ENTRA
-  1  no-deprecated-classes             achou `backdrop-blur` no site-header               ENTRA
-  1  no-unknown-classes                achou `toaster`, que é do sonner                   ENTRA
+172  enforce-logical-properties        `mt-1` → `mbs-1`, `size-7` → `block-7 inline-7`    OUT
+101  enforce-consistent-line-wrapping  a className FORMATTER                              OUT
+ 12  enforce-canonical-classes         `text-sm leading-relaxed` → `text-sm/relaxed`      OUT
+  2  enforce-shorthand-classes         `-translate-x-1/2 -translate-y-1/2`                OUT
+  1  enforce-consistent-class-order                                                       IN
+  1  no-deprecated-classes             found `backdrop-blur` in the site-header           IN
+  1  no-unknown-classes                found `toaster`, which belongs to sonner           IN
 ```
 
-As quatro de cima são o caso do `importOrder` outra vez: não existindo convenção a preservar, a
-regra não arruma nada — ela ESCOLHE uma e reescreve quase tudo para impô-la.
-`enforce-logical-properties` é o extremo: troca o vocabulário do Tailwind por um que ninguém aqui lê,
-para resolver um problema (RTL) que esta aplicação não tem.
+The top four are the `importOrder` case again: with no convention to preserve, the rule fixes nothing —
+it PICKS one and rewrites almost everything to impose it. `enforce-logical-properties` is the extreme: it
+swaps Tailwind's vocabulary for one nobody here reads, to solve a problem (RTL) this application does not
+have.
 
-O que entrou é o `correctness` do próprio plugin — classe inexistente, classe que briga com outra,
-classe montada por CONCATENAÇÃO (que o Tailwind não extrai e portanto poda do CSS) — mais as três
-que custaram uma ocorrência cada. E elas pagaram a entrada: **`backdrop-blur` está DEPRECIADA na v4**
-(a escala do blur foi renomeada, o `blur` da v3 virou `blur-sm`), e estava no cabeçalho de todas as
-páginas. O `toaster` é a única exceção, nominal de propósito: é classe do sonner, aplicada pela
-biblioteca no CSS dela — um `ignore` largo ali desligaria a proteção contra erro de digitação, que é
-o que a regra existe para dar.
+What went in is the plugin's own `correctness` — a non-existent class, a class fighting another, a class
+assembled by CONCATENATION (which Tailwind does not extract and therefore prunes from the CSS) — plus the
+three that cost one occurrence each. And they paid their way in: **`backdrop-blur` is DEPRECATED in v4**
+(the blur scale was renamed, v3's `blur` became `blur-sm`), and it was in every page's header. The
+`toaster` is the only exception, nominal on purpose: it is a sonner class, applied by the library in its
+own CSS — a broad `ignore` there would switch off the protection against a typo, which is what the rule
+exists to give.
 
-**GraphQL: `@graphql-eslint/eslint-plugin`, em dois blocos.** O primeiro põe o `processor` sobre os
-`.ts`/`.tsx` — ele roda o `graphql-tag-pluck` e entrega o que achar como arquivos `.graphql`
-VIRTUAIS. Isso funciona com o `client-preset` porque o pluck reconhece `graphql(\`...\`)` como
-CHAMADA, e não só ``gql`...` `` como tag. O segundo bloco linta esses documentos contra o
-`schema.graphql` — o MESMO arquivo que o codegen lê, então lint e tipos gerados não divergem.
+**GraphQL: `@graphql-eslint/eslint-plugin`, in two blocks.** The first puts the `processor` over the
+`.ts`/`.tsx` files — it runs `graphql-tag-pluck` and hands back whatever it finds as VIRTUAL `.graphql`
+files. That works with the `client-preset` because pluck recognizes `` graphql(`...`) `` as a CALL, and
+not only `` gql`...` `` as a tag. The second block lints those documents against `schema.graphql` — the
+SAME file codegen reads, so lint and generated types do not diverge.
 
-`operations-recommended` e não `operations-all`, e de novo por medição: as cinco regras que só
-existem em `all` deram 45 das 57 ocorrências, e as três maiores BRIGAM com o desenho que
-`apps/web/README.md` documenta — `require-import-fragment` (18) quer comentários `#import`, que são
-do fluxo de arquivos `.graphql` e não do `client-preset`; `no-one-place-fragments` (2) quer inlinar
-um fragmento usado uma vez, quando a promessa do fragment masking é justamente que o COMPONENTE seja
-dono do que pede; e `alphabetize` (25) reordena seleção, que aqui é lida na ordem em que a tela mostra.
+`operations-recommended` and not `operations-all`, and again by measurement: the five rules that exist
+only in `all` produced 45 of the 57 occurrences, and the three biggest FIGHT the design
+`apps/web/README.md` documents — `require-import-fragment` (18) wants `#import` comments, which belong to
+the `.graphql`-files workflow and not to the `client-preset`; `no-one-place-fragments` (2) wants to inline
+a fragment used once, when fragment masking's whole promise is that the COMPONENT owns what it asks for;
+and `alphabetize` (25) reorders the selection, which here is read in the order the screen shows it.
 
-**E ele também pagou a entrada: `require-selections` achou o `TagList_post` lendo um `Post` sem pedir
-o `id`.** O cache do Apollo normaliza `Post` por `keyFields: ["id"]` — um fragmento assim não é
-auto-suficiente, e o sintoma seria o mesmo post virando dois objetos no cache, em silêncio.
+**And it paid its way in too: `require-selections` found `TagList_post` reading a `Post` without asking
+for `id`.** The Apollo cache normalizes `Post` by `keyFields: ["id"]` — a fragment like that is not
+self-sufficient, and the symptom would be the same post becoming two objects in the cache, silently.
 
-**Duas regras do preset foram CONFIGURADAS em vez de desligadas**, e as duas pelo mesmo motivo — elas
-estavam certas sobre o código errado:
+**Two rules from the preset were CONFIGURED instead of disabled**, and both for the same reason — they
+were right about the wrong code:
 
-- **`naming-convention` reprovava os nove fragmentos** (`PostCard_post`, `TagList_post`…) por não
-  serem `PascalCase`. Mas esse nome é a convenção do `client-preset`, `<Componente>_<prop>`, e é ela
-  que liga o fragmento ao componente que o declara. Trocar `style` por um `requiredPattern` faz a
-  regra parar de brigar com a convenção e passar a EXIGI-LA;
-- **`allowLeadingUnderscore`**, porque `_entities` e `_Entity` são nomes reservados da especificação
-  da Apollo Federation. Proibir o underscore seria proibir falar com um subgraph.
+- **`naming-convention` rejected all nine fragments** (`PostCard_post`, `TagList_post`…) for not being
+  `PascalCase`. But that name is the `client-preset` convention, `<Component>_<prop>`, and it is what ties
+  the fragment to the component declaring it. Swapping `style` for a `requiredPattern` makes the rule stop
+  fighting the convention and start REQUIRING it;
+- **`allowLeadingUnderscore`**, because `_entities` and `_Entity` are reserved names from the Apollo
+  Federation specification. Forbidding the underscore would be forbidding talking to a subgraph.
 
-E o `schema.graphql` entra em `ignores`: ele é SCHEMA, as regras são de OPERAÇÃO, e sem essa linha o
-`executable-definitions` acusa cada `type` dele — 50 erros dizendo que uma definição de tipo não é
-executável, o que é verdade e não é defeito. Ele nem é escrito aqui: sai da API por `pnpm schema:pull`.
+And `schema.graphql` goes into `ignores`: it is a SCHEMA, the rules are about OPERATIONS, and without that
+line `executable-definitions` flags each of its `type` declarations — 50 errors saying a type definition
+is not executable, which is true and is not a defect. It is not even written here: it comes out of the API
+through `pnpm schema:pull`.
 
-#### `consistent-type-definitions` é AUTO-CORRIGÍVEL e o auto-conserto QUEBROU o build
+#### `consistent-type-definitions` is AUTO-FIXABLE and the auto-fix BROKE the build
 
-A regra da base exige `interface` no lugar de `type` para tipo de objeto, e o `--fix` converteu 11
-declarações de uma vez. Uma delas não podia ser convertida, e o compilador é quem disse:
+The base rule requires `interface` instead of `type` for an object type, and `--fix` converted 11
+declarations at once. One of them could not be converted, and the compiler is what said so:
 
 ```
 entities-probe.tsx(65,39): error TS2352: Conversion of type 'Representation[]' to type
 'Record<string, unknown>[]' may be a mistake because neither type sufficiently overlaps
 ```
 
-**Um alias de tipo de objeto ganha ÍNDICE IMPLÍCITO; uma interface não.** É por isso que
-`Representation[]` deixava de ser atribuível a `Record<string, unknown>[]` — que é como as
-representações chegam ao `_entities`. O arquivo voltou a `type`, com `eslint-disable-next-line` e a
-razão escrita ao lado.
+**An object type alias gets an IMPLICIT INDEX SIGNATURE; an interface does not.** That is why
+`Representation[]` stopped being assignable to `Record<string, unknown>[]` — which is how the
+representations reach `_entities`. The file went back to `type`, with an `eslint-disable-next-line` and
+the reason written next to it.
 
-A lição é sobre a ORDEM, e ela vale para qualquer `--fix`: **rodar o typecheck depois de um conserto
-automático não é zelo, é parte do conserto.** Aqui o lint ficou verde e o build quebrou.
+The lesson is about ORDER, and it holds for any `--fix`: **running the typecheck after an automatic fix is
+not diligence, it is part of the fix.** Here the lint went green and the build broke.
 
-#### `pnpm lint` confere, `pnpm lint:fix` conserta — e `--fix` NÃO é a interface
+#### `pnpm lint` checks, `pnpm lint:fix` fixes — and `--fix` is NOT the interface
 
-`lint:fix` é `nx run-many -t lint -c fix --skip-nx-cache`: uma configuração `fix` em cada um dos três
-alvos, `eslint . --fix` nos dois de JavaScript e `spotless:apply` no do Java.
+`lint:fix` is `nx run-many -t lint -c fix --skip-nx-cache`: a `fix` configuration on each of the three
+targets, `eslint . --fix` on the two JavaScript ones and `spotless:apply` on the Java one.
 
-**`pnpm lint --fix` foi desativado de propósito, e o motivo é o de sempre aqui: ele funcionava PELA
-METADE.** O `forwardAllArgs` do `nx:run-commands` é `true` por default, então a flag era repassada
-crua — o ESLint a entendia e consertava, o `./mvnw` não e respondia com a tela de ajuda dele mais um
-código de saída 1. Com `forwardAllArgs: false` nos três, `--fix` passa a ser ignorado em toda parte,
-uniformemente, e quem conserta é `lint:fix`.
+**`pnpm lint --fix` was deliberately disabled, and the reason is the usual one here: it worked HALFWAY.**
+`nx:run-commands`'s `forwardAllArgs` is `true` by default, so the flag was passed through raw — ESLint
+understood it and fixed, `./mvnw` did not and answered with its help screen plus exit code 1. With
+`forwardAllArgs: false` on all three, `--fix` becomes ignored everywhere, uniformly, and the one that
+fixes is `lint:fix`.
 
-**A configuração `fix` dos alvos de ESLint repete o comando em vez de usar a opção `args`**, e isso
-também foi medido: `forwardAllArgs: false` bloqueia `args` junto, então a configuração rodava sem o
-`--fix` e **dizia que tinha passado**. Travado por um teste manual com violação plantada dos dois
-lados — `let` que devia ser `const` no TypeScript e espaço no fim da linha no Java.
+**The ESLint targets' `fix` configuration repeats the command instead of using the `args` option**, and
+that was measured too: `forwardAllArgs: false` blocks `args` along with it, so the configuration ran
+without the `--fix` and **said it had passed**. Locked down by a manual test with a planted violation on
+both sides — a `let` that should be `const` in TypeScript and trailing whitespace in Java.
 
-#### O PRETTIER, e o `.editorconfig` como fonte única da indentação
+#### PRETTIER, and `.editorconfig` as the single source of indentation
 
-**Esta seção dizia "não há Prettier", e a decisão MUDOU.** O argumento antigo era que o
-`.editorconfig` já declarava a convenção — e o problema é que ele a declarava e ninguém a aplicava:
-dos 51 arquivos TS/TSX, **43 estavam em 4 espaços** contra um arquivo que pedia 2.
+**This section used to say "there is no Prettier", and the decision CHANGED.** The old argument was that
+`.editorconfig` already declared the convention — and the problem was that it declared it and nobody
+applied it: of the 51 TS/TSX files, **43 were on 4 spaces** against a file asking for 2.
 
-**O `.editorconfig` não estava funcionando, e eram TRÊS causas independentes:**
+**`.editorconfig` was not working, and there were THREE independent causes:**
 
-1. **Ele descrevia o que não existe.** O bloco `[*]` com `indent_size = 2` valia também para os 153
-   arquivos Java e os 12 `pom.xml`, que são de 4. Um editor diante de uma configuração que contradiz
-   o conteúdo resolve sozinho — e resolve ADIVINHANDO. Hoje há blocos `[*.{java,xml}]` e `[*.sql]`
-   com 4, e o `[*]` passou a descrever o que sobra;
-2. **O VSCode não lê `.editorconfig` nativamente.** Isso é a extensão `EditorConfig.EditorConfig`, e
-   ela agora está em `.vscode/extensions.json`;
-3. **`editor.detectIndentation` vem LIGADO por padrão**, e ele adivinha a indentação pelo começo do
-   arquivo, por cima de qualquer configuração. Era esta a origem direta do sintoma. Está desligado
-   em `.vscode/settings.json`.
+1. **It described what does not exist.** The `[*]` block with `indent_size = 2` also applied to the 153
+   Java files and the 12 `pom.xml` files, which are on 4. An editor faced with a configuration that
+   contradicts the content resolves it on its own — and resolves it by GUESSING. Today there are
+   `[*.{java,xml}]` and `[*.sql]` blocks with 4, and `[*]` now describes what is left;
+2. **VSCode does not read `.editorconfig` natively.** That is the `EditorConfig.EditorConfig` extension,
+   and it is now in `.vscode/extensions.json`;
+3. **`editor.detectIndentation` comes ON by default**, and it guesses the indentation from the start of
+   the file, overriding any configuration. That was the direct origin of the symptom. It is turned off in
+   `.vscode/settings.json`.
 
-Os dois arquivos de `.vscode/` são versionados por exceção explícita no `.gitignore` — são
-configuração de PROJETO, e sem elas a convenção simplesmente não vale para quem clona. O resto de
-`.vscode/` continua ignorado, como `.idea/`.
+The two files in `.vscode/` are committed by an explicit exception in `.gitignore` — they are PROJECT
+configuration, and without them the convention simply does not apply to whoever clones. The rest of
+`.vscode/` stays ignored, like `.idea/`.
 
-**O Prettier lê o `.editorconfig` por padrão, e isso é o que amarra os dois.** Medido: com
-`indent_size = 8` lá, o Prettier indenta 8. Por isso o `.prettierrc.mjs` **não declara `tabWidth`** —
-a indentação é dita uma vez só, no arquivo que o editor também lê.
+**Prettier reads `.editorconfig` by default, and that is what ties the two together.** Measured: with
+`indent_size = 8` there, Prettier indents 8. That is why `.prettierrc.mjs` **does not declare
+`tabWidth`** — the indentation is stated once, in the file the editor also reads.
 
-O que o `.prettierrc.mjs` declara é o que o `.editorconfig` não sabe dizer: aspas simples,
-`@ianvs/prettier-plugin-sort-imports` com os grupos deste monorepo (React/Next → terceiros → `@/` →
-relativos) e `prettier-plugin-tailwindcss` apontando o `tailwindStylesheet` para o **mesmo**
-`globals.css` que o ESLint do Tailwind usa como `entryPoint`.
+What `.prettierrc.mjs` does declare is what `.editorconfig` cannot say: single quotes,
+`@ianvs/prettier-plugin-sort-imports` with this monorepo's groups (React/Next → third party → `@/` →
+relative) and `prettier-plugin-tailwindcss` pointing `tailwindStylesheet` at the **same** `globals.css`
+the Tailwind ESLint plugin uses as its `entryPoint`.
 
-**Dois plugins do config original foram removidos por medição, não por gosto**: o
-`prettier-plugin-embed` (com `embeddedGraphqlIdentifiers`) produziu saída **byte a byte idêntica** à
-do Prettier sozinho — ele já formata o GraphQL dentro de `graphql(\`...\`)` —, e o
-`prettier-plugin-sql` veio só como dependência dele, para um SQL embarcado que não existe neste
-repositório.
+**Two plugins from the original config were removed by measurement, not by taste**: `prettier-plugin-embed`
+(with `embeddedGraphqlIdentifiers`) produced output **byte for byte identical** to Prettier alone — it
+already formats the GraphQL inside `` graphql(`...`) `` — and `prettier-plugin-sql` came only as its
+dependency, for embedded SQL that does not exist in this repository.
 
-**O que ficou de FORA do Prettier, e por quê:**
+**What stayed OUT of Prettier, and why:**
 
-| | por quê |
+| | why |
 |---|---|
-| `**/db/migration/**` | o Flyway grava o CHECKSUM do conteúdo; reformatar uma migration aplicada derruba a aplicação na partida, em todo ambiente onde ela já rodou |
-| `*.md` | o próprio `.editorconfig` desliga `max_line_length` e `trim_trailing_whitespace` ali. Medido: 144 linhas só no README da raiz, quase todas tabelas expandidas até 150 colunas — e o CLAUDE.md entraria na mesma conta |
-| Java e `pom.xml` | o Prettier não fala nenhuma das duas. Ver *O LADO JAVA*, logo abaixo: lá a ausência de formatter continua sendo decisão medida |
+| `**/db/migration/**` | Flyway stores the CONTENT's CHECKSUM; reformatting an applied migration brings the application down at startup, in every environment where it has already run |
+| `*.md` | `.editorconfig` itself turns off `max_line_length` and `trim_trailing_whitespace` there. Measured: 144 lines in the root README alone, almost all tables expanded to 150 columns — and `CLAUDE.md` would fall into the same bucket |
+| Java and `pom.xml` | Prettier speaks neither. See *THE JAVA SIDE*, just below: there the absence of a formatter is still a measured decision |
 
-A primeira passada reformatou **148 arquivos**. Ela invalida o cache do Nx de quase tudo, inclusive
-dos quatro artefatos Lambda — `infra/lambda/collector.yaml` entrou na conta, e ele é input do
-`quarkusLambda`. É uma vez só.
+The first pass reformatted **148 files**. It invalidates the Nx cache of almost everything, including the
+four Lambda artifacts — `infra/lambda/collector.yaml` counted, and it is a `quarkusLambda` input. It is a
+one-time cost.
 
-`pnpm lint` passou a conferir a formatação junto (`prettier --check .` depois do `run-many`), e
-`pnpm lint:fix` a consertá-la. `pnpm format` e `pnpm format:check` existem para rodar só essa
-metade. Na esteira quem confere é o job do cliente, no primeiro passo — `--check` e nunca `--write`,
-porque numa esteira formatar é esconder.
+`pnpm lint` now checks the formatting along with it (`prettier --check .` after the `run-many`), and
+`pnpm lint:fix` fixes it. `pnpm format` and `pnpm format:check` exist to run only that half. In CI the one
+checking is the client job, in the first step — `--check` and never `--write`, because in a pipeline
+formatting is hiding.
 
-### O LADO JAVA: Spotless para o arrumável, Error Prone para o defeito
+### THE JAVA SIDE: Spotless for what is fixable, Error Prone for the defect
 
-O `CLAUDE.md` dizia que "não há plugin de lint/format configurado" e que o gate era o compilador.
-Continua sendo — só que agora o compilador sabe mais.
+This file used to say "there is no lint/format plugin configured" and that the gate was the compiler. It
+still is — only now the compiler knows more.
 
-**A divisão é essa, e ela decide onde cada coisa falha:**
+**That is the split, and it decides where each thing fails:**
 
-| | o que pega | como se conserta | onde falha |
+| | what it catches | how it is fixed | where it fails |
 |---|---|---|---|
-| **Spotless** | import morto, espaço no fim da linha, newline final | `./mvnw spotless:apply` | o alvo `lint` |
-| **Error Prone** | defeito de código: `equals`, `Locale`, `String.split` | lendo o código | o BUILD |
+| **Spotless** | a dead import, trailing whitespace, a final newline | `./mvnw spotless:apply` | the `lint` target |
+| **Error Prone** | a code defect: `equals`, `Locale`, `String.split` | by reading the code | the BUILD |
 
-O que é arrumável por máquina não precisa derrubar um build; o que exige alguém ler, precisa.
+What a machine can fix does not need to break a build; what requires somebody to read, does.
 
-**NÃO HÁ FORMATTER DO LADO JAVA, e a ausência foi medida.** 227 arquivos, indentação de 4 espaços,
-**dez** linhas acima de 120 colunas: o código já está formatado. Um `google-java-format` ou um
-`palantir` reescreveria os 227 para impor a régua dele, requebrando o Javadoc longo em português e
-levando o `git blame` junto.
+**THERE IS NO FORMATTER ON THE JAVA SIDE, and the absence was measured.** 227 files, 4-space indentation,
+**ten** lines over 120 columns: the code is already formatted. A `google-java-format` or a `palantir`
+would rewrite all 227 to impose its own ruler, rewrapping the long Javadoc and taking `git blame` with it.
 
-**Isto NÃO é contradito pelo Prettier do lado JavaScript**, e a diferença é o estado de partida: lá
-43 dos 51 arquivos TS contradiziam a convenção declarada, então havia o que arrumar; aqui os 227 já
-a seguem. O Prettier tampouco fala Java — é por isso que quem descreve a régua de 4 espaços desse
-lado é o bloco `[*.{java,xml}]` do `.editorconfig`, e mais ninguém.
+**This is NOT contradicted by Prettier on the JavaScript side**, and the difference is the starting state:
+there, 43 of the 51 TS files contradicted the declared convention, so there was something to fix; here the
+227 already follow it. Prettier does not speak Java either — which is why what describes the 4-space ruler
+on that side is `.editorconfig`'s `[*.{java,xml}]` block, and nothing else.
 
-**Também não há `importOrder`, pela razão oposta.** Ela foi ligada, medida e desligada: a ordem dos
-grupos de import **não é consistente** neste código — uns arquivos começam por `dev`, outros por
-`java`, outros por `org`. Não existindo convenção a preservar, a regra não estaria arrumando nada,
-estaria ESCOLHENDO uma e reescrevendo quase tudo para impô-la.
+**There is also no `importOrder`, for the opposite reason.** It was turned on, measured and turned off:
+the import group order **is not consistent** in this code — some files start with `dev`, others with
+`java`, others with `org`. With no convention to preserve, the rule would not be fixing anything, it would
+be PICKING one and rewriting almost everything to impose it.
 
-O que sobrou custou **5 linhas**: cinco imports não usados, em três arquivos.
+What was left cost **5 lines**: five unused imports, in three files.
 
-**O Spotless NÃO tem `<executions>`**, e são dois efeitos de uma vez: `package` e `test` não pagam por
-ele, e o `@nx/maven` não passa a inferir um alvo por execução de mojo — que é a armadilha do
-`nx-build-state.json`.
+**Spotless has NO `<executions>`**, and that has two effects at once: `package` and `test` do not pay for
+it, and `@nx/maven` does not start inferring a target per mojo execution — which is the
+`nx-build-state.json` trap.
 
-**O alvo `lint` do Java mora em `apps/posts-api` e cobre o REATOR INTEIRO.** É a mesma forma do
-`test-unit`: `-pl` não funciona neste reator, então todo alvo do lado Java roda da raiz. Ter o MESMO
-NOME dos alvos de ESLint é o que faz `pnpm lint` cobrir o monorepo numa invocação.
+**The Java `lint` target lives in `apps/posts-api` and covers the WHOLE REACTOR.** It is the same shape as
+`test-unit`: `-pl` does not work in this reactor, so every Java-side target runs from the root. Having the
+SAME NAME as the ESLint targets is what makes `pnpm lint` cover the monorepo in one invocation.
 
-**As TRÊS armadilhas do Error Prone, e as três foram pagas aqui:**
+**The THREE Error Prone traps, and all three were paid for here:**
 
-1. **`annotationProcessorPaths` de um filho SUBSTITUI o do pai, não soma.** `apps/posts-api` (MapStruct)
-   e `axon-native-support/deployment` (o processador da extensão) declaram o seu, então herdavam o
-   `-Xplugin:ErrorProne` dos `compilerArgs` e perdiam o jar que o implementa: `plug-in not found:
-   ErrorProne`, no meio do reator. O conserto é `combine.children="append"` nos dois.
-2. **O JDK 16+ exige `add-exports`/`add-opens` para os internos do javac**, e eles são do processo que
-   RODA o javac — por isso estão em `.mvn/jvm.config` e não no pom. Sem eles o compilador morre antes
-   de compilar o primeiro arquivo.
-3. **`XDcompilePolicy=simple` e `should-stop=ifError=FLOW` não são afinamento**: sem eles o javac roda
-   o plugin numa política incompatível e o Error Prone nem carrega.
+1. **A child's `annotationProcessorPaths` REPLACES the parent's, it does not add.** `apps/posts-api`
+   (MapStruct) and `axon-native-support/deployment` (the extension's processor) declare their own, so they
+   inherited the `-Xplugin:ErrorProne` from `compilerArgs` and lost the jar that implements it:
+   `plug-in not found: ErrorProne`, in the middle of the reactor. The fix is
+   `combine.children="append"` on both.
+2. **JDK 16+ requires `add-exports`/`add-opens` for javac's internals**, and they belong to the process
+   that RUNS javac — which is why they are in `.mvn/jvm.config` and not in the pom. Without them the
+   compiler dies before compiling the first file.
+3. **`XDcompilePolicy=simple` and `should-stop=ifError=FLOW` are not tuning**: without them javac runs the
+   plugin under an incompatible policy and Error Prone does not even load.
 
-**TRÊS CHECAGENS DESLIGADAS, e as três são de Javadoc.** Dos 17 achados do primeiro reator inteiro,
-**8 eram delas**: `InvalidParam` (falso positivo — em `Post.java` ele acusa `{@code authors}` de ser o
-parâmetro `author` escrito errado, quando `authors` ali é o nome da TABELA), `EscapedEntity` (acusa
-`<b>` dentro de `{@code}`, que é como a prosa daqui é escrita) e `MissingSummary` (exige frase-resumo;
-os Javadoc daqui abrem com o contexto da decisão). Um lint que grita onde não há defeito é um lint que
-se aprende a ignorar INTEIRO.
+**THREE CHECKS TURNED OFF, and all three are about Javadoc.** Of the 17 findings from the first full
+reactor, **8 were theirs**: `InvalidParam` (a false positive — in `Post.java` it flags `{@code authors}`
+as the `author` parameter misspelled, when `authors` there is the TABLE name), `EscapedEntity` (flags
+`<b>` inside `{@code}`, which is how the prose here was written) and `MissingSummary` (requires a summary
+sentence; the Javadoc here opened with the decision's context). A lint that shouts where there is no
+defect is a lint you learn to ignore ENTIRELY. **These three notes are kept for the record: the Javadoc
+they were about no longer exists — see *Comments: do not write them* at the top of this file.**
 
-**O que sobrou são 9 avisos, todos sobre CÓDIGO**, e eles seguem como aviso de propósito — virar erro
-quebraria o build hoje, e a decisão de consertar cada um é de quem conhece a intenção:
+**What was left are 9 warnings, all about CODE**, and they stay as warnings on purpose — making them
+errors would break the build today, and the decision to fix each one belongs to whoever knows the intent:
 
 ```
-6  MissingOverride         implementação sem @Override
-2  StringCaseLocaleUsage   toLowerCase() sem Locale — quebra em turco, e um deles é o Email
-1  StringSplitter          String.split(String) tem comportamento surpreendente
+6  MissingOverride         an implementation with no @Override
+2  StringCaseLocaleUsage   toLowerCase() with no Locale — breaks in Turkish, and one of them is Email
+1  StringSplitter          String.split(String) has surprising behaviour
 ```
 
-## Convenções
+## Conventions
 
-- Javadoc e comentários em **português**, e explicam *por quê*, não *o quê*. O README é o documento de
-  decisões de arquitetura — ao mudar uma decisão, atualizá-lo junto.
-- Mensagens de commit em inglês, estilo conventional commits (`feat:`, `chore:`).
-- Construtores nomeados em vez de `new` público: `PostId.of(...)` / `PostId.newId()`,
-  `PostVersion.initial()` / `next()`, `Post.create(...)`, `AppendingDomainEventPublisher.appendingTo(...)`.
-- MapStruct é o mapper padrão de todas as camadas; mapeamento à mão só quando o MapStruct não resolve
-  (`PostViewMapper` precisa de `expression = "java(...)"` porque a entidade tem acessores `title()`, não
-  `getTitle()`; `UserViewMapper` é à mão porque o destino depende do tipo em runtime).
-  Nenhum `@Mapper` declara `componentModel`: o `pom.xml` passa
-  `-Amapstruct.defaultComponentModel=jakarta-cdi` para todos.
-- **Injeção por construtor, sem `@Inject`**: o ArC usa o único construtor com parâmetros. É o que mantém as
-  classes de aplicação idênticas às da versão Spring.
-- O nome da mensagem no wire vem da anotação (`@Command(namespace, name, version)`), não da classe — mover
-  ou renomear a classe Java não muda contrato; mexer na anotação, sim.
+- **No comments.** See *Comments: do not write them* at the top of this file. The *why* of a decision
+  goes into this document or into the README, never into the code.
+- The README is the architecture decisions document — when a decision changes, update it along with the
+  code. It is written in English, as is every document in this repository.
+- Commit messages in English, conventional-commits style (`feat:`, `chore:`).
+- Named constructors instead of a public `new`: `PostId.of(...)` / `PostId.newId()`,
+  `PostVersion.initial()` / `next()`, `Post.create(...)`,
+  `AppendingDomainEventPublisher.appendingTo(...)`.
+- MapStruct is the default mapper in every layer; hand mapping only when MapStruct cannot do it
+  (`PostViewMapper` needs `expression = "java(...)"` because the entity has `title()` accessors, not
+  `getTitle()`; `UserViewMapper` is by hand because the destination depends on the runtime type). No
+  `@Mapper` declares `componentModel`: `pom.xml` passes
+  `-Amapstruct.defaultComponentModel=jakarta-cdi` to all of them.
+- **Constructor injection, with no `@Inject`**: ArC uses the single constructor with parameters. That is
+  what keeps the application classes identical to the Spring version's.
+- The message's name on the wire comes from the annotation (`@Command(namespace, name, version)`), not
+  from the class — moving or renaming the Java class does not change the contract; touching the
+  annotation does.

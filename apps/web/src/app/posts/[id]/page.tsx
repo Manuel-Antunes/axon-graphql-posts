@@ -6,11 +6,6 @@ import { PreloadQuery } from '@/lib/apollo/rsc';
 import { PostView } from './_components/post-view';
 import { PostByIdQuery } from './query';
 
-/**
- * No Next 15 `params` é uma Promise — daí o `async`. O que a torna assíncrona não é buscar dados
- * aqui: quem busca é o `PreloadQuery`, que roda a query no servidor e a entrega pronta ao
- * componente de cliente.
- */
 export default async function PostPage({
   params,
 }: {

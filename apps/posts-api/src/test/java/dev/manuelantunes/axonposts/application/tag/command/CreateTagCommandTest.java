@@ -21,9 +21,7 @@ import static dev.manuelantunes.axonposts.support.PostCommandFixtures.NOW;
 import static dev.manuelantunes.axonposts.support.PostCommandFixtures.hasCause;
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Given-when-then do {@link CreateTagCommand}, e só dele. */
 class CreateTagCommandTest {
-
     private InMemoryTagRepository tags;
     private AxonTestFixture fixture;
 

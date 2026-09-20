@@ -6,13 +6,11 @@ import jakarta.persistence.Embeddable;
 import java.io.Serializable;
 import java.util.UUID;
 
-/** Identidade de uma {@code Account}. Mesmo desenho dos outros ids do projeto. */
 @Embeddable
 public record AccountId(String value) implements Serializable {
-
     public AccountId {
         if (value == null || value.isBlank()) {
-            throw new InvalidUserException("accountId não pode ser vazio");
+            throw new InvalidUserException("accountId must not be blank");
         }
         value = value.strip();
     }

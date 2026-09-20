@@ -15,15 +15,8 @@ import java.time.Clock;
 
 import static dev.manuelantunes.axonposts.infrastructure.axon.AppendingDomainEventPublisher.appendingTo;
 
-/**
- * O command <b>LinkAccount</b>: liga uma credencial a um usuário existente — o account linking.
- * <p>
- * É o que acontece quando alguém que já tem conta aqui aparece por um provedor novo: em vez de nascer um
- * segundo usuário, a credencial entra no agregado do primeiro, que mantém id, posts e histórico.
- */
 @ApplicationScoped
 public class LinkAccountCommand {
-
     @Command(namespace = "users", name = "LinkAccount", version = "1.0.0")
     public record LinkAccount(
             @TargetEntityId UserId userId,

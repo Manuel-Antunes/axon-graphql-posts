@@ -1,26 +1,4 @@
-# =================================================================================================
-# O COLETOR QUE RODA DENTRO DE CADA FUNÇÃO — e para onde a telemetria vai daqui
-# =================================================================================================
-# Este arquivo entra na RAIZ de todos os zips (`/var/task/collector.yaml`, posto lá pelo
-# `infra/scripts/package.sh`) e é lido pela layer oficial do OpenTelemetry, que o
-# `OPENTELEMETRY_COLLECTOR_CONFIG_URI` aponta em `infra/aws/support/functions.ts`.
-#
-# POR QUE UM COLETOR, E NÃO O EXPORTADOR DA APLICAÇÃO FALANDO DIRETO COM O DESTINO
-# ================================================================================
-# Porque um Lambda é CONGELADO assim que o handler retorna. Um exportador em processo com fila
-# própria perde o que ainda não saiu — e o que ainda não saiu é justamente o fim da requisição, que é
-# a parte interessante. A layer é uma EXTENSÃO do Lambda: ela recebe o sinal do ciclo de vida da
-# invocação e faz o flush antes do congelamento. É o mesmo motivo pelo qual o `CLAUDE.md` já
-# registrava que log de Lambda não chegava enquanto o trace chegava.
-#
-# E há um segundo motivo, mais barato de explicar: o destino passa a ser configuração de
-# INFRAESTRUTURA. Trocar o Better Stack por outro backend é mexer aqui, não em `application.properties`
-# nem em nenhuma das duas aplicações.
-
 receivers:
-  # A aplicação exporta para `localhost` — `%prod.quarkus.otel.exporter.otlp.endpoint` já aponta para
-  # 4317 por default. As duas portas ficam abertas porque o custo é zero e o dia em que algum SDK
-  # preferir HTTP não deveria ser um dia de depuração.
   otlp:
     protocols:
       grpc:
@@ -29,64 +7,20 @@ receivers:
         endpoint: 'localhost:4318'
 
 processors:
-  # ESTE PROCESSADOR ENTROU PORQUE A MEDIÇÃO DERRUBOU O ARGUMENTO QUE O EXCLUÍA.
-  #
-  # A versão anterior deste arquivo não tinha processador nenhum, com a justificativa de que
-  # `decouple` "desacopla o envio do ciclo da invocação, que é a mesma aposta que o batch com outro
-  # nome". O raciocínio era plausível e estava errado sobre o que acontece na prática.
-  #
-  # MEDIDO na stack, 14 falhas em 5 minutos e SÓ na função de streaming:
-  #
-  #   failed to make an HTTP request: Post ".../v1/traces": context canceled
-  #   request is cancelled or timed out: ... context canceled
-  #
-  # `context canceled` não é a rede: é a INVOCAÇÃO TERMINANDO com o export em voo. Exportar dentro do
-  # ciclo da invocação só funciona quando a invocação dura mais que o export — e a função de streaming
-  # é justamente a que responde rápido e a que tem mais spans. Sem o `decouple` o trace dela é o que
-  # mais se perde, que é o oposto do que se quer.
-  #
-  # O que ele faz: devolve o controle ao handler e conclui o envio depois, retomando na invocação
-  # seguinte se o ambiente congelar no meio. A aposta continua existindo — ela só deixou de ser a pior
-  # das duas.
   decouple:
 
 exporters:
-  # `otlp_http` e não `otlphttp`: o alias antigo funciona e o coletor avisa, a cada partida de cada
-  # função, que ele está depreciado. Um aviso por invocação polui o log de todo mundo.
-  #
-  # As duas variáveis vêm do `.env` da raiz, que o SST carrega e `functions.ts` repassa a TODA função.
-  # O `${env:...}` é resolvido pelo coletor na partida dele, dentro do sandbox.
   otlp_http/betterstack:
     endpoint: ${env:BETTER_STACK_URL}
     headers:
       Authorization: 'Bearer ${env:BETTER_STACK_API_KEY}'
-    # 30 s, e o número saiu de `net/http: TLS handshake timeout` no log.
-    #
-    # O primeiro export de um container novo paga DNS mais handshake TLS SAINDO DE UM VPC, por NAT. O
-    # default do exportador não cabe nisso, e o que se perde é justamente o trace do cold start — o
-    # mais interessante de todos.
     timeout: 30s
     retry_on_failure:
       enabled: true
       initial_interval: 1s
-      # Curto de propósito: num Lambda não há tempo para insistir muito, e o `decouple` acima já
-      # tirou o export do caminho crítico da resposta.
       max_elapsed_time: 30s
 
 service:
-  # SEM `batch`, e agora a ausência tem uma razão MEDIDA, não só a teórica.
-  #
-  # A razão teórica era que um lote pela metade morre com o congelamento — e ela deixou de valer
-  # quando o `decouple` entrou. O `batch` chegou a ser ligado aqui, junto com
-  # `quarkus.otel.simple=true` nas aplicações: a divisão certa de responsabilidade, com a
-  # aplicação emitindo na hora e o coletor juntando.
-  #
-  # A SAGA PAROU NA VERSÃO 1. Exportar no `onEnd` é exportar DENTRO da transação, e o exportador
-  # do Quarkus despacha num worker do Vert.x que entra na mesma transação:
-  #   ARJUNA012107: CheckedAction::check - atomic action ... commiting with 2 threads active!
-  #   Caused by: java.sql.SQLException: Enlisted connection used without active transaction
-  # Quem esvazia o lote hoje é `TelemetryFlush`, no fim do handler — depois do commit. Com a
-  # aplicação juntando de novo, o `batch` aqui não teria o que juntar.
   pipelines:
     traces:
       receivers: [otlp]
@@ -101,8 +35,6 @@ service:
       processors: [decouple]
       exporters: [otlp_http/betterstack]
 
-  # A telemetria DO COLETOR sobre ele mesmo fica desligada: ela sairia pela mesma conta, medindo o
-  # medidor, e num Lambda o que interessa é o sinal da aplicação.
   telemetry:
     metrics:
       level: none

@@ -8,22 +8,9 @@ import org.axonframework.messaging.eventhandling.annotation.Event;
 
 import java.time.Instant;
 
-/**
- * Evento de domínio: um Post apagado voltou. Disparado por {@code Post.restore(...)}.
- * <p>
- * Restaurar é um fato tanto quanto apagar, e é o par deste evento com o {@link PostDeletedEvent} que faz
- * o replay chegar ao estado certo: quem só gravasse a exclusão reconstruiria como apagado um post que
- * voltou.
- *
- * @param version versão resultante do post depois deste evento
- */
 @Event(namespace = "posts", name = "PostRestored", version = "1.0.0")
 public record PostRestoredEvent(
         @EventTag PostId postId,
-        /*
-         * SEM @EventTag, e a razão está em PostCreatedEvent: o event store JPA do Axon 5.3.1 é
-         * aggregate mode e aceita UMA tag por evento.
-         */
         UserId authorId,
         long version,
         Instant occurredAt

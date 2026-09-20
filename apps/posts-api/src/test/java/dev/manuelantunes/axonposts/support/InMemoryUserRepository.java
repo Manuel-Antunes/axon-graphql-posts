@@ -11,15 +11,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * Repositório de usuários em memória.
- * <p>
- * Guarda o objeto como ele foi salvo, então um {@code Author} volta {@code Author} — que é justamente a
- * propriedade que os testes do {@code CreatePostCommand} exercitam: lá o {@code instanceof} decide se o
- * command aceita ou recusa.
- */
 public final class InMemoryUserRepository implements UserRepository {
-
     private final List<User> users = new ArrayList<>();
 
     public InMemoryUserRepository(User... initial) {
@@ -46,7 +38,6 @@ public final class InMemoryUserRepository implements UserRepository {
                 .findFirst();
     }
 
-    /** Exclui os encerrados, como o adapter real — dois usuários podem ter o mesmo e-mail. */
     @Override
     public Optional<User> findByEmail(Email email) {
         return users.stream()
@@ -59,8 +50,6 @@ public final class InMemoryUserRepository implements UserRepository {
         return users.stream().filter(user -> userIds.contains(user.id())).toList();
     }
 
-    /** Sem filtro em memória, nada a desfazer — ver o mesmo método no {@code InMemoryPostRepository}. */
-    /** Sem {@code @SQLRestriction} em memória, apagado continua visível — daí a busca ser a mesma. */
     @Override
     public Optional<UserId> findDeletedUserIdByAccount(AuthProvider provider, String subject) {
         return users.stream()
@@ -81,7 +70,6 @@ public final class InMemoryUserRepository implements UserRepository {
 
     @Override
     public void restore(UserId userId) {
-        // no-op
     }
 
     @Override

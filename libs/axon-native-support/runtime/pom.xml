@@ -15,15 +15,6 @@
     <name>axon-native-support (runtime)</name>
     <description>Suporte a GraalVM native para o Axon Framework 5 sob a extensão de Quarkus</description>
 
-    <!--
-      Este módulo é quase vazio de propósito, e não é desperdício: uma extensão de Quarkus tem SEMPRE
-      dois artefatos. O de runtime é o que a aplicação declara como dependência, e o único papel dele
-      aqui é carregar o `META-INF/quarkus-extension.properties` com `deployment-artifact=` — é essa
-      linha que faz o augmentation ir buscar o módulo de deployment e, com ele, os `@BuildStep`.
-
-      Nada de código de runtime existe porque não há nada a fazer em runtime: tudo que este suporte faz
-      acontece em BUILD TIME, registrando reflexão e provedores de serviço.
-    -->
     <dependencies>
         <dependency>
             <groupId>io.quarkus</groupId>
@@ -33,7 +24,6 @@
 
     <build>
         <plugins>
-            <!-- Gera o META-INF/quarkus-extension.properties com o ponteiro para o deployment. -->
             <plugin>
                 <groupId>io.quarkus</groupId>
                 <artifactId>quarkus-extension-maven-plugin</artifactId>

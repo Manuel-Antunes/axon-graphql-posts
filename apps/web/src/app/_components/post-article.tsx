@@ -6,9 +6,6 @@ import { VersionBadge } from '@/app/_components/version-badge';
 import { Separator } from '@/components/ui/separator';
 import { getFragmentData, graphql } from '@/gql';
 
-/**
- * O post inteiro. É o ÚNICO fragmento deste projeto que pede `content` — ver `PostCard_post`.
- */
 export const PostArticle_post = graphql(`
   fragment PostArticle_post on Post {
     id

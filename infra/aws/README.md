@@ -1,8 +1,8 @@
-# A mesma saga, em Lambda
+# The same saga, on Lambda
 
-Seis funções, um topic, três filas (mais três DLQ) e um user pool do Cognito. O código de domínio, de
-aplicação e de apresentação é **exatamente o mesmo** — nenhum arquivo que existia antes desta migração
-foi alterado.
+Six functions, one topic, three queues (plus three DLQs) and a Cognito user pool. The domain,
+application and presentation code is **exactly the same** — no file that existed before this migration
+was changed.
 
 ```
                       ┌──────────────────────────────────────────────┐
@@ -12,7 +12,7 @@ foi alterado.
                                       │ posts.PostPreCreated / Updated / Deleted / Restored
                                       ▼
                         ╔═════════════════════════════╗
-                        ║  SNS FIFO  axonposts-events ║   ← o exchange topic, traduzido
+                        ║  SNS FIFO  axonposts-events ║   ← the topic exchange, translated
                         ╚══╤═══════════╤═══════════╤══╝
       filter: PostPreCreated│  PostUpdated│         │PostCreated
                             │  PostDeleted│         │
@@ -26,83 +26,84 @@ foi alterado.
                  TaggingDecide   TaggingReplicate   PostsApiInbox
                   tagging.zip      tagging.zip      posts-api-sqs.zip
                          │
-                         └─ posts.PostCreated ─► de volta ao topic
+                         └─ posts.PostCreated ─► back to the topic
 ```
 
-## Como ler isto, se você conhece a versão em RabbitMQ
+## How to read this if you know the RabbitMQ version
 
-Não é um desenho novo. É `axonposts.events` peça por peça:
+This is not a new design. It is `axonposts.events` piece by piece:
 
-| RabbitMQ | AWS | onde está declarado |
+| RabbitMQ | AWS | where it is declared |
 |---|---|---|
-| exchange topic `axonposts.events` | topic SNS FIFO | `messaging.ts` |
-| binding de cada fila | filter policy da subscription | `messaging.ts` |
-| routing key `posts.PostCreated.<id>` | atributo `axon-message-name` | `AwsEventAttributes` |
-| fila por fatia do fluxo | fila SQS FIFO por fatia | `messaging.ts` |
-| `@Incoming` de cada canal | **o mesmo `@Incoming`** | inalterado |
-| `@AxonOutbox(namespaces="posts")` | **o mesmo `@AxonOutbox`** | inalterado |
+| topic exchange `axonposts.events` | SNS FIFO topic | `messaging.ts` |
+| binding per queue | subscription filter policy | `messaging.ts` |
+| routing key `posts.PostCreated.<id>` | `axon-message-name` attribute | `AwsEventAttributes` |
+| one queue per slice of the flow | one SQS FIFO queue per slice | `messaging.ts` |
+| `@Incoming` on each channel | **the same `@Incoming`** | unchanged |
+| `@AxonOutbox(namespaces="posts")` | **the same `@AxonOutbox`** | unchanged |
 
-A troca de protocolo custou **uma linha de `.properties` por canal**, e foi isso que o
-`ChannelAddressing` existia para comprar — está escrito no Javadoc dele desde antes: *"Protocolo novo
-= uma `ChannelAddressing` a mais"*.
+Switching protocols cost **one `.properties` line per channel**, and that is what `ChannelAddressing`
+existed to buy — it has been written in its Javadoc all along: *"A new protocol = one more
+`ChannelAddressing`"*.
 
-## FIFO não é afinamento
+## FIFO is not tuning
 
-`apps/tagging` **escreve** no stream do `Post` — é ele que apenda o `PostCreated` que completa o post.
-Num event store em *aggregate mode* a posição de um append vem de ter lido o stream antes, então um
-`PostUpdated` que ultrapasse o `PostPreCreated` do mesmo post faz o append seguinte cair em
-`duplicate key value violates unique constraint "uk_aggregateevententry_aggregate"`.
+`apps/tagging` **writes** to the `Post` stream — it is the one appending the `PostCreated` that
+completes the post. In an event store in *aggregate mode* the position of an append comes from having
+read the stream first, so a `PostUpdated` that overtakes the `PostPreCreated` of the same post makes
+the next append land on `duplicate key value violates unique constraint
+"uk_aggregateevententry_aggregate"`.
 
-O `MessageGroupId` é o id do agregado — e ele **já existia**: é o `EventAddress.orderingKey()`, que
-era o terceiro segmento da routing key e lá não ordenava nada (o próprio `application.properties`
-admitia isso por escrito). Aqui ele passa a ser o que faz a ordem existir. Posts diferentes seguem em
-paralelo; dois eventos do mesmo post, não.
+The `MessageGroupId` is the aggregate id — and it **already existed**: it is
+`EventAddress.orderingKey()`, which was the third segment of the routing key and ordered nothing there
+(`application.properties` itself admitted as much in writing). Here it becomes what makes ordering
+exist. Different posts go in parallel; two events of the same post do not.
 
-Numa fila **standard** esta saga não funciona. Não "funciona pior": quebra, de forma intermitente e
-proporcional à carga.
+On a **standard** queue this saga does not work. Not "works worse": it breaks, intermittently and in
+proportion to load.
 
-## Os arquivos
+## The files
 
 ```
-sst.config.ts              na RAIZ porque é onde o CLI o procura — e não contém infraestrutura:
-                           app() mais um `await import("./infra/aws")` dentro de run()
-infra/dist/                os quatro zips (gerados pelos alvos do Nx, ignorados pelo git)
-infra/scripts/             package.sh (atalho para os alvos), build-env.sh, migrate.sh,
+sst.config.ts              at the ROOT because that is where the CLI looks for it — and it holds no
+                           infrastructure: app() plus an `await import("./infra/aws")` inside run()
+infra/dist/                the four zips (generated by the Nx targets, gitignored)
+infra/scripts/             package.sh (a shortcut to the targets), build-env.sh, migrate.sh,
                            discover.sh, e2e.sh
 infra/aws/
-  index.ts                 a fachada: ordem de carga e outputs. Não cria nada.
-  support/                 as DEFINIÇÕES — classes e tipos. Nada aqui cria recurso ao ser importado.
+  index.ts                 the facade: load order and outputs. Creates nothing.
+  support/                 the DEFINITIONS — classes and types. Nothing here creates a resource on import.
     functions.ts             QuarkusFunction, QueueWorker, Migrator, StreamingFunction
-                             + Artifact, o objeto de valor que diz onde o zip está
+                             + Artifact, the value object saying where the zip is
     http-api.ts              HttpApi
-  network/                 o VPC
-  data/                    os DOIS event stores
-  messaging/               topic.ts, queues.ts, routing.ts — o "exchange" traduzido
-  identity/                o user pool do Cognito + o trigger que emite `identity_provider`
-  compute/                 as SEIS funções e o API Gateway
-    platform.ts              onde `support/` encontra os recursos: papel, rede e artefatos
+  network/                 the VPC
+  data/                    the TWO event stores
+  messaging/               topic.ts, queues.ts, routing.ts — the "exchange", translated
+  identity/                the Cognito user pool + the trigger that emits `identity_provider`
+  compute/                 the SIX functions and the API Gateway
+    platform.ts              where `support/` finds the resources: role, network and artifacts
     role.ts, environment.ts, api.ts, workers.ts, migrations.ts
 ```
 
-A seta aponta sempre para o mesmo lado: **quem define não conhece quem instancia**, e quem instancia
-infraestrutura de base não conhece quem a consome. `compute/platform.ts` é o único ponto onde os dois
-lados se encontram — e é por isso que ele existe separado.
+The arrow always points the same way: **the definer does not know the instantiator**, and whoever
+instantiates base infrastructure does not know its consumers. `compute/platform.ts` is the only point
+where the two sides meet — and that is why it exists separately.
 
-### Componentes, e não recursos soltos
+### Components, not loose resources
 
-Tudo que tem satélites é um `ComponentResource`:
+Everything with satellites is a `ComponentResource`:
 
-| componente | filhos |
+| component | children |
 |---|---|
-| `ExecutionRole` | o papel e a política de mensageria |
-| `QuarkusFunction` | a `aws.lambda.Function`, o `command:local:Command` que a constrói e o objeto S3 |
-| `QueueWorker` (estende) | \+ o event source mapping |
-| `Migrator` (estende) | \+ a `aws.lambda.Invocation` que roda a migration |
-| `HttpApi` | a API, a integração, a rota, o stage e a permissão |
+| `ExecutionRole` | the role and the messaging policy |
+| `QuarkusFunction` | the `aws.lambda.Function`, the `command:local:Command` that builds it and the S3 object |
+| `QueueWorker` (extends) | \+ the event source mapping |
+| `Migrator` (extends) | \+ the `aws.lambda.Invocation` that runs the migration |
+| `HttpApi` | the API, the integration, the route, the stage and the permission |
 
-Três coisas concretas que isso compra: **ciclo de vida junto** (o componente é o dono; os filhos
-nascem e morrem com ele), **uma URN própria** por peça — estado e endereço no Pulumi, referenciável e
-substituível como unidade — e uma **árvore de deploy que descreve o sistema**:
+Three concrete things this buys: **a shared lifecycle** (the component is the owner; children are born
+and die with it), **a URN of its own** per piece — state and address in Pulumi, referenceable and
+replaceable as a unit — and a **deploy tree that describes the system**:
 
 ```
 Created  PostsApi axonposts:aws:QuarkusFunction → posts-api-httpBuild command:local:Command
@@ -110,103 +111,105 @@ Created  PostsApi axonposts:aws:QuarkusFunction → posts-api-httpCode aws:s3:Bu
 Created  TaggingMigrate axonposts:aws:QuarkusFunction → TaggingMigrateInvocation aws:lambda:Invocation
 ```
 
-em vez de uma lista plana de nomes sem relação aparente.
+instead of a flat list of names with no apparent relation.
 
-### As migrations rodam sozinhas
+### The migrations run on their own
 
-`Migrator` cria a função **e** a `aws.lambda.Invocation` que a chama durante o `sst deploy`. O `input`
-com o instante atual é o que a faz rodar a cada vez — Flyway é idempotente, então repetir custa uma
-consulta ao histórico. O ganho é que **migration que falha vira deploy que falha**, em vez de uma
-função esquecida e um `missing table [accounts]` na primeira requisição, que foi exatamente como isto
-começou.
+`Migrator` creates the function **and** the `aws.lambda.Invocation` that calls it during `sst deploy`.
+The `input` carrying the current instant is what makes it run every time — Flyway is idempotent, so
+repeating costs one query against the history. The gain is that **a migration that fails becomes a
+deploy that fails**, instead of a forgotten function and a `missing table [accounts]` on the first
+request, which is exactly how this started.
 
-`if (!$dev)` porque em `sst dev` não há artefato publicado para invocar.
+`if (!$dev)` because under `sst dev` there is no published artifact to invoke.
 
-`infra/scripts/migrate.sh` continua existindo para reexecutar à mão quando se quiser.
+`infra/scripts/migrate.sh` still exists to re-run by hand when wanted.
 
-### As seis funções, de três zips
+### The six functions, from three zips
 
-| função | zip | o que a aciona |
+| function | zip | what triggers it |
 |---|---|---|
 | `PostsApi` | `posts-api-http` | API Gateway (`$default`) |
-| `PostsApiInbox` | `posts-api-sqs` | fila `PostsApiCompleted` |
-| `TaggingDecide` | `tagging` | fila `TaggingPrecreated` |
-| `TaggingReplicate` | `tagging` | fila `TaggingChanges` |
-| `PostsMigrate` | `posts-api-sqs` | invocação manual (`QUARKUS_LAMBDA_HANDLER=flyway-migrate`) |
-| `TaggingMigrate` | `tagging` | invocação manual (idem) |
+| `PostsApiInbox` | `posts-api-sqs` | `PostsApiCompleted` queue |
+| `TaggingDecide` | `tagging` | `TaggingPrecreated` queue |
+| `TaggingReplicate` | `tagging` | `TaggingChanges` queue |
+| `PostsMigrate` | `posts-api-sqs` | manual invocation (`QUARKUS_LAMBDA_HANDLER=flyway-migrate`) |
+| `TaggingMigrate` | `tagging` | manual invocation (same) |
 
-As duas últimas são o mesmo artefato das de fila com outra variável de ambiente, porque
-`quarkus.lambda.handler` é configuração de **runtime**. Um zip a menos para construir — e nenhuma
-chance de as migrations empacotadas divergirem das que a aplicação valida com
+The last two are the same artifact as the queue ones with a different environment variable, because
+`quarkus.lambda.handler` is **runtime** configuration. One less zip to build — and no chance of the
+packaged migrations diverging from the ones the application validates with
 `schema-management.strategy=validate`.
 
-O `import` dentro de `run()` é dinâmico de propósito: os módulos de `infra/` criam recursos no topo do
-arquivo, e um `import` estático na raiz os avaliaria antes de `app()` ter rodado.
+The `import` inside `run()` is dynamic on purpose: the `infra/` modules create resources at the top of
+the file, and a static `import` at the root would evaluate them before `app()` had run.
 
-## Construir e subir
-
-```bash
-pnpm add -D sst                        # uma vez
-npx sst deploy --stage dev             # CONSTRÓI os quatro zips, sobe tudo e roda as migrations
-./infra/scripts/e2e.sh                 # a saga inteira, afirmada
-npx sst remove --stage dev             # derruba tudo
-```
-
-**O build não é um passo separado** — cada função declara em `code` o alvo do Nx que a constrói e o
-zip que ele produz, e o `sst deploy` o dispara. Construir à mão continua possível, e é o mesmo alvo:
+## Build and deploy
 
 ```bash
-npx nx run "dev.manuelantunes:axonposts-tagging:lambda"          # nativo, GraalVM da máquina
-npx nx run "dev.manuelantunes:axonposts-tagging:lambda:jvm"      # sem binário nativo
-./infra/scripts/package.sh --native-container                    # os quatro, ELF/Linux
+pnpm add -D sst                        # once
+npx sst deploy --stage dev             # BUILDS the four zips, deploys everything and runs the migrations
+./infra/scripts/e2e.sh                 # the whole saga, asserted
+npx sst remove --stage dev             # tears everything down
 ```
 
-As configurações são três: `native` (default, a GraalVM DESTA máquina), `native-container` (o builder
-image do Mandrel — **de um Mac, o único que produz um binário que o Lambda executa**) e `jvm`. O
-cache é do Nx: o alvo declara `inputs` e `outputs`, então um build sem mudança devolve o zip do cache
-em ~100 ms, e apagar o zip o restaura em vez de reconstruir.
+**The build is not a separate step** — each function declares in `code` the Nx target that builds it
+and the zip that target produces, and `sst deploy` fires it. Building by hand is still possible, and
+it is the same target:
 
-Os scripts descobrem os endereços com `infra/scripts/discover.sh`, que pergunta à **AWS** — não ao
-SST. O motivo é simples: `sst outputs` **não existe** no 4.17.1 (o comando imprime o help), e os
-outputs só aparecem na saída do `sst deploy`. Perguntar à AWS pelos prefixos dos nomes evita inventar
-um segundo lugar da verdade.
+```bash
+npx nx run "dev.manuelantunes:axonposts-tagging:lambda"          # native, this machine's GraalVM
+npx nx run "dev.manuelantunes:axonposts-tagging:lambda:jvm"      # no native binary
+./infra/scripts/package.sh --native-container                    # all four, ELF/Linux
+```
+
+There are three configurations: `native` (the default, THIS machine's GraalVM), `native-container`
+(the Mandrel builder image — **from a Mac, the only one that produces a binary Lambda will execute**)
+and `jvm`. The cache is Nx's: the target declares `inputs` and `outputs`, so a build with no change
+returns the zip from cache in ~100 ms, and deleting the zip restores it instead of rebuilding.
+
+The scripts discover the addresses with `infra/scripts/discover.sh`, which asks **AWS** — not SST. The
+reason is simple: `sst outputs` **does not exist** in 4.17.1 (the command prints the help), and the
+outputs only appear in the output of `sst deploy`. Asking AWS for the name prefixes avoids inventing a
+second source of truth.
 
 ```bash
 eval "$(./infra/scripts/discover.sh)"   # API, ISSUER, USER_POOL, CLIENT_ID, POSTS_MIGRATE, TAGGING_MIGRATE
 ```
 
-**Custo**: NAT gateway e dois RDS `t4g.micro` — na ordem de **US$ 0,08/hora** depois que o ALB e a
-task Fargate do Keycloak saíram (o Cognito cabe no free tier). Esta stack existe para ser derrubada; o
-`sst remove` não é opcional.
+**Cost**: a NAT gateway and two `t4g.micro` RDS instances — on the order of **US$ 0.08/hour** now that
+the ALB and the Keycloak Fargate task are gone (Cognito fits in the free tier). This stack exists to be
+torn down; `sst remove` is not optional.
 
-### Quatro coisas que o SST 4.17.1 faz diferente do que se supõe
+### Four things SST 4.17.1 does differently than assumed
 
-As quatro foram medidas contra a versão instalada, não deduzidas da documentação:
+All four were measured against the installed version, not deduced from the documentation:
 
-1. **`sst.aws.Function` não suporta Java.** Os runtimes do tipo são `nodejs*`, `go`, `rust`,
-   `python3.*` e container. Por isso as seis funções são `aws.lambda.Function` do provider Pulumi
-   cru, que o SST expõe como o global `aws`. O resto da stack continua sendo componentes do SST.
-2. **O código vai por S3.** Os zips têm 59–72 MB e o upload direto do Lambda para em 50 MB (o limite
-   que vale por S3 é o de 250 MB **descompactado**, e eles ocupam 68–83 MB). Daí o bucket e o
-   `sourceCodeHash` — sem o hash, trocar o conteúdo com a mesma chave não atualiza a função e o
-   deploy publica o artefato antigo dizendo que deu certo.
-3. **`dlq` exige o par `{ queue, retry }`.** Passar só `retry` derruba a criação da fila com
-   `Redrive policy does not contain mandatory attribute: deadLetterTargetArn`. E a DLQ de uma fila
-   FIFO também tem de ser FIFO.
-4. **`rawMessageDelivery` não é opção da subscription** — o `SnsTopicQueueSubscriberArgs` expõe
-   `filter` e nada mais. Vai por `transform.subscription`, que chega ao `sns.TopicSubscription` do
-   Pulumi.
-5. **Caminho de arquivo na config é resolvido a partir de `.sst/platform/`, não da raiz.** O
-   `readFileSync` funciona com caminho relativo (ele usa o cwd do processo), mas o `FileAsset` é
-   resolvido pela *engine* do Pulumi, relativa ao diretório do programa — e `infra/aws/dist/x.zip`
-   vira `.sst/platform/infra/aws/dist/x.zip`. Use `$cli.paths.root`.
-6. **No `image` do `Service`, `dockerfile` é relativo ao `context`.** Escrever o caminho completo faz
-   o build procurar `docker/keycloak/docker/keycloak/Dockerfile`.
+1. **`sst.aws.Function` does not support Java.** The type's runtimes are `nodejs*`, `go`, `rust`,
+   `python3.*` and container. That is why the six functions are `aws.lambda.Function` from the raw
+   Pulumi provider, which SST exposes as the global `aws`. The rest of the stack is still SST
+   components.
+2. **The code goes through S3.** The zips are 59–72 MB and a direct Lambda upload stops at 50 MB (the
+   limit that applies through S3 is 250 MB **uncompressed**, and they take 68–83 MB). Hence the bucket
+   and `sourceCodeHash` — without the hash, swapping the content under the same key does not update
+   the function and the deploy publishes the old artifact saying it succeeded.
+3. **`dlq` requires the `{ queue, retry }` pair.** Passing only `retry` fails queue creation with
+   `Redrive policy does not contain mandatory attribute: deadLetterTargetArn`. And the DLQ of a FIFO
+   queue also has to be FIFO.
+4. **`rawMessageDelivery` is not a subscription option** — `SnsTopicQueueSubscriberArgs` exposes
+   `filter` and nothing else. It goes through `transform.subscription`, which reaches Pulumi's
+   `sns.TopicSubscription`.
+5. **A file path in the config resolves from `.sst/platform/`, not from the root.** `readFileSync`
+   works with a relative path (it uses the process cwd), but `FileAsset` is resolved by the Pulumi
+   *engine*, relative to the program directory — and `infra/aws/dist/x.zip` becomes
+   `.sst/platform/infra/aws/dist/x.zip`. Use `$cli.paths.root`.
+6. **In a `Service`'s `image`, `dockerfile` is relative to `context`.** Writing the full path makes the
+   build look for `docker/keycloak/docker/keycloak/Dockerfile`.
 
-### E uma armadilha que vale por si: `✓ Complete` não quer dizer que deu certo
+### And one trap that stands on its own: `✓ Complete` does not mean it worked
 
-O deploy que tropeçou no item 5 imprimiu **`✓ Complete`** na tela, com o URL do Keycloak, e deixou de
-criar as seis funções, o API Gateway e os três objetos no S3. O erro estava só aqui:
+The deploy that tripped over item 5 printed **`✓ Complete`** on screen, with the Keycloak URL, and
+failed to create the six functions, the API Gateway and the three S3 objects. The error was only here:
 
 ```
 $ tail .sst/log/pulumi.log
@@ -215,36 +218,36 @@ error: ... failed to compute asset hash for "source": failed to open asset file
     pulumi:pulumi:Stack axonposts-dev  3 errors
 ```
 
-**Quando um deploy "der certo" e um recurso não aparecer, é `.sst/log/pulumi.log` que responde** — e
-`npx sst diff` confirma, porque ele passa a não enxergar o recurso que falhou ao registrar. Se você usa CDK, Terraform ou SAM, o que
-importa traduzir são cinco coisas:
+**When a deploy "succeeds" and a resource does not show up, `.sst/log/pulumi.log` is what answers** —
+and `npx sst diff` confirms it, because it stops seeing the resource that failed to register. If you
+use CDK, Terraform or SAM, the five things worth translating are:
 
-1. o topic é **FIFO** e as filas também (`ContentBasedDeduplication` desligado — a dedup id vem da
-   mensagem);
-2. cada subscription tem **`RawMessageDelivery = true`**. Sem isso o corpo que chega na fila é o
-   envelope do SNS e o `AxonEventEnvelope` fica aninhado numa string: a ingestão morre com
-   `UnrecognizedPropertyException: Type`, e os atributos não sobrevivem para a filter policy;
-3. cada event source mapping tem **`FunctionResponseTypes: [ReportBatchItemFailures]}`**. Sem isso a
-   AWS **ignora, sem avisar**, a lista que o `SqsChannelIngress` devolve, e o lote volta inteiro;
-4. cada função tem `QUARKUS_PROFILE=lambda,prod` — as **duas** entradas (ver abaixo);
-5. as funções de fila têm `AXONPOSTS_LAMBDA_SQS_CHANNEL` apontando o canal que elas servem — e as de
-   MIGRAÇÃO também, embora nunca leiam fila nenhuma: o Quarkus valida todos os `@ConfigProperty`
-   injetados na partida, e sem valor a função não sobe.
+1. the topic is **FIFO** and so are the queues (`ContentBasedDeduplication` off — the dedup id comes
+   from the message);
+2. each subscription has **`RawMessageDelivery = true`**. Without it the body reaching the queue is the
+   SNS envelope and the `AxonEventEnvelope` ends up nested in a string: ingestion dies with
+   `UnrecognizedPropertyException: Type`, and the attributes do not survive for the filter policy;
+3. each event source mapping has **`FunctionResponseTypes: [ReportBatchItemFailures]}`**. Without it
+   AWS **silently ignores** the list `SqsChannelIngress` returns, and the whole batch comes back;
+4. each function has `QUARKUS_PROFILE=lambda,prod` — **both** entries (see below);
+5. the queue functions have `AXONPOSTS_LAMBDA_SQS_CHANNEL` pointing at the channel they serve — and so
+   do the MIGRATION ones, even though they never read a queue: Quarkus validates every injected
+   `@ConfigProperty` at startup, and without a value the function does not come up.
 
-### A identidade: Cognito, e o Keycloak só em dev
+### Identity: Cognito, and Keycloak only in dev
 
-A aplicação é **apenas resource server** — valida um JWT, lê as roles e deixa o `UserProvisioning`
-criar o perfil na primeira requisição. Não há tela de login, fluxo de consentimento nem federação
-social: nada que exigisse o Keycloak em particular.
+The application is **only a resource server** — it validates a JWT, reads the roles and lets
+`UserProvisioning` create the profile on the first request. There is no login screen, no consent flow
+and no social federation: nothing that required Keycloak in particular.
 
-O Keycloak esteve aqui e saiu. Ele custava uma task Fargate, um ALB e uma imagem no ECR — ordem de
-**US$ 25/mês** — mais um processo a operar, para entregar o que o Cognito entrega dentro do free tier
-e sem nada de pé.
+Keycloak was here and left. It cost a Fargate task, an ALB and an ECR image — on the order of
+**US$ 25/month** — plus one more process to operate, to deliver what Cognito delivers inside the free
+tier and with nothing running.
 
-**Em dev e teste nada mudou.** O Dev Services sobe o Keycloak e importa
-`docker/keycloak/realm-axon-posts.json`; os 155 testes usam aquele realm. A troca vale só para a AWS,
-e o preço dela é uma divergência real entre o que os testes provam e o que a produção executa,
-concentrada em **quatro linhas** do `application-lambda.properties`:
+**In dev and test nothing changed.** Dev Services brings up Keycloak and imports
+`docker/keycloak/realm-axon-posts.json`; the 155 tests use that realm. The swap applies only to AWS,
+and its price is a real divergence between what the tests prove and what production executes,
+concentrated in **four lines** of `application-lambda.properties`:
 
 ```properties
 quarkus.oidc.auth-server-url=${OIDC_ISSUER_URL}
@@ -253,43 +256,45 @@ quarkus.oidc.token.audience=${OIDC_CLIENT_ID}
 quarkus.oidc.roles.role-claim-path=cognito:groups
 ```
 
-A última é a única divergência de **comportamento**: o Cognito escreve os grupos em `cognito:groups`,
-o Keycloak escreve as roles em `realm_access.roles`, que o Quarkus já conhece por default. É ela que
-faz `@RolesAllowed(Role.AUTHOR_CLAIM)` continuar valendo sem uma alteração na aplicação — os grupos do
-pool se chamam `author` e `user`, os mesmos literais do realm. Se ela sumir, toda mutation de escrita
-passa a responder `FORBIDDEN`, e **nenhum teste pega isso**, porque em teste o emissor é outro.
+The last one is the only divergence in **behaviour**: Cognito writes the groups into `cognito:groups`,
+Keycloak writes the roles into `realm_access.roles`, which Quarkus already knows by default. It is what
+keeps `@RolesAllowed(Role.AUTHOR_CLAIM)` working without a change in the application — the pool's
+groups are named `author` and `user`, the same literals as in the realm. If it disappears, every write
+mutation starts answering `FORBIDDEN`, and **no test catches it**, because in test the issuer is a
+different one.
 
-Os três usuários do realm são semeados no pool com os mesmos e-mails, nomes e senhas
-(`segredo123`) — inclusive `promovido@example.com`, que existe para exercitar a promoção
-Reader → Author. Isso exige afrouxar a política de senha do Cognito, que por default pede maiúscula,
-número e símbolo; num sistema de verdade essa é a primeira linha a apagar.
+The realm's three users are seeded into the pool with the same e-mails, names and passwords
+(`segredo123`) — including `promovido@example.com`, which exists to exercise the Reader → Author
+promotion. That requires loosening Cognito's password policy, which by default demands an uppercase
+letter, a digit and a symbol; in a real system that is the first line to delete.
 
-#### A decisão que custa explicar: o bearer é o ID token
+#### The decision that takes explaining: the bearer is the ID token
 
-Não é distração — é consequência de um fato do Cognito. O **access token** dele traz `sub`,
-`username`, `cognito:groups`, `scope` e `client_id`, e **não traz `email`**. E
-`UserProvisioning.linkOrCreate` chama `Email.of(identity.email())`: sem e-mail não há perfil a criar
-nem conta a ligar.
+This is not a distraction — it is a consequence of a fact about Cognito. Its **access token** carries
+`sub`, `username`, `cognito:groups`, `scope` and `client_id`, and **does not carry `email`**. And
+`UserProvisioning.linkOrCreate` calls `Email.of(identity.email())`: with no e-mail there is no profile
+to create and no account to link.
 
-Pôr `email` no access token exige o trigger *pre token generation* **V2_0**, e a documentação da AWS é
-explícita: *"Event versions one, two, and three are available in the Essentials and Plus feature
-plans"*. O tier Lite — o do free tier — só recebe V1_0, que customiza o **ID token**.
+Putting `email` in the access token requires the *pre token generation* trigger **V2_0**, and the AWS
+documentation is explicit: *"Event versions one, two, and three are available in the Essentials and
+Plus feature plans"*. The Lite tier — the free-tier one — only gets V1_0, which customizes the **ID
+token**.
 
-| caminho | `email` no token | custo | mexe na aplicação? |
+| path | `email` in the token | cost | touches the application? |
 |---|---|---|---|
-| **ID token como bearer** ← escolhido | sim | free tier | não |
-| access token + trigger V2_0 | sim | plano Essentials, por usuário ativo | não, mas + um Lambda |
-| access token puro | **não** — quebra | free tier | exigiria mudar `UserProvisioning` |
+| **ID token as bearer** ← chosen | yes | free tier | no |
+| access token + V2_0 trigger | yes | Essentials plan, per active user | no, but + one Lambda |
+| plain access token | **no** — breaks | free tier | would require changing `UserProvisioning` |
 
-O reparo honesto: o ID token é destinado ao **cliente**, não à API. O que torna isto seguro aqui é que
-o `aud` dele é o client id e a aplicação o confere (`quarkus.oidc.token.audience`) — um token emitido
-para outro client do mesmo pool não passa. No dia em que houver mais de um client, ou M2M, a segunda
-linha da tabela deixa de ser opcional.
+The honest caveat: the ID token is meant for the **client**, not for the API. What makes this safe here
+is that its `aud` is the client id and the application checks it
+(`quarkus.oidc.token.audience`) — a token issued for another client of the same pool does not pass. The
+day there is more than one client, or M2M, the second row of the table stops being optional.
 
-#### E o token não sai de um endpoint OAuth2
+#### And the token does not come from an OAuth2 endpoint
 
-O `/oauth2/token` do Cognito aceita `authorization_code`, `client_credentials` e `refresh_token` —
-**não** `password`. Senha vai pela API própria dele, e é por isso que o `e2e.sh` usa a AWS CLI:
+Cognito's `/oauth2/token` accepts `authorization_code`, `client_credentials` and `refresh_token` —
+**not** `password`. A password goes through its own API, and that is why `e2e.sh` uses the AWS CLI:
 
 ```bash
 aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH \
@@ -298,29 +303,29 @@ aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH \
   --query 'AuthenticationResult.IdToken' --output text
 ```
 
-## O que foi medido na conta de verdade
+## What was measured on the real account
 
-Rodado em `us-east-1`, conta 688533750478, com `./infra/aws/e2e.sh`:
+Run in `us-east-1`, account 688533750478, with `./infra/aws/e2e.sh`:
 
 ```
-==> 1. o schema é servido (e o subgraph se declara)      OK  (SDL com @key)
-==> 2. query pública responde SEM token                  OK
-==> 3. mutation SEM token é recusada                     OK  (UNAUTHORIZED, com mensagem)
-==> 4. token do Keycloak                                 OK  (role author)
-==> 5. createPost: nasce na versão 1, SEM tag            OK
-==> 6. a saga fecha                                      OK  versão=2 tags=[Untagged]  após 51s
-==> 7. a atualização também atravessa                    OK  versão=3
+==> 1. the schema is served (and the subgraph declares itself)  OK  (SDL with @key)
+==> 2. public query answers WITHOUT a token                     OK
+==> 3. mutation WITHOUT a token is refused                      OK  (UNAUTHORIZED, with a message)
+==> 4. Keycloak token                                           OK  (author role)
+==> 5. createPost: born at version 1, WITHOUT a tag             OK
+==> 6. the saga closes                                          OK  version=2 tags=[Untagged]  after 51s
+==> 7. the update also gets through                             OK  version=3
 ```
 
-Os **51 segundos** do passo 6 são quase todos cold start: duas JVMs de ~72 MB subindo numa VPC (ENI +
-Hibernate + Axon + OIDC). Com as funções quentes a volta cai para poucos segundos. É o número que
-justifica o binário nativo — `libs/axon-native-support` existe exatamente para isso.
+The **51 seconds** in step 6 are almost all cold start: two ~72 MB JVMs coming up inside a VPC (ENI +
+Hibernate + Axon + OIDC). With the functions warm the round trip drops to a few seconds. It is the
+number that justifies the native binary — `libs/axon-native-support` exists for exactly that.
 
-Depois da saga, **todas as seis filas (três de trabalho, três de DLQ) estavam vazias**: nada preso,
-nenhuma reentrega, nenhuma mensagem-veneno. É o que se espera quando o `ReportBatchItemFailures` e o
-`axon_message_inbox` estão ambos no lugar.
+After the saga, **all six queues (three work, three DLQ) were empty**: nothing stuck, no redelivery, no
+poison message. That is what you expect when `ReportBatchItemFailures` and `axon_message_inbox` are
+both in place.
 
-E a federação responde sem token, como a especificação exige:
+And federation answers without a token, as the specification requires:
 
 ```
 $ _entities(representations: [{__typename:"Post", id:"579e27ff-…"}])
@@ -328,9 +333,9 @@ $ _entities(representations: [{__typename:"Post", id:"579e27ff-…"}])
   "tags":{"edges":[{"node":{"name":"Untagged"}}]}}]
 ```
 
-### Três coisas que só apareceram na AWS
+### Three things that only showed up on AWS
 
-**1. A função de migração não subia — pelo problema que ela existe para resolver.**
+**1. The migration function would not come up — because of the very problem it exists to solve.**
 
 ```
 AxonExtension.init -> JpaEventstoreConfigurer.configure -> getEntityManagerFactory
@@ -338,86 +343,86 @@ Caused by: SchemaManagementException: Schema validation: missing table [accounts
 Quarkus manual initialization failed
 ```
 
-O recorder do Axon é RUNTIME_INIT e toca o EntityManager durante a PARTIDA, antes de qualquer handler
-existir. Com `validate` contra banco vazio a aplicação morre ali — inclusive a função cujo único
-trabalho seria criar as tabelas que faltam. A saída é
-`QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY=none` **só nessa função**: as outras quatro
-continuam com `validate` e continuam recusando subir se entidade e schema divergirem.
+The Axon recorder is RUNTIME_INIT and touches the EntityManager during STARTUP, before any handler
+exists. With `validate` against an empty database the application dies right there — including the
+function whose only job would be to create the missing tables. The way out is
+`QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY=none` **on that function only**: the other four keep
+`validate` and keep refusing to start if entity and schema diverge.
 
-**2. O atributo do SNS é `topic.arn`, com PONTO.** `topic-arn` com hífen é ignorado em silêncio:
+**2. The SNS attribute is `topic.arn`, with a DOT.** `topic-arn` with a hyphen is silently ignored:
 
 ```
 SRMSG19504: Topic arn for channel post-events-out : null
 InvalidParameterException: Invalid parameter: TopicArn or TargetArn Reason: no value for required
 ```
 
-…que chega ao cliente GraphQL como `System error` / `invalid-parameter`, sem nenhuma menção a
-configuração. O nome foi lido do bytecode do conector, não da documentação — ele também usa
-`group.id`, `email.subject`, `sms.phoneNumber`.
+…which reaches the GraphQL client as `System error` / `invalid-parameter`, with no mention of
+configuration anywhere. The name was read from the connector's bytecode, not from the documentation —
+it also uses `group.id`, `email.subject`, `sms.phoneNumber`.
 
-**3. O `iss` do Keycloak vem em minúsculas.** O DNS do ALB é `KeycloakLoadBal-…`, mas o `iss` do token
-é montado a partir do cabeçalho `Host`, que chega minúsculo. DNS é insensível a caixa; `iss` não é.
+**3. Keycloak's `iss` comes in lowercase.** The ALB's DNS is `KeycloakLoadBal-…`, but the token's `iss`
+is assembled from the `Host` header, which arrives lowercased. DNS is case-insensitive; `iss` is not.
 
-E uma quarta, de ferramenta: **`sst outputs` não existe no 4.17.1** — o comando imprime o help. Os
-outputs só saem no `sst deploy`. Daí `infra/aws/discover.sh`, que pergunta à AWS.
+And a fourth one, about tooling: **`sst outputs` does not exist in 4.17.1** — the command prints the
+help. The outputs only come out of `sst deploy`. Hence `infra/aws/discover.sh`, which asks AWS.
 
-## O que NÃO atravessa, e por quê
+## What does not get through, and why
 
-### Subscriptions — nem por WebSocket nem por SSE
+### Subscriptions — neither over WebSocket nor over SSE
 
-Isto foi medido, não deduzido.
+This was measured, not deduced.
 
 
-### E o Cognito trouxe uma quarta, que era o desenho cobrando o que prometeu
+### And Cognito brought a fourth one, which was the design collecting on what it promised
 
-A primeira execução contra o Cognito falhou assim:
-
-```
-==> 5. createPost: nasce na versão 1, SEM tag
-FALHOU: usuário d847b0d6-… já tem conta em KEYCLOAK   (code: BAD_REQUEST)
-```
-
-**Não era um bug — era a regra de domínio funcionando.** O `sub` que o Cognito emite não é o que o
-Keycloak emitia para a mesma pessoa, e como o token do Cognito não traz `identity_provider`,
-`AuthProvider.fromAlias(null)` classificava a identidade como `KEYCLOAK` também. Duas contas do mesmo
-provedor para o mesmo usuário: `Authenticatable.link` recusa, e faz bem.
-
-O conserto foi o que o `V1__initial_schema.sql` já tinha previsto por escrito — *"o CHECK do provider
-vem do enum AuthProvider e é deliberado: acrescentar um provedor passa a exigir uma migration"*:
-
-1. `COGNITO` no enum `AuthProvider` (+ `case "cognito"` no `fromAlias`);
-2. `V6__cognito_provider.sql`, refazendo o `ck_accounts_provider`;
-3. um trigger *pre token generation* **V1_0** (`infra/aws/cognito/identity-provider.mjs`) que põe
-   `identity_provider: "cognito"` no ID token. V1_0 e não V2_0 porque é o ID token que é o bearer — e
-   porque V1_0 é o que o tier Lite oferece.
-
-E o resultado é melhor do que "voltou a funcionar". O log mostra a mesma pessoa atravessando a troca
-de emissor sem virar dois usuários:
+The first run against Cognito failed like this:
 
 ```
-account linking: 44b8b418-… de KEYCLOAK ligada ao usuário d847b0d6-…
-account linking: 44b8b418-… de COGNITO  ligada ao usuário d847b0d6-…
+==> 5. createPost: born at version 1, WITHOUT a tag
+FAILED: user d847b0d6-… already has an account in KEYCLOAK   (code: BAD_REQUEST)
 ```
 
-Uma linha em `users`, duas em `accounts`. É exatamente para isso que o account linking existe, e foi
-preciso trocar o provedor de identidade em produção para exercitá-lo de verdade.
+**It was not a bug — it was the domain rule working.** The `sub` Cognito issues is not the one Keycloak
+issued for the same person, and since the Cognito token does not carry `identity_provider`,
+`AuthProvider.fromAlias(null)` classified the identity as `KEYCLOAK` too. Two accounts from the same
+provider for the same user: `Authenticatable.link` refuses, and rightly so.
 
-### Uma quinta, banal e cara: variável de ambiente sem default derruba a partida
+The fix was what `V1__initial_schema.sql` had already foreseen in writing — *"the provider CHECK comes
+from the AuthProvider enum and is deliberate: adding a provider now requires a migration"*:
 
-`quarkus.oidc.auth-server-url=${OIDC_ISSUER_URL}` **não tem default**, ao contrário da linha `%prod.`
-que ela substitui. Dei a variável só à função de API, e as outras duas do `posts-api` morreram na
-partida:
+1. `COGNITO` in the `AuthProvider` enum (+ `case "cognito"` in `fromAlias`);
+2. `V6__cognito_provider.sql`, rebuilding `ck_accounts_provider`;
+3. a *pre token generation* trigger **V1_0** (`infra/aws/cognito/identity-provider.mjs`) that puts
+   `identity_provider: "cognito"` into the ID token. V1_0 and not V2_0 because the ID token is the
+   bearer — and because V1_0 is what the Lite tier offers.
+
+And the result is better than "it works again". The log shows the same person crossing the issuer swap
+without becoming two users:
+
+```
+account linking: 44b8b418-… from KEYCLOAK linked to user d847b0d6-…
+account linking: 44b8b418-… from COGNITO  linked to user d847b0d6-…
+```
+
+One row in `users`, two in `accounts`. That is exactly what account linking exists for, and it took
+swapping the identity provider in production to exercise it for real.
+
+### A fifth one, banal and expensive: an environment variable with no default kills startup
+
+`quarkus.oidc.auth-server-url=${OIDC_ISSUER_URL}` **has no default**, unlike the `%prod.` line it
+replaces. I gave the variable only to the API function, and the other two `posts-api` functions died at
+startup:
 
 ```
 ConfigurationException: 'quarkus.oidc.auth-server-url' property must be configured
 Quarkus manual initialization failed
 ```
 
-A extensão OIDC inicializa junto com a **aplicação**, não com a primeira requisição — então uma função
-que nunca serve HTTP também precisa da configuração. Por isso o OIDC vive em `postsEnv`, que as três
-compartilham.
+The OIDC extension initializes with the **application**, not with the first request — so a function
+that never serves HTTP needs the configuration too. That is why OIDC lives in `postsEnv`, which all
+three share.
 
-**Confirmado na stack de verdade**, não só no JAR:
+**Confirmed on the real stack**, not just in the JAR:
 
 ```
 $ curl -N -X POST $API/graphql -H 'Accept: text/event-stream' \
@@ -428,83 +433,85 @@ $ curl -i $API/graphql -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' �
 HTTP/2 400
 ```
 
-Vinte e cinco segundos, **zero bytes** — nem o keep-alive de 15 segundos que a porta de SSE emite
-chega. E o upgrade de WebSocket morre no load balancer, antes da aplicação.
+Twenty-five seconds, **zero bytes** — not even the 15-second keep-alive the SSE endpoint emits gets
+through. And the WebSocket upgrade dies at the load balancer, before the application.
 
-**O transporte.** `quarkus-amazon-lambda-http` 3.39.2 monta **um** `APIGatewayV2HTTPResponse` inteiro
-em memória. Procurando no JAR pelos marcadores do protocolo de response streaming da AWS
+**The transport.** `quarkus-amazon-lambda-http` 3.39.2 assembles **one** whole `APIGatewayV2HTTPResponse`
+in memory. Searching the JAR for the markers of AWS's response streaming protocol
 (`vnd.awslambda.http-integration-response`, `RESPONSE_STREAM`, `Lambda-Runtime-Function-Response-Mode`)
-não há **nenhuma** ocorrência — só `Transfer-Encoding`, num tratador que remove o cabeçalho. E o
-`RequestStreamHandler` do `quarkus-amazon-lambda` não é o que o nome sugere: ele dá `InputStream`/
-`OutputStream` sobre o **payload da invocação**, que é bufferizado e devolvido inteiro no retorno. Não
-é streaming de resposta. Response streaming de verdade exige Function URL com
-`InvokeMode=RESPONSE_STREAM` e um runtime que fale aquele protocolo — o API Gateway não o suporta em
-nenhum modo.
+turns up **no** occurrences — only `Transfer-Encoding`, in a handler that strips the header. And the
+`RequestStreamHandler` from `quarkus-amazon-lambda` is not what the name suggests: it gives you an
+`InputStream`/`OutputStream` over the **invocation payload**, which is buffered and returned whole on
+return. That is not response streaming. Real response streaming requires a Function URL with
+`InvokeMode=RESPONSE_STREAM` and a runtime that speaks that protocol — the API Gateway does not support
+it in any mode.
 
-**E o transporte era a metade menor do problema.** `SimpleQueryBus.emitUpdate` é **em processo**: ele
-alcança os assinantes do container onde roda, e mais ninguém. Quem apenda o `PostCreated` que fecha a
-saga é a função de FILA; quem segura a conexão do assinante é a de HTTP, e o Lambda roteia cada
-requisição para um container qualquer. Mesmo com o stream aberto, não havia de onde vir um evento.
+**And the transport was the smaller half of the problem.** `SimpleQueryBus.emitUpdate` is
+**in-process**: it reaches subscribers of the container it runs in, and nobody else. The one appending
+the `PostCreated` that closes the saga is the QUEUE function; the one holding the subscriber's
+connection is the HTTP one, and Lambda routes each request to any container. Even with the stream open,
+there was nowhere for an event to come from.
 
-**AS DUAS FORAM RESOLVIDAS, e nenhuma delas com um fork.**
+**BOTH WERE SOLVED, and neither with a fork.**
 
-| o que estava quebrado | o que resolveu |
+| what was broken | what solved it |
 |---|---|
-| o handler monta a resposta inteira em memória | **não usá-lo**: o perfil `-Plambda-stream` não acrescenta extensão de Lambda nenhuma, e o **AWS Lambda Web Adapter** (layer oficial) roda a aplicação Quarkus HTTP como ela é |
-| o API Gateway não faz response streaming | **Function URL** com `InvokeMode: RESPONSE_STREAM` — é o que `StreamingFunction` cria |
-| a fonte é em processo | **configuração do Axon**: o pacote dos handlers que notificam (`application.post.event`) roda num processor *pooled streaming*, com token store em memória e posição inicial no HEAD. Cada container tem o próprio cursor e lê o EVENT STORE, que é o único lugar que todos enxergam |
+| the handler assembles the whole response in memory | **not using it**: the `-Plambda-stream` profile adds no Lambda extension at all, and the **AWS Lambda Web Adapter** (an official layer) runs the Quarkus HTTP application as it is |
+| the API Gateway does no response streaming | **Function URL** with `InvokeMode: RESPONSE_STREAM` — that is what `StreamingFunction` creates |
+| the source is in-process | **Axon configuration**: the package of the notifying handlers (`application.post.event`) runs in a *pooled streaming* processor, with an in-memory token store and an initial position at HEAD. Every container has its own cursor and reads the EVENT STORE, which is the only place all of them see |
 
-A terceira linha é a que importa entender, porque ela não tem código: `PostCreatedEventHandler` e
-`PostUpdatedEventHandler` continuam sendo um `emit` e mais nada. O que mudou foi **quem os chama** —
-em vez do append local, o processor que lê a tabela de eventos. Quem faz a leitura, o cursor, o lote e
-o retry é o Axon, com o `EventStorageEngine` e o `TokenStore` que a aplicação já configura.
+The third row is the one worth understanding, because it has no code: `PostCreatedEventHandler` and
+`PostUpdatedEventHandler` are still an `emit` and nothing else. What changed is **who calls them** —
+instead of the local append, the processor that reads the events table. Doing the reading, the cursor,
+the batching and the retry is Axon, with the `EventStorageEngine` and the `TokenStore` the application
+already configures.
 
-A projeção **não** foi junto, e a separação é deliberada: materializar uma linha precisa acontecer uma
-vez, na transação do append, e um container congelado entre invocações levaria a materialização com
-ele. Ela mora em `application.post.projection`, que é subscribing. Ver `CLAUDE.md`, *O pacote de um
-event handler escolhe a ENTREGA dele*.
+The projection did **not** go along, and the separation is deliberate: materializing a row has to
+happen once, in the append's transaction, and a container frozen between invocations would take the
+materialization with it. It lives in `application.post.projection`, which is subscribing. See
+`CLAUDE.md`, *A handler's package chooses its DELIVERY*.
 
-**MEDIDO na Function URL**, com a subscription aberta num container e a mutation atendida em outro:
+**MEASURED on the Function URL**, with the subscription open in one container and the mutation served
+by another:
 
 ```
 event: next
 data: {"data":{"onPostUpdated":{"id":"e91dad31-…","title":"editado …","version":2}}}
 ```
 
-A função de API Gateway continua existindo ao lado, e por ela nada disso atravessa — o `curl` acima
-continua valendo para ela. As duas convivem porque são empacotamentos diferentes do mesmo código, e
-uma função só é cobrada quando roda.
+The API Gateway function still exists alongside it, and none of this gets through there — the `curl`
+above still holds for it. The two coexist because they are different packagings of the same code, and a
+function is only billed when it runs.
 
-### O trace distribuído
+### The distributed trace
 
-Com o RabbitMQ a saga inteira era **um trace só**, e de graça: o conector instrumenta os dois lados.
-Aqui isso regride, e por dois motivos independentes:
+With RabbitMQ the whole saga was **a single trace**, for free: the connector instruments both sides.
+Here that regresses, for two independent reasons:
 
-- na **entrada** não há conector — o Lambda entrega o `SQSEvent` direto —, então o `traceparent` teria
-  de ser extraído dos atributos da mensagem à mão;
-- na **saída** depende do conector: `smallrye-reactive-messaging-aws-sqs` traz
-  `SqsOpenTelemetryInstrumenter` e injeta; `smallrye-reactive-messaging-aws-sns` 4.37.0 **não tem
-  pacote de tracing nenhum**.
+- on the **inbound** side there is no connector — Lambda hands over the `SQSEvent` directly — so the
+  `traceparent` would have to be extracted from the message attributes by hand;
+- on the **outbound** side it depends on the connector: `smallrye-reactive-messaging-aws-sqs` brings
+  `SqsOpenTelemetryInstrumenter` and injects; `smallrye-reactive-messaging-aws-sns` 4.37.0 **has no
+  tracing package at all**.
 
-Isto importa mais do que parece, e a razão está no `CLAUDE.md`: um trace pela metade é pior que
-nenhum, porque **a lacuna parece latência**. Enquanto não houver propagação, quem responde "onde o
-tempo foi gasto" são as métricas do `AxonMetrics`, que continuam funcionando porque não dependem de
-trace.
+This matters more than it looks, and the reason is in `CLAUDE.md`: half a trace is worse than none,
+because **the gap looks like latency**. Until there is propagation, the one answering "where was the
+time spent" is `AxonMetrics`, which keeps working because it does not depend on tracing.
 
-### O tamanho, e o cold start
+### The size, and the cold start
 
-75 MB por zip, JVM. Para uma POC tudo bem; para uso real o caminho já está aberto neste projeto —
-`libs/axon-native-support` existe justamente para o binário nativo funcionar, e um Lambda nativo em
-`provided.al2023` é o que torna Quarkus + Lambda interessante em vez de apenas possível.
+75 MB per zip, JVM. Fine for a proof of concept; for real use the path is already open in this project
+— `libs/axon-native-support` exists precisely so the native binary works, and a native Lambda on
+`provided.al2023` is what makes Quarkus + Lambda interesting rather than merely possible.
 
-## As três decisões de empacotamento, e quem as decidiu
+## The three packaging decisions, and who decided them
 
-**Quatro funções e não duas.** Uma função tem UM handler. O `posts-api` tem duas portas de entrada de
-naturezas diferentes (HTTP e fila) que só conviviam porque o processo era longo; o `tagging` tem duas
-filas que existem justamente para ter falha, DLQ e concorrência separadas — juntá-las numa função
-desfaria em runtime a separação comprada na topologia.
+**Four functions and not two.** A function has ONE handler. `posts-api` has two entry points of
+different natures (HTTP and queue) that only coexisted because the process was long-lived; `tagging`
+has two queues that exist precisely to have separate failure, DLQ and concurrency — merging them into
+one function would undo at runtime the separation bought in the topology.
 
-**`libs/axon-aws` e `libs/axon-lambda` são dois módulos**, e quem decidiu foi o build:
+**`libs/axon-aws` and `libs/axon-lambda` are two modules**, and the build is what decided that:
 
 ```
 Build step AmazonLambdaProcessor#discover threw an exception
@@ -512,12 +519,12 @@ Caused by: Multiple handler classes. You have a custom handler class and the AWS
 extension. Please remove one of them from your deployment.
 ```
 
-`quarkus-amazon-lambda-http` **traz** o processador do `quarkus-amazon-lambda`, e ele varre o índice
-inteiro atrás de `RequestHandler`. Não basta a função de HTTP não usar o handler — ele não pode estar
-no classpath dela. A fronteira, então, não é "AWS" contra "não AWS": é por função. Endereçamento de
-saída as três têm; o handler de entrada, só as de fila.
+`quarkus-amazon-lambda-http` **brings** the `quarkus-amazon-lambda` processor, and it scans the entire
+index for a `RequestHandler`. It is not enough for the HTTP function not to use the handler — it cannot
+be on its classpath. The boundary, then, is not "AWS" versus "not AWS": it is per function. All three
+have outbound addressing; only the queue ones have the inbound handler.
 
-**O conector in-memory é dependência de produção**, e tem dois papéis: nas funções de fila é o que
-deixa os `@Incoming` existentes continuarem sendo a porta de entrada; na de API Gateway é o objeto
-nulo do canal `post-completed-in`, que está declarado sem perfil no `application.properties` e não
-pode ser removido por um arquivo de perfil — só sobrescrito.
+**The in-memory connector is a production dependency**, and it has two roles: in the queue functions it
+is what lets the existing `@Incoming` methods stay the entry point; in the API Gateway one it is the
+null object for the `post-completed-in` channel, which is declared without a profile in
+`application.properties` and cannot be removed by a profile file — only overridden.

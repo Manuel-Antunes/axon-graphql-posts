@@ -28,26 +28,12 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * Testes puros de domínio: decidir e evoluir, sem nenhum framework no caminho — nem Axon, nem Spring,
- * nem JPA, mesmo a entidade sendo mapeada. O único colaborador é o {@link RecordingDomainEvents}, que é
- * a porta de saída de eventos do próprio domínio.
- */
 class PostTest {
-
     private static final Instant T0 = Instant.parse("2026-09-05T12:00:00Z");
     private static final Instant T1 = T0.plusSeconds(60);
 
-    /**
-     * A Tag como o domínio a vê aqui: uma referência, com id e nome e nada mais. É a mesma forma que o
-     * replay produz, e basta — {@code Post} só compara tags por id.
-     */
     private static final Tag UNTAGGED = Tag.reference(TagId.of("tag-1"), TagName.of("Untagged"));
 
-    /**
-     * O autor. O {@code Post} só precisa do id dele — quem garante que esse id existe e é de um autor é a
-     * chave estrangeira, não uma consulta.
-     */
     private static final Author AUTHOR = UserFixtures.author();
 
     private final RecordingDomainEvents events = new RecordingDomainEvents();
@@ -72,11 +58,6 @@ class PostTest {
         assertThat(post.publishedAt()).isNull();
     }
 
-    /**
-     * O outro caminho de {@code create}: com tags, os DOIS eventos saem na mesma unidade de trabalho e o
-     * post já nasce completo, na versão 2. É o que o {@code createPost} faria se a borda GraphQL
-     * oferecesse tags — e é a prova de que a saga é um caminho, não o único.
-     */
     @Test
     void createWithTagsRaisesBothEventsAndThePostIsBornComplete() {
         PostId id = PostId.newId();
@@ -106,11 +87,6 @@ class PostTest {
         assertThat(post.version()).isEqualTo(new PostVersion(2));
     }
 
-    /**
-     * A invariante que protege a saga de uma decisão de tagueamento entregue duas vezes. Ela é do
-     * AGREGADO de propósito: quem transforma esta exceção em "entrega duplicada, tudo bem" é o command
-     * handler, que é quem conhece o contexto da mensagem.
-     */
     @Test
     void completingAnAlreadyCompletePostIsRejected() {
         Post post = preCreatedPost();
@@ -161,7 +137,7 @@ class PostTest {
                 List.of(new PostUpdatedEvent.Tag("tag-1", "Untagged")), 3, T1));
         assertThat(post.title()).isEqualTo(PostTitle.of("Novo título"));
         assertThat(post.tags()).containsExactly(UNTAGGED);
-        assertThat(post.version()).isEqualTo(new PostVersion(3)); // criado + tag + update
+        assertThat(post.version()).isEqualTo(new PostVersion(3));
     }
 
     @Test
@@ -198,7 +174,6 @@ class PostTest {
         decided.update(null, "outro conteúdo", AUTHOR, T1, events);
         sourced.on((PostUpdatedEvent) events.single());
 
-        // decidir e reconstituir passam pelo mesmo @EventSourcingHandler: não podem divergir
         assertThat(decided.title()).isEqualTo(sourced.title());
         assertThat(decided.content()).isEqualTo(sourced.content());
         assertThat(decided.updatedAt()).isEqualTo(sourced.updatedAt());
@@ -222,7 +197,6 @@ class PostTest {
         post.assignTag(UNTAGGED, T1, events);
         PostUpdatedEvent event = (PostUpdatedEvent) events.single();
 
-        // é o que acontece de verdade: o domínio aplica ao decidir, e o Axon aplica ao apendar
         post.on(event);
         post.on(event);
 
@@ -253,7 +227,6 @@ class PostTest {
         assertThatThrownBy(() -> post.delete(AUTHOR, T1, events))
                 .isInstanceOf(AlreadyDeletedException.class);
 
-        // a guarda do mixin roda ANTES de existir evento: nada foi disparado
         assertThat(events.raised()).isEmpty();
     }
 
@@ -287,7 +260,6 @@ class PostTest {
         post.delete(AUTHOR, T1, events);
         PostDeletedEvent event = (PostDeletedEvent) events.single();
 
-        // o domínio já aplicou ao decidir; o Axon aplica de novo ao apendar
         post.on(event);
         post.on(event);
 
@@ -305,7 +277,6 @@ class PostTest {
         assertThatThrownBy(() -> post.delete(intruso, T1, events))
                 .isInstanceOf(NotThePostAuthorException.class);
 
-        // a guarda roda antes de qualquer evento: nada foi disparado
         assertThat(events.raised()).isEmpty();
     }
 
@@ -315,16 +286,11 @@ class PostTest {
         post.delete(AUTHOR, T0, events);
         events.clear();
 
-        // o agregado veio do stream, então o author está reconstituído mesmo com a linha escondida
         assertThatThrownBy(() -> post.restore(Author.reference(UserId.of("outro-autor")), T1, events))
                 .isInstanceOf(NotThePostAuthorException.class);
         assertThat(events.raised()).isEmpty();
     }
 
-    /**
-     * O post como o stream o devolve: pré-criado, versão 1, sem tag. É o estado em que a saga de
-     * tagueamento o encontra, e o ponto de partida da maioria dos testes daqui.
-     */
     private Post preCreatedPost() {
         return new Post(new PostPreCreatedEvent(
                 PostId.of("post-1"), "Título", "conteúdo", UserFixtures.AUTHOR_ID, T0));

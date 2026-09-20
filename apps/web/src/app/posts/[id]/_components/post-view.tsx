@@ -33,8 +33,6 @@ export function PostView({ id }: { id: string }) {
   const { session, isAuthor } = useSession();
   const [deleted, setDeleted] = useState(false);
 
-  // Não há `loading`: o dado já veio do `PreloadQuery` e o `useSuspenseQuery` suspendeu enquanto ele
-  // não tinha chegado. Quem desenha a espera é o `Suspense` do `page.tsx`.
   if (error)
     return <ErrorNotice title="Não foi possível ler o post" error={error} />;
 
