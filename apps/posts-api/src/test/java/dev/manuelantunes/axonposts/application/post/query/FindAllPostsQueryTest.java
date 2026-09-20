@@ -10,7 +10,7 @@ import dev.manuelantunes.axonposts.application.post.view.PostViewMapper;
 import dev.manuelantunes.axonposts.application.tag.view.TagView;
 import dev.manuelantunes.axonposts.domain.tag.Tag;
 import dev.manuelantunes.axonposts.support.InMemoryPostRepository;
-import dev.manuelantunes.axonposts.support.UserFixtures;
+import dev.manuelantunes.axonposts.testing.UserFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 

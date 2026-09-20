@@ -18,8 +18,8 @@ import dev.manuelantunes.axonposts.domain.tag.Tag;
 import dev.manuelantunes.axonposts.domain.user.Author;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagName;
-import dev.manuelantunes.axonposts.support.RecordingDomainEvents;
-import dev.manuelantunes.axonposts.support.UserFixtures;
+import dev.manuelantunes.axonposts.testing.RecordingDomainEvents;
+import dev.manuelantunes.axonposts.testing.UserFixtures;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;

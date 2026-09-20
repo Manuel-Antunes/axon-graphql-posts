@@ -1,0 +1,46 @@
+{
+  "name": "dev.manuelantunes:axonposts-posts",
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": [
+        "^publish-local"
+      ],
+      "inputs": [
+        "default",
+        "^default"
+      ],
+      "outputs": [
+        "{projectRoot}/target/surefire-reports",
+        "{projectRoot}/target/jacoco-report"
+      ],
+      "metadata": {
+        "description": "Os testes DESTE módulo, com `-pl`. O `dependsOn: [^install]` é o alvo INFERIDO pelo @nx/maven: é o Nx que publica as dependências no ~/.m2, na ordem que o grafo dele diz, sem lista escrita à mão. O alvo tem o mesmo nome do inferido e o substitui por inteiro porque `executor`, `dependsOn` e `outputs` estão declarados aqui — MEDIDO: sem os três, ele se FUNDE e herda o `{projectRoot}/target/nx-build-state.json` como saída."
+      },
+      "options": {
+        "forwardAllArgs": false,
+        "command": "./mvnw test -pl libs/posts -Dtest='!*E2ETest,!*IT' -Dsurefire.failIfNoSpecifiedTests=false"
+      }
+    },
+    "publish-local": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": [
+        "^publish-local"
+      ],
+      "inputs": [
+        "default",
+        "^default"
+      ],
+      "outputs": [],
+      "metadata": {
+        "description": "Instala o JAR deste módulo no `~/.m2`, que é de onde o `-pl` de quem depende dele o resolve. O `dependsOn: [^publish-local]` deixa a ORDEM com o grafo do Nx — é o Nx gerenciando o publish. NÃO se usa o `mvn-install` inferido pelo @nx/maven para isso: MEDIDO, ele expande em ~155 tarefas (uma por fase do ciclo de vida, de cada dependência), o Nx marcou 65 delas como flaky e o log de uma execução passou de 130 MB. Um alvo por módulo são NOVE tarefas."
+      },
+      "options": {
+        "forwardAllArgs": false,
+        "command": "./mvnw install -DskipTests -q -pl libs/posts"
+      }
+    }
+  }
+}

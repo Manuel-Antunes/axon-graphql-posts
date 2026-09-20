@@ -1,6 +1,5 @@
 package dev.manuelantunes.axonposts.e2e;
 
-import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.Test;
 
 import dev.manuelantunes.axonposts.support.AbstractGraphQlE2ETest;
@@ -50,16 +49,13 @@ class BatchLoadingE2ETest extends AbstractGraphQlE2ETest {
     /**
      * Executa a consulta pedindo {@code n} posts e devolve quantos statements o Hibernate preparou.
      * <p>
-     * A janela de medição começa em {@code statisticsOfAQuietDatabase()}, e não num {@code clear()}
-     * solto: o processor que avisa os assinantes é assíncrono e conta na MESMA estatística. Ver o
-     * Javadoc daquele método.
+     * O custo é o MENOR de três execuções, e não o de uma: o processor que avisa os assinantes é
+     * assíncrono e conta na MESMA estatística, então ele pode acordar no meio da janela. Ver o
+     * Javadoc de {@code cheapestStatementCount}.
      */
     private long statementsFor(int n, int expectedPosts) {
-        Statistics statistics = statisticsOfAQuietDatabase();
-
-        assertThat(anonymous.execute(FAT_QUERY, "n", n).list("posts.edges")).hasSize(expectedPosts);
-
-        return statistics.getPrepareStatementCount();
+        return cheapestStatementCount(() ->
+                assertThat(anonymous.execute(FAT_QUERY, "n", n).list("posts.edges")).hasSize(expectedPosts));
     }
 
     @Test

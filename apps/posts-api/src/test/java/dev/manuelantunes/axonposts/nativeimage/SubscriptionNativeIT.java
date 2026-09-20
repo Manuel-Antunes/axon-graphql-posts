@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import dev.manuelantunes.axonposts.support.GraphQl;
 import dev.manuelantunes.axonposts.support.SseSubscriptions;
 import dev.manuelantunes.axonposts.support.WebSocketSubscriptions;
+import dev.manuelantunes.axonposts.support.RequiresNativeArtifact;
 import io.quarkus.test.junit.QuarkusIntegrationTest;
 import io.restassured.RestAssured;
 
@@ -25,6 +26,7 @@ import io.restassured.RestAssured;
  * {@code SseSubscriptionE2ETest}.
  */
 @QuarkusIntegrationTest
+@RequiresNativeArtifact
 class SubscriptionNativeIT {
 
     private static final String ON_CREATED = "subscription { onPostCreated { title version } }";

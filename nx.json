@@ -15,8 +15,7 @@
       "{workspaceRoot}/apps/*/pom.xml",
       "{workspaceRoot}/apps/*/src/**/*.java",
       "{workspaceRoot}/libs/**/pom.xml",
-      "{workspaceRoot}/libs/**/src/**/*.java",
-      "{workspaceRoot}/infra/scripts/build-env.sh"
+      "{workspaceRoot}/libs/**/src/**/*.java"
     ],
     "quarkusTest": [
       "default",
@@ -24,9 +23,9 @@
       "{workspaceRoot}/.mvn/**/*",
       "{workspaceRoot}/libs/**/pom.xml",
       "{workspaceRoot}/libs/**/src/main/**/*",
+      "{workspaceRoot}/libs/**/src/test/**/*",
       "{workspaceRoot}/docker/keycloak/**/*",
-      "{workspaceRoot}/docker/postgres/**/*",
-      "{workspaceRoot}/infra/scripts/build-env.sh"
+      "{workspaceRoot}/docker/postgres/**/*"
     ],
     "quarkusStack": [
       "{workspaceRoot}/pom.xml",
@@ -39,8 +38,7 @@
       "{workspaceRoot}/apps/tagging/pom.xml",
       "{workspaceRoot}/apps/tagging/src/main/**/*",
       "{workspaceRoot}/docker-compose.yml",
-      "{workspaceRoot}/docker/**/*",
-      "{workspaceRoot}/infra/scripts/build-env.sh"
+      "{workspaceRoot}/docker/**/*"
     ],
     "quarkusLambda": [
       "production",
@@ -48,13 +46,15 @@
       "{workspaceRoot}/.mvn/**/*",
       "{workspaceRoot}/libs/**/pom.xml",
       "{workspaceRoot}/libs/**/src/main/**/*",
-      "{workspaceRoot}/infra/lambda/collector.yaml",
-      "{workspaceRoot}/infra/scripts/build-env.sh"
+      "{workspaceRoot}/infra/lambda/collector.yaml"
     ]
   },
   "plugins": [
     {
-      "plugin": "@nx/maven"
+      "plugin": "@nx/maven",
+      "options": {
+        "targetNamePrefix": "mvn-"
+      }
     },
     {
       "plugin": "@nx/eslint/plugin",

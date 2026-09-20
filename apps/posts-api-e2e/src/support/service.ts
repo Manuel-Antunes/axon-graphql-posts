@@ -14,16 +14,17 @@ import { WORKSPACE_ROOT } from "./docker";
 import { sleep } from "./posts-api";
 
 /**
- * O `java` que roda os artefatos — e NÃO é o do PATH.
+ * O `java` que roda os artefatos.
  *
- * MEDIDO nesta máquina: o shell traz um JDK 17, e um `quarkus-run.jar` compilado com `release 21`
- * sai com CÓDIGO 1 E LOG VAZIO nele. Nem `UnsupportedClassVersionError`, nem uma linha em stderr —
- * o sintoma é indistinguível de "a aplicação morreu na partida", e custou uma espera de 120s para
- * dizer nada.
+ * Honra `JAVA_HOME` antes do PATH, que é o que o próprio Maven faz — e desde que `JAVA_HOME` foi
+ * para o `~/.zshenv` (e não mais só para o `.zshrc`, que o zsh só lê em shell INTERATIVO) as duas
+ * coisas apontam para o mesmo JDK, aqui e em qualquer ferramenta sem terminal.
  *
- * Quem garante um JDK serviçável é o `infra/scripts/build-env.sh`, que o alvo do Nx põe na frente do
- * `vitest`: ele acha um JDK >= 21 e exporta `JAVA_HOME`. Aqui só se honra o que ele decidiu — a
- * busca não é reescrita, porque duas buscas divergem.
+ * A distinção continua importando pelo modo de falhar: MEDIDO nesta máquina, um `quarkus-run.jar`
+ * compilado com `release 21` sob um JDK 17 sai com CÓDIGO 1 E LOG VAZIO — sem
+ * `UnsupportedClassVersionError`, sem uma linha em stderr. O sintoma é indistinguível de "a
+ * aplicação morreu na partida", e é por isso que `waitUntilReady` delata a morte precoce em vez de
+ * esperar o prazo inteiro.
  */
 const JAVA = process.env.JAVA_HOME ? join(process.env.JAVA_HOME, "bin", "java") : "java";
 

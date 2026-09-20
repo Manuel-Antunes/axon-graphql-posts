@@ -55,7 +55,17 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-        </dependencies>
+            <!--
+          `quarkus-junit5-mockito` e não `mockito-core` puro: ele traz o `@InjectMock`, que SUBSTITUI
+          um bean do CDI dentro de um `@QuarkusTest` em vez de só criar um objeto solto. É a
+          diferença entre testar o grafo de verdade com uma peça trocada e testar uma peça sozinha.
+        -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5-mockito</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
     </dependencyManagement>
 
     <dependencies>
@@ -297,6 +307,13 @@
             <artifactId>quarkus-jacoco</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Os fixtures compartilhados; `test` é o que os mantém fora do artefato publicado. -->
+        <dependency>
+            <groupId>dev.manuelantunes</groupId>
+            <artifactId>axonposts-test-support</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -316,54 +333,7 @@
         </resources>
         <plugins>
             <!-- ==== O SCHEMA COMO SCRIPT DE INICIALIZAÇÃO ========================================= -->
-            <!-- Concatena as migrations num único `db/init/schema.sql`, que vai para o classpath e é o
-                 que o Dev Services do Postgres executa ao CRIAR o container.
-
-                 POR QUE O SCHEMA PRECISA EXISTIR ANTES DA APLICAÇÃO SUBIR
-                 =========================================================
-                 Porque `migrate-at-start` perdeu a corrida. `AxonExtension.init` é um recorder de
-                 RUNTIME_INIT que resolve o event storage engine e, ao fazê-lo, toca o EntityManager —
-                 construindo a persistence unit ANTES de o Flyway ter a vez. Com
-                 `schema-management.strategy=validate` contra um banco vazio a aplicação morre com
-                 `Schema validation: missing table [accounts]`, e adiar dentro do ComponentBuilder não
-                 resolve: a lambda é chamada de dentro do próprio init.
-
-                 Com o event store em memória isso nunca apareceu — o Axon não tocava JPA na partida.
-
-                 A saída é a que vale em produção de qualquer jeito: migrar FORA do processo. Em dev e
-                 teste quem faz isso é este script, no `initdb` do container; no compose e em produção é
-                 o serviço `flyway`, que roda antes da aplicação. E o gate do `validate` CONTINUA
-                 valendo, porque o script é gerado das próprias migrations: entidade que divergir delas
-                 ainda derruba a partida.
-
-                 A ordem vem do `<sort>` do Ant, não da ordem que o filesystem devolve — que é
-                 arbitrária e faria a V4 rodar antes da V1 em alguma máquina, sem aviso. -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-antrun-plugin</artifactId>
-                <version>${antrun-plugin.version}</version>
-                <executions>
-                    <execution>
-                        <id>db-init-script</id>
-                        <phase>process-resources</phase>
-                        <goals>
-                            <goal>run</goal>
-                        </goals>
-                        <configuration>
-                            <target>
-                                <concat destfile="${project.build.outputDirectory}/db/init/schema.sql"
-                                        fixlastline="true">
-                                    <sort>
-                                        <fileset dir="${project.build.outputDirectory}/db/migration"
-                                                 includes="V*.sql"/>
-                                    </sort>
-                                </concat>
-                            </target>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
+<plugin>
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>quarkus-maven-plugin</artifactId>
                 <version>${quarkus.platform.version}</version>
@@ -416,6 +386,15 @@
                         <arg>-Amapstruct.unmappedTargetPolicy=ERROR</arg>
                         <arg>-Amapstruct.defaultComponentModel=jakarta-cdi</arg>
                     </compilerArgs>
+                </configuration>
+            </plugin>
+            <!-- Este módulo mede cobertura pelo `quarkus-jacoco`; o plugin herdado do pom raiz
+                 é para as libs, e dois agentes no mesmo módulo dão dois `.exec` que não somam. -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
                 </configuration>
             </plugin>
             <plugin>

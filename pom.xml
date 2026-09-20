@@ -52,6 +52,7 @@
     <module>libs/platform</module>
     <module>libs/users</module>
     <module>libs/posts</module>
+    <module>libs/test-support</module>
     <module>libs/axon-channels</module>
     <module>libs/axon-aws</module>
     <module>libs/axon-lambda</module>
@@ -85,8 +86,8 @@
     <assertj.version>3.27.6</assertj.version>
     <surefire-plugin.version>3.5.3</surefire-plugin.version>
     <compiler-plugin.version>3.14.0</compiler-plugin.version>
-    <antrun-plugin.version>3.1.0</antrun-plugin.version>
     <spotless-plugin.version>2.46.1</spotless-plugin.version>
+    <jacoco-plugin.version>0.8.13</jacoco-plugin.version>
     <error-prone.version>2.41.0</error-prone.version>
   </properties>
 
@@ -178,6 +179,48 @@
             <arg>-Xplugin:ErrorProne -Xep:InvalidParam:OFF -Xep:EscapedEntity:OFF -Xep:MissingSummary:OFF</arg>
           </compilerArgs>
         </configuration>
+      </plugin>
+
+      <!--
+        A COBERTURA DAS LIBS — e por que ela não é o `quarkus-jacoco`.
+
+        Os dois apps usam a extensão do Quarkus, que instrumenta o que o augmentation produz e escreve
+        em `target/jacoco-report`. As libs não são aplicações Quarkus: são JARs comuns, e para elas o
+        agente é o plugin de sempre. Misturar os dois no mesmo módulo é contraindicado pela própria
+        documentação do Quarkus — dois agentes, dois `.exec`, números que não somam.
+
+        Por isso este plugin é declarado aqui e DESLIGADO nos dois apps (`<skip>` no pom de cada um).
+        Sem ele, `libs/` — onde mora o domínio inteiro deste projeto — não reportava uma linha.
+      -->
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>${jacoco-plugin.version}</version>
+        <executions>
+          <execution>
+            <id>prepare-agent</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>report</id>
+            <phase>test</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+            <configuration>
+              <!-- O mesmo caminho que a extensão do Quarkus usa nos apps, para que ler cobertura
+                   seja o mesmo gesto em qualquer módulo. -->
+              <outputDirectory>${project.build.directory}/jacoco-report</outputDirectory>
+              <formats>
+                <format>HTML</format>
+                <format>CSV</format>
+                <format>XML</format>
+              </formats>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
 
       <!--

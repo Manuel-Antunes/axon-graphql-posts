@@ -25,6 +25,31 @@
             <artifactId>axon-native-support</artifactId>
             <version>${project.version}</version>
         </dependency>
+
+        <!--
+          O TESTE DESTA EXTENSÃO — e ele precisa do Axon só para os FIXTURES.
+
+          O processor não depende do Axon em tempo de compilação: ele trabalha sobre o índice Jandex e
+          nomeia as anotações por `DotName`, como string. Mas um teste honesto precisa de classes
+          ANOTADAS DE VERDADE para indexar — senão ele estaria afirmando sobre um índice que ele mesmo
+          inventou, e não sobre o que o Quarkus entrega.
+        -->
+        <dependency>
+            <groupId>org.axonframework</groupId>
+            <artifactId>axon-eventsourcing</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

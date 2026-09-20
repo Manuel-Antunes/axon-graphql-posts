@@ -1,6 +1,65 @@
 {
   "name": "dev.manuelantunes:axonposts-tagging",
   "targets": {
+    "test": {
+      "dependsOn": [
+        "^publish-local"
+      ],
+      "inputs": [
+        "default",
+        "^default"
+      ],
+      "outputs": [
+        "{projectRoot}/target/surefire-reports",
+        "{projectRoot}/target/jacoco-report"
+      ],
+      "options": {
+        "forwardAllArgs": false,
+        "command": "./mvnw clean test -pl apps/tagging -am -Dtest='!*E2ETest,!*IT' -Dsurefire.failIfNoSpecifiedTests=false"
+      },
+      "metadata": {
+        "description": "Os testes de UNIDADE e fiação deste módulo, com `-pl`. O `^publish-local` é quem publica as dependências no ~/.m2, e a ORDEM vem do grafo do Nx. E não há `build-env.sh` na frente — o JDK vem do ambiente, que é onde ele tem de vir. O `clean` NÃO é zelo e foi medido: sem ele a suíte passa a falhar com `Could not load class with name` / `NoClassDefFoundError` no augmentation, e volta a passar com ele. Com `-pl` ele limpa SÓ este módulo, então custa pouco. **Este app roda com `-am`, e os dois flags foram MEDIDOS.** Sem `-am` (as libs vindo como JAR do ~/.m2) o augmentation do Quarkus falha 6 de 6 com `Unsatisfied dependency ... PostViewMapper`; com `-am` elas entram no reator como DIRETÓRIOS e ele passa. O `clean` melhora as chances da intermitência que o CLAUDE.md documenta. O preço do `-am` é as libs recompilarem e reexecutarem os testes delas aqui — é o que se paga por este módulo ser o único com augmentation pesado."
+      }
+    },
+    "test:e2e": {
+      "dependsOn": [
+        "^publish-local"
+      ],
+      "inputs": [
+        "default",
+        "^default"
+      ],
+      "outputs": [
+        "{projectRoot}/target/surefire-reports",
+        "{projectRoot}/target/jacoco-report"
+      ],
+      "options": {
+        "forwardAllArgs": false,
+        "command": "./mvnw clean test -pl apps/tagging -am -Dtest='*E2ETest' -Dsurefire.failIfNoSpecifiedTests=false"
+      },
+      "metadata": {
+        "description": "Os testes ponta a ponta deste módulo, com `-pl`. O `^publish-local` é quem publica as dependências no ~/.m2, e a ORDEM vem do grafo do Nx. E não há `build-env.sh` na frente — o JDK vem do ambiente, que é onde ele tem de vir. O `clean` NÃO é zelo e foi medido: sem ele a suíte passa a falhar com `Could not load class with name` / `NoClassDefFoundError` no augmentation, e volta a passar com ele. Com `-pl` ele limpa SÓ este módulo, então custa pouco. **Este app roda com `-am`, e os dois flags foram MEDIDOS.** Sem `-am` (as libs vindo como JAR do ~/.m2) o augmentation do Quarkus falha 6 de 6 com `Unsatisfied dependency ... PostViewMapper`; com `-am` elas entram no reator como DIRETÓRIOS e ele passa. O `clean` melhora as chances da intermitência que o CLAUDE.md documenta. O preço do `-am` é as libs recompilarem e reexecutarem os testes delas aqui — é o que se paga por este módulo ser o único com augmentation pesado."
+      }
+    },
+    "publish-local": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": [
+        "^publish-local"
+      ],
+      "inputs": [
+        "default",
+        "^default"
+      ],
+      "outputs": [],
+      "metadata": {
+        "description": "Instala o JAR deste módulo no `~/.m2`, que é de onde o `-pl` de quem depende dele o resolve. O `dependsOn: [^publish-local]` deixa a ORDEM com o grafo do Nx — é o Nx gerenciando o publish. NÃO se usa o `mvn-install` inferido pelo @nx/maven para isso: MEDIDO, ele expande em ~155 tarefas (uma por fase do ciclo de vida, de cada dependência), o Nx marcou 65 delas como flaky e o log de uma execução passou de 130 MB. Um alvo por módulo são NOVE tarefas."
+      },
+      "options": {
+        "forwardAllArgs": false,
+        "command": "./mvnw install -DskipTests -q -pl apps/tagging"
+      }
+    },
     "serve": {
       "executor": "nx:run-commands",
       "cache": false,
@@ -20,7 +79,7 @@
       ],
       "defaultConfiguration": "native",
       "metadata": {
-        "description": "O zip das DUAS funções de tagueamento (perfil Maven lambda). Configurações: native (default, a GraalVM da MÁQUINA — num Mac o binário é Mach-O e só serve para rodar aqui), native-container (builder image do Mandrel, o único que produz o ELF/Linux que o Lambda executa) e jvm."
+        "description": "O zip das DUAS funções de tagueamento (perfil Maven lambda). Configurações: native (default, a GraalVM da MÁQUINA — num Mac o binário é Mach-O e só serve para rodar aqui), native-container (builder image do Mandrel, o único que produz o ELF/Linux que o Lambda executa) e jvm. O `-Pnative-clt-toolchain` é o que sobrou do antigo `build-env.sh`: ele injeta o `-isysroot` apontando para o symlink `MacOSX.sdk` das Command Line Tools. MEDIDO — sem ele, o SDK 27 que o `xcode-select` entrega por default quebra o linker com `libSystem.B.tbd: error: unknown architecture`. Não vai na configuração `native-container` porque lá a compilação acontece DENTRO do builder image do Mandrel, onde esse caminho não existe."
       },
       "options": {
         "parallel": false,
@@ -33,7 +92,7 @@
             "description": "infra/dist é gitignored: num clone novo ele não existe."
           },
           {
-            "command": "infra/scripts/build-env.sh ./mvnw package -DskipTests -Plambda {args.mvnFlags} {args.extraFlags}",
+            "command": "./mvnw package -DskipTests -Plambda {args.mvnFlags} {args.extraFlags}",
             "description": "O gatilho do nativo é -Dnative.tagging e NÃO -Dnative: como -pl não funciona neste reator, um gatilho compartilhado faria este módulo compilar um binário em toda invocação que pede native para o outro app."
           },
           {
@@ -48,7 +107,7 @@
       },
       "configurations": {
         "native": {
-          "mvnFlags": "-Dnative.tagging"
+          "mvnFlags": "-Dnative.tagging -Pnative-clt-toolchain"
         },
         "native-container": {
           "mvnFlags": "-Dnative.tagging -Pnative-container"

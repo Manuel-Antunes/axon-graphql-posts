@@ -4,7 +4,7 @@ import dev.manuelantunes.axonposts.domain.tag.event.TagCreatedEvent;
 import dev.manuelantunes.axonposts.domain.tag.exception.InvalidTagException;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagName;
-import dev.manuelantunes.axonposts.support.RecordingDomainEvents;
+import dev.manuelantunes.axonposts.testing.RecordingDomainEvents;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;

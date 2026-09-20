@@ -131,6 +131,24 @@ Duas colisões entre os dois processos, e as duas foram observadas de verdade:
    compartilhados existirem ANTES das aplicações — o candidato é o Dev Services de Compose, que este
    projeto já tem no classpath (`compose` aparece nas *Installed features* dos dois apps) e não usa.
 
+**A CAUSA RAIZ DOS DOIS PROBLEMAS ABAIXO ERA O JDK, e ela foi consertada.** Leia esta seção antes das
+duas: o `JAVA_HOME` desta máquina vinha do `~/.zshrc`, que o zsh lê **só em shell interativo**. Todo
+processo sem terminal — o Nx ao disparar um alvo, a IDE, um hook — nascia de um shell não-interativo,
+não via aquela linha, e herdava um `JAVA_HOME` antigo apontando para um **JDK 17**. Daí
+`class file version 65.0 ... up to 61.0` nos alvos inferidos, que rodam num Maven em processo com o
+JDK que o Nx herdou.
+
+`JAVA_HOME` e `GRAALVM_HOME` foram para o `~/.zshenv`, que o zsh lê em TODA invocação. Depois disso,
+**MEDIDO**: `nx run <projeto>:mvn-test` passa, com as 36 tarefas de `^mvn-install` encadeadas, **3 de
+3 execuções seguidas** — a armadilha do `nx-build-state.json` descrita no item (1) abaixo **não
+aparece**. Era sintoma, não causa.
+
+O que continua valendo do item (2) é a forma, não o veredito: os goals inferidos rodam num Maven
+residente, em processo. Para o `quarkus:dev` isso segue sendo problema — ele quer um CLI de verdade —,
+e é por isso que o `serve` é um `nx:run-commands` com `./mvnw`.
+
+**O relato original, mantido porque a medição dele continua correta para o que ela mede:**
+
 **NÃO usar o target `quarkus:dev` que o `@nx/maven` infere.** Ele não funciona, por duas razões
 independentes, as duas medidas na versão 23.2.1 (a mais recente) e nenhuma delas configurável:
 
@@ -556,13 +574,43 @@ domínio na mesma classe. Não existe entidade de infraestrutura espelho; os val
 - **O schema do banco vem do Flyway** (`src/main/resources/db/migration`), e o Hibernate roda em
   `schema-management.strategy=validate`: entidade nova sem migration **não sobe**. Os testes rodam as
   mesmas migrations.
+- **O DEV SERVICES EXECUTA A LISTA DAS MIGRATIONS, e nada é gerado.**
+  `quarkus.datasource.devservices.init-script-path` aceita `Optional<List<String>>` — conferido no
+  bytecode de `DevServicesBuildTimeConfig` —, então ele recebe `db/migration/V*.sql` diretamente, na
+  ordem.
+
+  **Antes ele recebia um `db/init/schema.sql` concatenado pelo `maven-antrun-plugin` em
+  `process-resources`, e aquilo violava o R de REPEATABLE do FIRST**: o resultado do teste dependia de
+  uma FASE DO MAVEN ter rodado. Quem rodasse a suíte pela IDE — que copia recursos mas não executa o
+  antrun — via `ContainerLaunchException: Could not load classpath init script: db/init/schema.sql`,
+  uma mensagem sobre container para um defeito que não tem nada a ver com container. O plugin saiu dos
+  dois poms; as migrations SÃO o schema, e some a duplicação junto.
+
+  **MIGRATION NOVA = MAIS UMA LINHA na propriedade**, e quem cobra é `DevServicesSchemaTest`, nos DOIS
+  apps: ele falha se uma migration do classpath não estiver na lista, se a ordem não for crescente ou
+  se um caminho não resolver. Não é `@QuarkusTest` de propósito — o que ele afirma é configuração e
+  classpath, que existem sem aplicação de pé, então ele roda em milissegundos e **sem Docker**. Um
+  guarda que só roda com o Docker ligado é um guarda que não roda.
+
+  **A ordem é por VERSÃO, não alfabética**, e `DevServicesSchema.VERSION_ORDER` (em
+  `libs/test-support`) implementa a do Flyway: partes numéricas separadas por `.` ou `_`, comparadas
+  parte a parte, a mais curta primeiro quando é prefixo. A primeira versão disso fazia
+  `Integer.parseInt` do trecho inteiro — funcionava com as migrations deste projeto, todas de uma
+  parte só, e **explodiria com `NumberFormatException` na primeira que seguisse a convenção que o
+  próprio Flyway recomenda** (`V1_0_1__descricao.sql`). O defeito estava DORMINDO: nenhum teste o
+  pegaria até alguém escrever aquela migration. `DevServicesSchemaVersionTest` trava os casos que
+  ninguém escreve hoje — `V10` depois de `V2`, `V1_10` depois de `V1_2`, `V1_0` antes de `V1_0_1`.
+
+  **Renomear migration JÁ APLICADA não é opção**: a versão é o que fica gravado em
+  `flyway_schema_history`, então `V1__` → `V1_0_1__` vira uma migration nova aos olhos do Flyway. A
+  convenção composta vale para as PRÓXIMAS, e o código já a suporta.
+
 - **`migrate-at-start` é `false`, e não é preferência.** `AxonExtension.init` é um recorder de
   RUNTIME_INIT que resolve o event storage engine e toca o EntityManager — construindo a persistence
   unit ANTES de o Flyway ter a vez. Com `validate` contra banco vazio a aplicação morre com
   `missing table [accounts]`, e adiar dentro do `ComponentBuilder` não resolve (a lambda é chamada de
-  dentro do próprio init). Quem cria o schema: em dev/teste, `db/init/schema.sql`, gerado das migrations
-  pelo `maven-antrun-plugin` e executado pelo Dev Services no `initdb`; no compose e em produção, os
-  serviços `flyway-*`. É o que produção faria de qualquer jeito, e o gate do `validate` continua valendo
+  dentro do próprio init). Quem cria o schema: em dev/teste, o Dev Services executa a LISTA das
+  migrations no `initdb` (ver o item acima); no compose e em produção, os serviços `flyway-*`. É o que produção faria de qualquer jeito, e o gate do `validate` continua valendo
   porque o script é gerado das próprias migrations.
 - `baseline-on-migrate` é `false` de propósito: banco não-vazio sem histórico é banco que alguém criou
   por fora.
@@ -1031,7 +1079,7 @@ arquivo, e estaticamente seriam avaliados antes de `app()` rodar.
 
 ```
 infra/dist/      os três zips (gerados)
-infra/scripts/   package.sh (atalho para os alvos do Nx), build-env.sh, migrate.sh, discover.sh, e2e.sh
+infra/scripts/   package.sh (atalho para os alvos do Nx), migrate.sh, discover.sh, e2e.sh
 infra/aws/
   index.ts       a fachada: ordem de carga e outputs. Não cria nada.
   support/       as DEFINIÇÕES: ArtifactStore, QuarkusFunction/QueueWorker/Migrator, HttpApi.
@@ -1185,13 +1233,15 @@ Linux com a GraalVM instalada. **A nota de que o container precisa de ~12 GiB no
 desatualizada**: os quatro artefatos foram construídos com o Docker em **8 GiB**, com o
 `native-image` enxergando 8,23 GB e `-J-Xmx10g`. O `exit 137` no `[1/8] Initializing` continua
 sendo o sintoma de faltar memória, e ele não menciona memória em lugar nenhum — mas 8 GiB bastam
-hoje. O `build-env.sh` avisa abaixo de 12 GiB em vez de falhar, o que continua certo.
+hoje. O aviso abaixo de 12 GiB saiu com o `build-env.sh`; o sintoma está na tabela de diagnóstico
+da seção *O `build-env.sh` FOI APAGADO*.
 
 **E num Mac com o Xcode quebrado o build local falha sem nomear o Xcode.** Medido: `xcode-select -p`
 aponta para o `Xcode.app`, o `cc` que vem dali nem carrega (`dlopen(@rpath/libxcodebuildLoader.dylib):
 Symbol not found: _XPCTypeBool`, exit 72), e o `native-image` morre em ~20s com `Unable to detect
 supported DARWIN native software development toolchain`. Os Command Line Tools são uma instalação
-independente e funcionam; quem os põe no jogo é o `infra/scripts/build-env.sh`, com as DUAS coisas
+independente e funcionam; hoje quem os põe no jogo é o `xcode-select` (ver a seção *O `build-env.sh`
+FOI APAGADO*), com as DUAS coisas
 que a receita exige — o PATH (é dali que o `native-image` tira o `cc`) e o `-isysroot`, porque o
 `native-image` **não** repassa `SDKROOT` nem `DEVELOPER_DIR` ao compilador. A troca só acontece
 quando o `cc` do sistema está quebrado.
@@ -1508,7 +1558,7 @@ e rodar de novo o **restaura do cache** em vez de reconstruir — que é o caso 
 
 Os `inputs` são o named input `quarkusLambda`, no `nx.json`, e o que ele diz é o que importa:
 `production` do próprio app (que já exclui `src/test/**` e `*.md`), mais `libs/**/pom.xml`,
-`libs/**/src/main/**`, o `mvnw`, o `.mvn/`, o `collector.yaml` e o `build-env.sh`. Conferido com o
+`libs/**/src/main/**`, o `mvnw`, o `.mvn/` e o `collector.yaml`. Conferido com o
 inspetor de hash do próprio Nx: **207 arquivos** para o `posts-api`, **118** para o `tagging`, e
 ZERO vindos de `target/`, de `src/test/` ou de `.DS_Store` — o Nx monta o mapa de arquivos
 respeitando o `.gitignore`, então os dois modos de falhar que custaram ~25 min de rebuild num deploy
@@ -1532,10 +1582,10 @@ artefato nenhum do `posts-api`.
   todos em `target/function.zip` e dois em paralelo se apagam. É a mesma necessidade que faz o
   `siteBuilder` do próprio SST usar um semáforo de 1. **O Nx não sabe disso**: rodar os alvos à mão
   com `run-many` exige `--parallel=1`, que é o que o `package.sh` passa;
-- o `build-env.sh` existe porque duas coisas que o build exige são DINÂMICAS e não cabem numa linha
-  de `env` no `project.json`: achar um JDK ≥ 21 (o shell desta máquina traz um 17, que não compila
-  `release 21`) e conferir a toolchain nativa. Deixaram de ser conveniência quando o build passou a
-  ser disparado pelo `sst deploy`, onde quem escolhe o ambiente é o CLI.
+- o `build-env.sh` existia porque o JDK e a toolchain nativa estavam errados NO AMBIENTE, e ele os
+  consertava a cada invocação. Os dois consertos foram feitos onde deviam — `~/.zshenv` e
+  `xcode-select` — e o único resíduo que precisava de código virou o perfil `native-clt-toolchain`,
+  que a configuração `native` destes alvos ativa. Ver *O `build-env.sh` FOI APAGADO*.
 
 **O laço de desenvolvimento que tornou isso viável**: rodar o binário num container local
 (`arm64v8/ubuntu` + o `application` montado) contra um Postgres de Dev Services. Cada ciclo
@@ -1761,37 +1811,229 @@ npx nx run web:open-next-build          # o que o SST chama no deploy
 
 Surefire roda tudo em `./mvnw test`, inclusive os `*E2ETest` — **Docker precisa estar de pé**.
 
-### TRÊS NÍVEIS, DOIS COMANDOS — e quem os conhece é o Nx, não o `package.json`
+### O TESTE MORA NO MÓDULO QUE ELE TESTA
 
-`pnpm test` era `./mvnw test` e passou a ser `nx run-many -t test-unit`. A troca não é de ferramenta:
-é de QUEM SABE o que cada nível é. Um `./mvnw test` no script da raiz não tem como ser cacheado, não
-tem como ser afetado por um diff, e não tem onde um segundo tipo de teste entrar.
+Era tudo em `apps/posts-api/src/test`, inclusive o que prova o domínio que vive em `libs/`. Hoje:
 
-| comando | alvo do Nx | quem declara | o que roda |
-|---|---|---|---|
-| `pnpm test` | `test-unit` | `apps/posts-api` | domínio, `*CommandTest`, fiação e schema — 94 testes, ~26s |
-| `pnpm test:e2e` | `test-e2e` | `apps/posts-api` | os `*E2ETest`, com Dev Services, num processo |
-| `pnpm test:e2e` | `test-e2e` | `apps/posts-api-e2e` | a saga entre DOIS processos, com broker de verdade |
+| módulo | testes | o que ele prova |
+|---|---|---|
+| `libs/platform` | 7 | `SoftDeletable` |
+| `libs/users` | 7 | `Authenticatable` e o account linking |
+| `libs/posts` | 24 | `Post` e `Tag` — as invariantes do domínio |
+| `libs/axon-channels` | 19 | endereçamento e codificação de tags: o contrato de FIO |
+| `libs/axon-aws` | 6 | os atributos que a filter policy do SNS casa |
+| `libs/test-support` | 7 | a ordem das migrations, no formato de versão do Flyway |
+| `apps/posts-api` | 117 | aplicação, GraphQL, fiação e os 8 `*E2ETest` |
+| `apps/tagging` | 10 | a decisão, a fiação e o caminho inteiro sem broker |
 
-**Os dois níveis pesados têm o MESMO NOME DE ALVO de propósito.** É o que faz `nx run-many -t test-e2e`
-rodar os dois numa esteira só, e é a razão de a separação ser por alvo e não por script: um nível novo
-que provisione coisas entra declarando `test-e2e`, sem que ninguém edite um comando.
+**O argumento é `apps/tagging`:** ele importa `libs/posts` para ganhar as regras do `Post`. Enquanto
+essas regras eram provadas na pasta de teste de OUTRO app, a lib não se sustentava sozinha.
 
-**`--parallel=1` no `test:e2e` NÃO é afinamento.** Os perfis do Maven escrevem todos em `target/`, e o
-alvo `build` de `apps/posts-api-e2e` empacota enquanto o `test-e2e` do `posts-api` está rodando o
-Surefire no mesmo diretório. É a mesma necessidade que serializa os quatro `lambda-*`.
+**`libs/test-support` é a exceção declarada à regra de que `libs/` só tem domínio e infraestrutura.**
+Ele guarda os dois fixtures que mais de um módulo usa (`RecordingDomainEvents`, `UserFixtures`), em
+`src/main` e consumido com `<scope>test</scope>` — não num `test-jar`, que exigiria uma `<execution>`
+do maven-jar-plugin em cada lib que exporta fixture, com os alvos de mojo que o `@nx/maven` infere
+junto. O pacote é `...testing` e não `...support` para não haver split package com o `support/` que
+ficou em `apps/posts-api`.
 
-**Os nomes NÃO podem ser `test` e `e2e`.** `test`, `test-ci`, `integration-test` e `verify` são alvos
-INFERIDOS pelo `@nx/maven` nos projetos Maven — e um alvo de mesmo nome no `project.json` não
-substitui o inferido: ele se FUNDE com ele e herda o `dependsOn: ["^install"]`, que é a armadilha do
-`nx-build-state.json` documentada mais acima. Conferido: `test-unit` e `test-e2e` saem com
-`dependsOn: null`. É o mesmo motivo de os alvos de empacotamento se chamarem `lambda-*`.
+**`AuthenticatableTest` monta os próprios objetos, e não por descuido.** Usar o fixture compartilhado
+faria `libs/users` depender de um módulo que depende DELE, e o reator do Maven recusa — ele não
+distingue escopo de teste ao detectar ciclo. O que sobrou é melhor que o contorno: uma lib que
+exercita as próprias invariantes pela própria API pública não precisa de ninguém.
 
-**`-Dtest='!*E2ETest'` sozinho NÃO basta, e isto foi medido.** `-Dtest=` **sobrescreve os includes
-default do Surefire**, então a exclusão passa a arrastar os `*NativeIT` — que são
-`@QuarkusIntegrationTest`, precisam do binário nativo e falham com três erros. O filtro é
-`!*E2ETest,!*IT`. Junto vem `-Dsurefire.failIfNoSpecifiedTests=false`, para os módulos do reator que
-não têm teste nenhum.
+### `apps/tagging` tinha ZERO teste, e agora tem três níveis
+
+| arquivo | nível | o que ele pega |
+|---|---|---|
+| `CompletePostWithDefaultTagCommandTest` | unidade, sem Quarkus | a DECISÃO: tag padrão, versão 2, e a terceira guarda contra entrega duplicada |
+| `TaggingWiringTest` | `@QuarkusTest` | a FIAÇÃO: o que falha em silêncio |
+| `TagDecisionE2ETest` | `@QuarkusTest` | o CAMINHO inteiro, do byte de entrada ao envelope de saída |
+
+**O caminho inteiro sem broker, e isso não é dublagem.** Três linhas de `%test.` trocam o conector do
+RabbitMQ pelo `smallrye-in-memory`. O que muda é só o TRANSPORTE: a ingestão continua desserializando
+o envelope de verdade, apendando no event store de verdade e acionando o processor de verdade, e a
+saída continua passando pelo `OutboxRouting` e por uma `ChannelAddressing`. O teste empurra um
+`byte[]` na entrada e LÊ o envelope que saiu.
+
+**O guarda de fiação daqui é mais severo que o do outro app.** Lá, um pacote fora de
+`subscribingprocessor.namespaces` cai num pooled anônimo e vira eventualmente consistente. Aqui o
+`PooledEventProcessingConfigurer` está excluído — não há pooled para onde cair, e o handler
+simplesmente NÃO RODA. A saga para na versão 1 e nada no log diz por quê.
+
+### `libs/axon-native-support` tinha ZERO teste — e era o módulo com mais a perder
+
+Ele não tinha nenhum, e é o que mais precisava: **nenhuma das falhas que ele previne aparece na JVM**,
+e três das quatro só aparecem em RUNTIME, na AWS, com mensagens que apontam para o lugar errado.
+
+`AxonNativeImageProcessorTest` indexa as classes de `Fixtures` com o **Jandex de verdade** — o mesmo do
+augmentation — e chama os `@BuildStep` direto, coletando o que eles produzem. Não há Quarkus subindo:
+um build step é um método, e o que ele devolve é um objeto. O `BuildProducer` é uma interface de um
+método só, então o teste coleta com um duplo de cinco linhas.
+
+Os fixtures são as formas do domínio real, reduzidas, e cada uma existe por uma falha que já
+aconteceu — em especial um evento com um record ANINHADO dentro de um `List<>`, que é exatamente a
+forma que parou a saga na versão 1 com o contador `Errors` do Lambda em ZERO e as filas vazias.
+
+**Provado que os testes NÃO são vazios:** comentando o `types.addAll(composedTypesOf(types, index))`,
+falham exatamente `registersTypesNestedInsideAMessagePayload` e
+`theClosureIsTransitiveAndNotOneLevelDeep` — os dois daquela falha, e só eles.
+
+O módulo saiu de **0% (invisível, sem relatório) para 88,7%**.
+
+**O Axon entra no pom do deployment só em `<scope>test</scope>`, e para os FIXTURES.** O processor não
+depende do Axon para compilar: ele trabalha sobre o índice e nomeia as anotações por `DotName`, como
+string. Mas um teste honesto precisa de classes anotadas DE VERDADE para indexar — senão estaria
+afirmando sobre um índice que ele mesmo inventou.
+
+### COBERTURA: 60,3%, e o número anterior era mais bonito porque MENTIA
+
+`quarkus-jacoco` nos dois apps, `jacoco-maven-plugin` (do pom raiz) nas libs — e `<skip>` do segundo
+nos apps, porque dois agentes no mesmo módulo dão dois `.exec` que não somam.
+
+**Ligar a cobertura das libs BAIXOU o total de 64,3% para 60,3%, e essa queda é a notícia:**
+`libs/axon-channels` (1378 instruções) e `libs/axon-aws` (219) não tinham teste nenhum, então não
+geravam relatório — e o que não gera relatório não entra no denominador. Eram 1597 instruções
+invisíveis.
+
+```
+libs/axon-channels   19.2%      apps/tagging      43.2%
+libs/axon-aws        31.5%      apps/posts-api    76.0%
+libs/platform        46.8%      libs/posts        76.9%
+libs/users           43.9%      TOTAL             60.3%
+```
+
+### MOCKITO: onde ele entra, e onde ele deliberadamente NÃO entra
+
+- **NÃO no domínio.** `PostTest`, `TagTest` e `AuthenticatableTest` seguem sem mock nenhum. O domínio
+  decide sozinho, e o único colaborador dele é uma porta que um lambda de três linhas dubla melhor
+  que qualquer framework. Mock ali acoplaria o teste à FORMA da chamada em vez de ao resultado dela.
+- **SIM na infraestrutura.** `EventAddress` lê um `EventMessage` — tipo de biblioteca, com um punhado
+  de métodos que este código não usa. Implementá-lo à mão seriam trinta linhas que ninguém lê para
+  afirmar duas.
+- **`quarkus-junit5-mockito` nos apps**, e não `mockito-core` puro: ele traz o `@InjectMock`, que
+  SUBSTITUI um bean do CDI dentro de um `@QuarkusTest` — a diferença entre testar o grafo de verdade
+  com uma peça trocada e testar uma peça sozinha.
+
+**O alvo `test-unit` roda `clean`, e foi medido duas vezes.** Sem ele, depois de uma série de
+`package` falhados a suíte passa a falhar com `NoClassDefFoundError` no `FacadeClassLoader` do
+Quarkus (2 de 2), e volta a passar com `clean`. Custa ~9s no cache MISS; no hit o comando nem roda.
+
+### DOIS COMANDOS, UM ALVO POR MÓDULO — o Nx orquestra, o Maven executa
+
+```
+pnpm test       nx run-many -t test         → 7 projetos
+pnpm test:e2e   nx run-many -t test:e2e --parallel=1   → 3 projetos
+```
+
+**Nenhum dos dois lista ninguém.** Cada módulo com teste declara o próprio alvo, e o `run-many`
+resolve. Antes era UM alvo em `apps/posts-api` que rodava `./mvnw test` da raiz: os 190 testes rodavam,
+mas o Nx enxergava um projeto só — sem cache por módulo e sem `affected`.
+
+| | antes | agora |
+|---|---|---|
+| execução a frio | 1m17 | 1m32 |
+| **sem mexer em nada** | 1m17 | **8,1s** (95% de cache) |
+| **mexendo numa lib** | 1m17 | **8,8s** (97% de cache) |
+
+O custo é 15s a mais na primeira vez; o ganho é o dia inteiro de trabalho depois dela.
+
+**QUEM PUBLICA NO `~/.m2` É O NX.** `-pl <módulo>` resolve as dependências do repositório local, não
+do reator — então elas precisam estar instaladas. Isso é `dependsOn: ["^mvn-install"]`, o alvo
+INFERIDO pelo `@nx/maven`: a ordem vem do grafo, não de uma lista escrita à mão.
+
+**`targetNamePrefix: "mvn-"` é o que torna tudo isso possível**, e ele resolve de uma vez a família de
+armadilhas que esta seção documentava. Com os alvos inferidos prefixados (`mvn-test`, `mvn-install`,
+`mvn-package`), um alvo `test` declarado à mão não tem com o que colidir — nem no módulo, nem na
+RAIZ, onde o `test` inferido rodava o reator inteiro e duplicava tudo.
+
+**`-pl` FUNCIONA para `test`**, e isto corrige o que estava escrito mais acima: a validação do
+`quarkus-extension-maven-plugin` só atinge os goals de BUILD. Medido — `-pl apps/posts-api` roda os 56
+testes em 26s, `-pl libs/axon-channels` roda 19 em 2,3s.
+
+**E não há mais `build-env.sh` na frente de nada disso.** Ver a próxima seção.
+
+### O `build-env.sh` FOI APAGADO — e o que ele sabia está aqui
+
+Ele existia porque o `JAVA_HOME` desta máquina estava errado para tudo que não fosse um terminal: a
+linha morava no `~/.zshrc`, que o zsh lê **só em shell interativo**. O Nx, a IDE e qualquer script
+nasciam de um shell não-interativo, não viam aquela linha e herdavam um JDK 17 do processo pai.
+
+**Os dois consertos que o substituíram, os dois fora do código:**
+
+1. **`JAVA_HOME` e `GRAALVM_HOME` foram para o `~/.zshenv`**, que o zsh lê em TODA invocação. É o que
+   fez o `./mvnw` funcionar sem prefixo nenhum e destravou os alvos inferidos do `@nx/maven`;
+2. **`sudo xcode-select --switch /Library/Developer/CommandLineTools`**, porque o `cc` que vinha do
+   `Xcode.app` nem carregava (`dlopen(libxcodebuildLoader.dylib): Symbol not found: _XPCTypeBool`).
+   Com a troca, o `cc` do sistema voltou a funcionar e o `PATH` que o script injetava deixou de ser
+   necessário.
+
+**O que a troca do `xcode-select` NÃO resolveu, e virou um perfil do Maven:** o `xcrun` passou a
+entregar o **SDK 27** por default, e o `ld` das Command Line Tools não o digere —
+
+```
+/Library/Developer/CommandLineTools/SDKs/MacOSX27.0.sdk/usr/lib/libSystem.B.tbd:4:20:
+error: unknown architecture
+```
+
+O conserto é o `-isysroot` apontando para o **symlink** `MacOSX.sdk` (hoje → 26.5; symlink e não
+versão fixa, para não quebrar na próxima atualização das CLT). Isso é propriedade do Quarkus, então
+mora no perfil **`native-clt-toolchain`**, que os DOIS apps agora têm, e que a configuração `native`
+dos alvos `lambda-*` ativa. **Não** vai na `native-container`: lá a compilação é dentro do builder
+image do Mandrel, onde esse caminho não existe.
+
+**As três checagens que o script fazia e que NÃO viraram código**, porque eram diagnóstico e não
+conserto — ficam aqui, que é onde alguém procura quando a mensagem não ajuda:
+
+| sintoma | o que é de verdade |
+|---|---|
+| `exit 137` no `[1/8] Initializing`, sem falar em memória | o Docker tem menos de ~12 GiB para o build em container |
+| `Unable to detect supported DARWIN native software development toolchain` | o `cc` do sistema não carrega — é o Xcode, e a saída é o `xcode-select` acima |
+| `error: release version 21 not supported`, ou `class file version 65.0 ... up to 61.0` | `JAVA_HOME` veio de um shell não-interativo. A linha tem de estar no `~/.zshenv`, nunca só no `~/.zshrc` |
+| `libSystem.B.tbd: error: unknown architecture` | o SDK default não serve; é o `-Pnative-clt-toolchain` que falta |
+
+### Os `*NativeIT` DIZEM o que precisam, em vez de estourar no framework
+
+Um `@QuarkusIntegrationTest` é caixa-preta: ele não sobe a aplicação em processo, executa o BINÁRIO que
+o `package` produziu. Rodado sem esse binário — clicando a classe na IDE — a falha era
+
+```
+IllegalStateException: Unable to locate the artifact metadata file created that must be
+created by Quarkus in order to run integration tests.
+```
+
+Tecnicamente correta e praticamente inútil: não diz QUAL comando produz o artefato, e aparece como
+ERRO, o que sugere defeito no código — quando o código não foi nem executado.
+
+`@RequiresNativeArtifact` é uma `ExecutionCondition` do JUnit que procura
+`target/quarkus-artifact.properties` e, não achando, **SALTA com a razão escrita**, incluindo a linha
+de comando que constrói. A condição roda ANTES do `beforeAll` da extensão do Quarkus, então a tentativa
+de boot nem acontece; a razão vai para o XML do surefire, que é o que a IDE mostra ao lado do teste.
+
+**Saltar e não falhar, porque não há o que afirmar.** Um teste sem sujeito não está falhando, está
+fora de contexto. E isso NÃO esconde regressão: no fluxo que importa o artefato sempre existe — quem
+roda os `*IT` é o failsafe, na fase `integration-test`, depois do `package`, e só com o perfil
+`native`, que é o que vira o `skipITs` para `false`. Lá a condição nunca salta.
+
+### A MEDIÇÃO de statements é o MENOR de três execuções, e isso é o FIRST
+
+`BatchLoadingE2ETest` e `FederationEntitiesE2ETest` contam `PreparedStatement` para provar que o lote
+funciona. O `statisticsOfAQuietDatabase()` prova que o banco estava quieto ANTES da janela — e não que
+ele fica quieto DURANTE. O processor que notifica os assinantes é assíncrono e conta na MESMA
+`Statistics` (ela é da `SessionFactory`, não da sessão), então ele acorda no meio da medição.
+
+O sintoma era uma violação de REPEATABLE de manual: as mesmas classes passavam **3 de 3 isoladas** e
+falhavam com as oito ponta a ponta juntas —
+`dois autores custaram 7 statements contra 4 de um autor`. Com mais posts no event store o processor
+varre mais, e a chance de cair em cima da janela cresce: **o resultado passou a depender de quem mais
+estava rodando.**
+
+**O conserto vem de uma observação, não de uma tolerância:** o processor só ACRESCENTA. A consulta
+custa sempre o mesmo, e interferência só faz a conta subir — então o MENOR de várias execuções é o
+custo real. `cheapestStatementCount` faz três e fica com o mínimo.
+
+E a propriedade continua intacta: um N+1 de verdade encarece TODAS as execuções, inclusive a mais
+barata — o mínimo sobe junto e a asserção quebra. **Três** porque com uma não há mínimo e com duas uma
+janela azarada em cada estraga as duas; a consulta é de leitura, repeti-la não muda estado.
 
 ### `apps/posts-api-e2e`: a saga como APP, e não como script
 
@@ -1840,20 +2082,17 @@ teste constrói a dele olhando para a mesma stack. O que não atravessa é o pro
 serviço — por isso quem os derruba é o `teardown` de lá.
 
 
-**O `vitest` roda ATRÁS do `build-env.sh`, e não é para construir nada.** O script garante um JDK ≥ 21
-e exporta `JAVA_HOME`; `support/service.ts` honra essa variável em vez de chamar o `java` do PATH. A
-razão foi MEDIDA e o modo de falhar é o pior que há: o shell desta máquina traz um JDK 17, e um
-`quarkus-run.jar` compilado com `release 21` sai nele com **código 1 e log vazio** — sem
-`UnsupportedClassVersionError`, sem uma linha em stderr. O sintoma é indistinguível de "a aplicação
-morreu na partida", e a espera de prontidão levava 120s para dizer nada.
+**`Service` honra `JAVA_HOME` antes do PATH**, que é o que o próprio Maven faz — e desde que a
+variável foi para o `~/.zshenv` as duas apontam para o mesmo JDK, aqui e em qualquer ferramenta sem
+terminal. O `vitest` já rodou atrás do `build-env.sh` por causa disso e hoje roda direto, com `cwd`
+no projeto.
 
-Duas consequências ficaram no código, e as duas valem por si:
-
-1. **a busca pelo JDK não é reescrita em TypeScript.** Quem a faz é o `build-env.sh`, que já a fazia
-   para o build — duas buscas divergiriam, e a que estivesse errada seria a que ninguém olha;
-2. **`Service` delata a MORTE PRECOCE.** Um `exit` do processo interrompe a espera na hora, com o
-   código de saída e — quando o log está vazio — a frase que aponta para o JDK. Como o script faz
-   `cd` para a raiz, o `vitest` recebe `--root apps/posts-api-e2e` em vez de `cwd`.
+**A distinção continua importando pelo MODO DE FALHAR, que é o pior que há:** MEDIDO — um
+`quarkus-run.jar` compilado com `release 21` sob um JDK 17 sai com **código 1 e log vazio**, sem
+`UnsupportedClassVersionError` e sem uma linha em stderr. O sintoma é indistinguível de "a aplicação
+morreu na partida", e a espera de prontidão levava 120s para dizer nada. Daí `Service` **delatar a
+morte precoce**: um `exit` do processo interrompe a espera na hora, com o código de saída e — quando
+o log está vazio — a frase que aponta para o JDK.
 
 - **Domínio puro** (`PostTest`, `TagTest`, `SoftDeletableTest`, `AuthenticatableTest`): sem Axon, sem CDI,
   sem JPA. O único colaborador é `RecordingDomainEvents`, um duplo da porta do próprio domínio. Estes

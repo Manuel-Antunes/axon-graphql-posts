@@ -113,6 +113,47 @@
             <artifactId>quarkus-opentelemetry</artifactId>
             <scope>provided</scope>
         </dependency>
+        <!--
+          O TESTE DE DOMÍNIO MORA NA LIB QUE ELE TESTA — e é só JUnit e AssertJ.
+
+          Nada de `quarkus-junit`: estes testes não sobem aplicação, não têm CDI e não tocam em JPA.
+          Dar-lhes Quarkus seria convidá-los a deixar de ser o que são — a prova de que o domínio
+          decide sozinho. Foi o que permitiu a eles atravessarem a conversão de Spring para Quarkus
+          sem uma linha alterada.
+        -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!--
+          MOCKITO nas libs — e ele NÃO entra no domínio.
+
+          Os testes de `Post`, `Tag` e `Authenticatable` continuam sem mock nenhum: o domínio decide
+          sozinho, e o único colaborador dele é uma porta que um lambda de três linhas dubla melhor
+          que qualquer framework. Mock ali seria acoplar o teste à FORMA da chamada em vez de ao
+          resultado dela.
+
+          Onde ele ganha é na INFRAESTRUTURA: `ChannelEventIngestion`, `OutboxRouting` e companhia
+          falam com `EventStore`, `Emitter` e `ChannelRegistry` — tipos de biblioteca, com dezenas de
+          métodos, que ninguém quer implementar à mão para afirmar uma chamada.
+        -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

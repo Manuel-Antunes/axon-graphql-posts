@@ -226,4 +226,43 @@ public abstract class AbstractGraphQlE2ETest {
         statistics.clear();
         return statistics;
     }
+
+    /**
+     * O CUSTO em statements de uma consulta, medido pelo MENOR de várias execuções.
+     *
+     * <h2>Por que o menor, e por que isto não é um truque</h2>
+     * {@link #statisticsOfAQuietDatabase()} prova que o banco estava quieto ANTES da janela — e não
+     * que ele fica quieto DURANTE. O processor que notifica os assinantes é assíncrono e conta na
+     * MESMA {@code Statistics} (ela é da {@code SessionFactory}, não da sessão), então ele pode
+     * acordar no meio da medição e somar statements que não são da consulta.
+     * <p>
+     * A observação que resolve: o processor só ACRESCENTA. A consulta custa sempre o mesmo, e
+     * interferência só faz a conta subir — então <b>o menor de várias execuções É o custo real</b>.
+     * <p>
+     * E a propriedade que o teste afirma continua intacta: um N+1 de verdade encarece TODAS as
+     * execuções, inclusive a mais barata. O mínimo sobe junto e a asserção quebra — que é o ponto.
+     *
+     * <h2>O que ele substituiu</h2>
+     * A medição de uma amostra só, que violava o <b>R</b> de REPEATABLE do FIRST: o mesmo código
+     * passava 3 de 3 com a classe isolada e falhava com as oito classes ponta a ponta juntas
+     * (`dois autores custaram 7 statements contra 4 de um autor`), porque com mais posts no event
+     * store o processor varre mais e a chance de cair em cima da janela cresce. Um teste que depende
+     * de quem mais está rodando não está medindo o que diz medir.
+     */
+    protected long cheapestStatementCount(Runnable query) {
+        long cheapest = Long.MAX_VALUE;
+        for (int attempt = 0; attempt < STATEMENT_SAMPLES; attempt++) {
+            Statistics statistics = statisticsOfAQuietDatabase();
+            query.run();
+            cheapest = Math.min(cheapest, statistics.getPrepareStatementCount());
+        }
+        return cheapest;
+    }
+
+    /**
+     * TRÊS execuções, e o número não é chute: com uma não há mínimo, com duas uma interferência em
+     * cada estraga as duas. Três é a menor quantidade que sobrevive a duas janelas azaradas, e a
+     * consulta é de leitura — repeti-la não muda estado nenhum.
+     */
+    private static final int STATEMENT_SAMPLES = 3;
 }

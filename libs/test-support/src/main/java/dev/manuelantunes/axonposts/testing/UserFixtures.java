@@ -1,4 +1,4 @@
-package dev.manuelantunes.axonposts.support;
+package dev.manuelantunes.axonposts.testing;
 
 import dev.manuelantunes.axonposts.domain.user.Account;
 import dev.manuelantunes.axonposts.domain.user.Author;

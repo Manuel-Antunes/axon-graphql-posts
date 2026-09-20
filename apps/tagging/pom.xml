@@ -169,6 +169,68 @@
             <artifactId>quarkus-observability-devservices-lgtm</artifactId>
             <scope>provided</scope>
         </dependency>
+
+        <!--
+          O TESTE DESTE SERVIÇO — e ele não tinha nenhum até aqui.
+
+          `axon-test` é o que importa: o serviço inteiro cabe num command handler, e o
+          `AxonTestFixture` o exercita reidratando o `Post` dos eventos dados, sem broker, sem banco e
+          sem Quarkus. É o mesmo formato dos `*CommandTest` do outro app, de propósito.
+
+          O conector IN-MEMORY substitui o RabbitMQ em teste (ver os `%test.` no
+          application.properties). Ele é o que permite empurrar uma mensagem no canal de entrada e
+          LER o que saiu pelo de saída — o caminho inteiro do serviço, sem um broker no meio.
+        -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.axonframework</groupId>
+            <artifactId>axon-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.smallrye.reactive</groupId>
+            <artifactId>smallrye-reactive-messaging-in-memory</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- A decisão acontece no AFTER_COMMIT, noutra volta: afirmar sem esperar seria corrida. -->
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- A cobertura deste serviço era ZERO; sem isto ela continuaria sendo invisível. -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jacoco</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!--
+          `quarkus-junit5-mockito` e não `mockito-core` puro: ele traz o `@InjectMock`, que SUBSTITUI
+          um bean do CDI dentro de um `@QuarkusTest` em vez de só criar um objeto solto. É a
+          diferença entre testar o grafo de verdade com uma peça trocada e testar uma peça sozinha.
+        -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5-mockito</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- `DevServicesSchema`: o guarda da lista de migrations. `test` o mantém fora do artefato. -->
+        <dependency>
+            <groupId>dev.manuelantunes</groupId>
+            <artifactId>axonposts-test-support</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -176,32 +238,12 @@
             <!-- O mesmo script de inicialização do serviço de posts, pela mesma razão: `migrate-at-start`
                  perdeu a corrida contra o init do Axon, então em dev e teste quem cria o schema é o
                  `initdb` do container do Dev Services. Ver o comentário no pom do outro serviço. -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-antrun-plugin</artifactId>
-                <version>${antrun-plugin.version}</version>
-                <executions>
-                    <execution>
-                        <id>db-init-script</id>
-                        <phase>process-resources</phase>
-                        <goals>
-                            <goal>run</goal>
-                        </goals>
-                        <configuration>
-                            <target>
-                                <concat destfile="${project.build.outputDirectory}/db/init/schema.sql"
-                                        fixlastline="true">
-                                    <sort>
-                                        <fileset dir="${project.build.outputDirectory}/db/migration"
-                                                 includes="V*.sql"/>
-                                    </sort>
-                                </concat>
-                            </target>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
+            <!--
+              O MESMO bloco do `posts-api`, e a linha do LogManager não é cosmética: sem ela o JBoss
+              LogManager é acessado depois de a JVM já ter fixado o default, e o Quarkus avisa em toda
+              execução que "results may be unexpected".
+            -->
+<plugin>
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>quarkus-maven-plugin</artifactId>
                 <version>${quarkus.platform.version}</version>
@@ -220,6 +262,32 @@
     </build>
 
     <profiles>
+        <!--
+          O SYSROOT DOS COMMAND LINE TOOLS — a única coisa que sobrou do antigo `build-env.sh`.
+
+          MEDIDO nesta máquina, depois de trocar o `xcode-select` para /Library/Developer/CommandLineTools:
+          o `cc` do sistema voltou a funcionar (o PATH deixou de ser necessário), mas o `xcrun` passou a
+          entregar o SDK 27 por default, e o `ld` das CLT não o digere:
+
+            /Library/Developer/CommandLineTools/SDKs/MacOSX27.0.sdk/usr/lib/libSystem.B.tbd:4:20:
+            error: unknown architecture
+
+          `MacOSX.sdk` é o SYMLINK (hoje → 26.5), e é ele que se aponta de propósito: pinar uma versão
+          fixa aqui quebraria no dia em que as CLT forem atualizadas.
+
+          Ele é ATIVADO PELO ALVO DO NX (`-Pnative-clt-toolchain` na configuração `native`), e não por
+          `<activation>` automática — porque `native-container` compila DENTRO do builder image do
+          Mandrel, onde este caminho não existe. É a mesma razão de não ser uma variável de ambiente:
+          a decisão é por MODO de build, e quem conhece o modo é o alvo.
+        -->
+        <profile>
+            <id>native-clt-toolchain</id>
+            <properties>
+                <quarkus.native.container-build>false</quarkus.native.container-build>
+                <quarkus.native.additional-build-args>-H:CCompilerOption=-isysroot,-H:CCompilerOption=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk</quarkus.native.additional-build-args>
+            </properties>
+        </profile>
+
         <!--
           ================================================================================
           AWS LAMBDA: A MESMA APLICAÇÃO, DUAS FUNÇÕES

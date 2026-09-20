@@ -11,7 +11,7 @@ import dev.manuelantunes.axonposts.domain.tag.exception.TagNotFoundException;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagId;
 import dev.manuelantunes.axonposts.domain.tag.vo.TagName;
 import dev.manuelantunes.axonposts.support.InMemoryPostRepository;
-import dev.manuelantunes.axonposts.support.UserFixtures;
+import dev.manuelantunes.axonposts.testing.UserFixtures;
 import dev.manuelantunes.axonposts.support.InMemoryTagRepository;
 import dev.manuelantunes.axonposts.support.PostCommandFixtures;
 import org.axonframework.modelling.repository.EntityNotFoundException;

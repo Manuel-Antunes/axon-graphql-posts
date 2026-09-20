@@ -11,7 +11,9 @@
     "build": {
       "executor": "nx:run-commands",
       "cache": true,
-      "inputs": ["quarkusStack"],
+      "inputs": [
+        "quarkusStack"
+      ],
       "outputs": [
         "{workspaceRoot}/apps/posts-api/target/quarkus-app",
         "{workspaceRoot}/apps/tagging/target/quarkus-app"
@@ -23,27 +25,8 @@
         "parallel": false,
         "commands": [
           {
-            "command": "infra/scripts/build-env.sh ./mvnw package -DskipTests",
-            "description": "SEM `clean`, e é a troca que justifica o alvo: o script antigo limpava para garantir que media um build do zero, e aqui quem garante isso é o hash do CONTEÚDO das fontes que o Nx calcula. O build-env.sh está no meio porque o shell desta máquina traz um JDK 17, que não compila `release 21`."
-          }
-        ]
-      }
-    },
-    "test-e2e": {
-      "executor": "nx:run-commands",
-      "dependsOn": ["build"],
-      "cache": true,
-      "inputs": ["default", "quarkusStack", { "env": "E2E_LOGS" }],
-      "outputs": ["{projectRoot}/target/test-results"],
-      "metadata": {
-        "description": "A saga coreografada entre DOIS PROCESSOS, com broker de verdade. O alvo tem o MESMO NOME do que roda os *E2ETest em apps/posts-api: é assim que `nx run-many -t test-e2e` executa os dois níveis pesados numa esteira só."
-      },
-      "options": {
-        "parallel": false,
-        "commands": [
-          {
-            "command": "infra/scripts/build-env.sh npx vitest run --root apps/posts-api-e2e",
-            "description": "O build-env.sh na frente NÃO é para construir nada — é o que garante um JDK >= 21 e exporta JAVA_HOME, que `support/service.ts` honra ao subir os dois jars. MEDIDO: com o JDK 17 do shell, um quarkus-run.jar de `release 21` sai com CÓDIGO 1 E LOG VAZIO, sem uma linha de erro. Como o script faz `cd` para a raiz, o vitest recebe `--root` em vez de `cwd`."
+            "command": "./mvnw package -DskipTests",
+            "description": "SEM `clean`, e é a troca que justifica o alvo: o script antigo limpava para garantir que media um build do zero, e aqui quem garante isso é o hash do CONTEÚDO das fontes que o Nx calcula. O JDK vem do ambiente (`~/.zshenv`); não há script no meio."
           }
         ]
       }
@@ -67,6 +50,30 @@
       "options": {
         "cwd": "apps/posts-api-e2e",
         "command": "tsc --noEmit"
+      }
+    },
+    "test:e2e": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "build"
+      ],
+      "cache": true,
+      "inputs": [
+        "default",
+        "quarkusStack",
+        {
+          "env": "E2E_LOGS"
+        }
+      ],
+      "outputs": [
+        "{projectRoot}/target/test-results"
+      ],
+      "metadata": {
+        "description": "A saga entre DOIS PROCESSOS, com broker de verdade. Tem o MESMO NOME do alvo que roda os `*E2ETest` dos dois apps Java: é assim que `nx run-many -t test:e2e` executa os níveis pesados numa esteira só. Não há mais `build-env.sh` na frente — o JDK vem do ambiente, e `support/service.ts` usa o `java` do PATH como qualquer processo."
+      },
+      "options": {
+        "cwd": "apps/posts-api-e2e",
+        "command": "vitest run"
       }
     }
   }

@@ -3,7 +3,6 @@ package dev.manuelantunes.axonposts.e2e;
 import java.util.List;
 import java.util.Map;
 
-import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.Test;
 
 import dev.manuelantunes.axonposts.support.AbstractGraphQlE2ETest;
@@ -163,13 +162,13 @@ class FederationEntitiesE2ETest extends AbstractGraphQlE2ETest {
 
     @SuppressWarnings("unchecked")
     private long statementsResolving(List<String> postIds) {
-        // a janela começa com o banco quieto: o processor que notifica os assinantes conta na mesma
-        // estatística, e a primeira medição de um teste cairia em cima da varredura dele
-        Statistics statistics = statisticsOfAQuietDatabase();
-        List<Map<String, Object>> entities = (List<Map<String, Object>>) anonymous
-                .execute(ENTITIES, "reps", postIds.stream().map(id -> ref("Post", id)).toList())
-                .list("_entities");
-        assertThat(entities).hasSize(postIds.size());
-        return statistics.getPrepareStatementCount();
+        // o MENOR de três execuções: o processor que notifica os assinantes é assíncrono e conta na
+        // mesma estatística, então ele pode acordar no meio da janela — ver `cheapestStatementCount`
+        return cheapestStatementCount(() -> {
+            List<Map<String, Object>> entities = (List<Map<String, Object>>) anonymous
+                    .execute(ENTITIES, "reps", postIds.stream().map(id -> ref("Post", id)).toList())
+                    .list("_entities");
+            assertThat(entities).hasSize(postIds.size());
+        });
     }
 }

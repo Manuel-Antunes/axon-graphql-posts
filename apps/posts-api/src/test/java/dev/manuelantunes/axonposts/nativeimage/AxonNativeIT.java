@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import org.junit.jupiter.api.Test;
 
 import dev.manuelantunes.axonposts.support.GraphQl;
+import dev.manuelantunes.axonposts.support.RequiresNativeArtifact;
 import io.quarkus.test.junit.QuarkusIntegrationTest;
 
 /**
@@ -28,6 +29,7 @@ import io.quarkus.test.junit.QuarkusIntegrationTest;
  * também é consequência de não haver {@code DataSource} para injetar.
  */
 @QuarkusIntegrationTest
+@RequiresNativeArtifact
 class AxonNativeIT {
 
     /**
