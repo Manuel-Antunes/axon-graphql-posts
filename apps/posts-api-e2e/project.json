@@ -27,16 +27,12 @@
       }
     },
     "test:e2e": {
-      "dependsOn": [
-        "^docker:build"
-      ],
+      "dependsOn": ["^docker:build"],
       "inputs": [
         "default",
         "quarkusStack",
         {
-          "externalDependencies": [
-            "vitest"
-          ]
+          "externalDependencies": ["vitest"]
         },
         {
           "env": "CI"
