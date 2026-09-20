@@ -86,6 +86,8 @@
     <surefire-plugin.version>3.5.3</surefire-plugin.version>
     <compiler-plugin.version>3.14.0</compiler-plugin.version>
     <antrun-plugin.version>3.1.0</antrun-plugin.version>
+    <spotless-plugin.version>2.46.1</spotless-plugin.version>
+    <error-prone.version>2.41.0</error-prone.version>
   </properties>
 
   <dependencyManagement>
@@ -125,10 +127,95 @@
 
   <build>
     <plugins>
+      <!--
+        O ERROR PRONE — o segundo eixo do lint, e o que o Spotless NÃO cobre.
+
+        A divisão é essa: o Spotless pega o que é ARRUMÁVEL (import morto, espaço no fim da linha)
+        e este pega o que é DEFEITO — comparação de referência onde se queria `equals`, retorno
+        ignorado, `equals`/`hashCode` inconsistentes. Um `spotless:apply` conserta o primeiro grupo;
+        o segundo exige ler o código, que é justamente por que ele falha o BUILD e não um alvo à
+        parte. É a mesma escolha que o CLAUDE.md já registra para o MapStruct
+        (`unmappedTargetPolicy=ERROR`): o gate de qualidade deste projeto é o compilador.
+
+        As duas linhas de `XDcompilePolicy` e `should-stop` não são afinamento: sem elas o javac
+        roda o plugin numa política incompatível e o Error Prone nem carrega.
+
+        Os `add-exports` que ele exige do JDK 16+ estão em `.mvn/jvm.config`, e não aqui, porque
+        são do processo que RODA o javac e não do javac.
+      -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
         <version>${compiler-plugin.version}</version>
+        <configuration>
+          <annotationProcessorPaths>
+            <path>
+              <groupId>com.google.errorprone</groupId>
+              <artifactId>error_prone_core</artifactId>
+              <version>${error-prone.version}</version>
+            </path>
+          </annotationProcessorPaths>
+          <compilerArgs>
+            <arg>-XDcompilePolicy=simple</arg>
+            <arg>--should-stop=ifError=FLOW</arg>
+            <!--
+                 AS TRÊS CHECAGENS DESLIGADAS SÃO DE JAVADOC, e as três brigam com o estilo que este
+                 projeto adotou por escrito: Javadoc longo, em português, explicando POR QUÊ. Foram
+                 medidas antes de desligar — dos 17 achados do primeiro reator inteiro, 8 eram delas:
+
+                   InvalidParam   FALSO POSITIVO. Em Post.java ele acusa `{@code authors}` de ser o
+                                  parâmetro `author` escrito errado; `authors` ali é o nome da TABELA,
+                                  numa frase sobre a chave estrangeira.
+                   EscapedEntity  acusa `<b>` e companhia dentro de `{@code}`. É como a prosa daqui é
+                                  escrita, e o Javadoc gerado não é publicado em lugar nenhum.
+                   MissingSummary exige primeira frase-resumo. Os Javadoc daqui abrem com o contexto
+                                  da decisão, que é o que se quer ler primeiro.
+
+                 Um lint que grita onde não há defeito é um lint que se aprende a ignorar INTEIRO —
+                 e o que sobrou (MissingOverride, StringCaseLocaleUsage, StringSplitter) é sobre
+                 CÓDIGO, que é para o que o Error Prone está aqui.
+            -->
+            <arg>-Xplugin:ErrorProne -Xep:InvalidParam:OFF -Xep:EscapedEntity:OFF -Xep:MissingSummary:OFF</arg>
+          </compilerArgs>
+        </configuration>
+      </plugin>
+
+      <!--
+        O LINT DO JAVA — e o que ele deliberadamente NÃO faz.
+
+        Não há formatter aqui. Foi medido antes de decidir: 227 arquivos, indentação de 4 espaços e
+        DEZ linhas acima de 120 colunas — o código já é consistente. Um `google-java-format` ou um
+        `palantir` reescreveria os 227 para impor a régua dele, requebrando o Javadoc longo em
+        português e levando o `git blame` junto. O ganho seria formatação determinística; o preço,
+        um commit que apaga a história de tudo. Não vale para um repositório que já está formatado.
+
+        O que ficou são os quatro passos que ninguém revisa à mão e que nenhum compilador pega:
+        import não usado, ordem dos imports, espaço no fim da linha e newline final. São
+        ARRUMÁVEIS — `spotless:apply` conserta todos —, o que é o que separa um lint útil de um
+        lint que só reclama.
+
+        SEM <executions> DE PROPÓSITO: fora do ciclo de vida, o `package` e o `test` não pagam por
+        ele, e quem o roda é o alvo `lint` do Nx. (O `@nx/maven` ainda infere `spotless:check` e
+        `spotless:apply` como alvos de GOAL — conferido. Eles carregam o `dependsOn: ^install` que é
+        a armadilha do `nx-build-state.json`, e é por isso que o alvo do Nx se chama `lint` e roda o
+        `./mvnw` direto, em vez de depender deles.)
+      -->
+      <plugin>
+        <groupId>com.diffplug.spotless</groupId>
+        <artifactId>spotless-maven-plugin</artifactId>
+        <version>${spotless-plugin.version}</version>
+        <configuration>
+          <java>
+            <!-- NÃO há `importOrder` aqui, e a ausência foi medida. A ordem dos grupos de import
+                 NÃO é consistente neste código: uns arquivos começam por `dev`, outros por `java`,
+                 outros por `org`. Não existindo convenção a preservar, ligar a regra não estaria
+                 arrumando nada — estaria ESCOLHENDO uma, e reescrevendo quase todos os 227 arquivos
+                 para impô-la. É a mesma razão de não haver formatter. -->
+            <removeUnusedImports />
+            <trimTrailingWhitespace />
+            <endWithNewline />
+          </java>
+        </configuration>
       </plugin>
     </plugins>
   </build>

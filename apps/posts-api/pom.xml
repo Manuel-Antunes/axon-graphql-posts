@@ -385,7 +385,10 @@
                     <!-- -parameters: o SmallRye GraphQL casa o nome do argumento do schema com o nome
                          do parâmetro do método quando não há @Name. -->
                     <parameters>true</parameters>
-                    <annotationProcessorPaths>
+                    <!-- combine.children: o MapStruct daqui SOMA com o error_prone_core do pom raiz, em vez de
+                                         substituí-lo. Sem isto o módulo herda o `-Xplugin:ErrorProne` dos
+                                         compilerArgs e perde o jar que o implementa: `plug-in not found`. -->
+                    <annotationProcessorPaths combine.children="append">
                         <path>
                             <groupId>org.mapstruct</groupId>
                             <artifactId>mapstruct-processor</artifactId>

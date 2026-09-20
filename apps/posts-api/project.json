@@ -9,6 +9,80 @@
         "command": "./mvnw quarkus:dev -pl apps/posts-api -Ddebug=5005"
       }
     },
+    "lint": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "javaSources"
+      ],
+      "metadata": {
+        "description": "O lint do JAVA, e ele cobre o REATOR INTEIRO — os oito módulos, não só este app. Mora aqui pelo mesmo motivo que o test-unit: `-pl` não funciona neste reator, então todo alvo do lado Java roda da raiz, e `apps/posts-api` é quem tem a maior superfície Java. Com o mesmo NOME dos alvos de ESLint de `web` e `posts-api-e2e`, `pnpm lint` (nx run-many -t lint) cobre o monorepo inteiro numa invocação."
+      },
+      "options": {
+        "parallel": false,
+        "forwardAllArgs": false,
+        "commands": [
+          {
+            "command": "infra/scripts/build-env.sh ./mvnw -q -fae spotless:check",
+            "description": "`-fae` (fail at end) porque sem ele o Maven para no PRIMEIRO módulo com violação, e quem roda o lint quer a lista inteira de uma vez. `forwardAllArgs: false` porque o default é true, e aí um `--fix` na linha de comando entrava CRU no comando do Maven, que respondia com a tela de ajuda dele e um código de saída 1."
+          }
+        ]
+      },
+      "configurations": {
+        "fix": {
+          "commands": [
+            {
+              "command": "infra/scripts/build-env.sh ./mvnw -q -fae spotless:apply",
+              "description": "O lado arrumável do lint do Java. O Error Prone NÃO tem equivalente aqui de propósito: o que ele acha exige ler o código, e é por isso que ele falha o build em vez de ter um botão."
+            }
+          ]
+        }
+      }
+    },
+    "test-unit": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "quarkusTest"
+      ],
+      "outputs": [
+        "{projectRoot}/target/surefire-reports"
+      ],
+      "metadata": {
+        "description": "O nível de baixo: domínio puro, os *CommandTest com repositório em memória, as Connections do Relay, e os @QuarkusTest que aferem FIAÇÃO (AxonWiringTest, OutboxRoutingTest) e SCHEMA (FederationSchemaTest, RelaySchemaTest, SchemaIntrospectionTest). 94 testes, ~26s. O nome NÃO é `test`: `test` é fase do ciclo de vida do Maven e o @nx/maven a infere como alvo — um alvo de mesmo nome no project.json não substitui o inferido, ele se FUNDE com ele e herda o `dependsOn: [^install]` que carrega a armadilha do nx-build-state.json."
+      },
+      "options": {
+        "parallel": false,
+        "commands": [
+          {
+            "command": "infra/scripts/build-env.sh ./mvnw test -Dtest='!*E2ETest,!*IT' -Dsurefire.failIfNoSpecifiedTests=false",
+            "description": "O `!*IT` não é redundante, e isso foi MEDIDO: `-Dtest=` SOBRESCREVE os includes default do Surefire, então `!*E2ETest` sozinho passa a arrastar os *NativeIT — que são @QuarkusIntegrationTest, precisam do binário nativo e falham com 3 erros. O `failIfNoSpecifiedTests=false` é para os módulos do reator que não têm teste nenhum."
+          }
+        ]
+      }
+    },
+    "test-e2e": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "quarkusTest"
+      ],
+      "outputs": [
+        "{projectRoot}/target/surefire-reports"
+      ],
+      "metadata": {
+        "description": "O nível de cima DENTRO de um processo: os *E2ETest, que sobem a aplicação inteira com Dev Services (Postgres e Keycloak) e falam pela borda GraphQL. Tem o MESMO NOME do alvo de apps/posts-api-e2e — é assim que `nx run-many -t test-e2e` roda os dois níveis pesados numa esteira só. EXIGE Docker."
+      },
+      "options": {
+        "parallel": false,
+        "commands": [
+          {
+            "command": "infra/scripts/build-env.sh ./mvnw test -Dtest='*E2ETest' -Dsurefire.failIfNoSpecifiedTests=false",
+            "description": "Da RAIZ e não com -pl: para os goals de build o -pl quebra a validação do quarkus-extension-maven-plugin em axon-native-support."
+          }
+        ]
+      }
+    },
     "lambda-http": {
       "executor": "nx:run-commands",
       "cache": true,
