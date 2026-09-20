@@ -1,0 +1,25 @@
+name: 'web'
+description: 'As checagens ESTÁTICAS dos pacotes JavaScript, mais o build do cliente Next.js'
+runs:
+  using: composite
+  steps:
+    - name: Lint and typecheck every JavaScript project
+      # `-p` e não `run-many` solto: `apps/posts-api` também declara um alvo `lint`, e o dele é o
+      # Spotless do reator Java inteiro. Ele roda no job do Java, onde está o resto do gate daquele
+      # lado — ver `tools/github/test`.
+      #
+      # Os três ficam juntos de propósito: é o que mantém o app de teste ponta a ponta E a
+      # infraestrutura sob a mesma regra que o cliente, inclusive o `@nx/enforce-module-boundaries`,
+      # que é a única que fala de arquitetura.
+      run: npx nx run-many -t lint typecheck -p web posts-api-e2e infra
+      shell: bash
+
+    - name: Build the web client
+      # `-p web` NÃO é redundante, e isto foi conferido: `posts-api-e2e` TAMBÉM declara um alvo
+      # `build`, e o dele é `./mvnw package` — o empacotamento dos dois serviços Java. Sem o filtro,
+      # o job do cliente web construiria o backend inteiro.
+      #
+      # O `build` do web roda o `codegen` por dentro (`pnpm build` é `pnpm codegen && next build`),
+      # então um schema que divergiu do código quebra AQUI, que é onde tem de quebrar.
+      run: npx nx run web:build
+      shell: bash

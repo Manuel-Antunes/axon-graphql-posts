@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Um PR que recebe três pushes não precisa de três esteiras: a última é a que vale.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # UM JOB POR CHECAGEM, e os três chamam a MESMA action principal com um `checks` diferente.
+  #
+  # Separar é o que evita que o nível pesado — que sobe Postgres, Keycloak, RabbitMQ e duas JVMs —
+  # segure o lint do cliente web atrás dele. O que NÃO se separa são os dois alvos dentro do
+  # `test-e2e`: eles compartilham `target/` e rodam em série por dentro.
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./tools/github/ci
+        with:
+          checks: test
+
+  test-e2e:
+    name: test:e2e
+    runs-on: ubuntu-latest
+    # 45 min porque este job EMPACOTA os dois serviços antes de subi-los, e a saga espera a primeira
+    # entrega de cada canal — que paga a conexão lazy do emitter de saída (~20s, medido).
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./tools/github/ci
+        with:
+          checks: test-e2e
+
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./tools/github/ci
+        with:
+          checks: web

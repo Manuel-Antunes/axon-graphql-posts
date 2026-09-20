@@ -1,0 +1,44 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'Stage de destino'
+        type: string
+        default: dev
+        required: true
+      args:
+        description: 'Argumentos extras do `sst deploy` (--target, --exclude, --continue, --verbose)'
+        type: string
+        default: ''
+        required: false
+
+# Dois deploys no mesmo stage ao mesmo tempo disputam o lock de estado do SST, e o segundo encontra
+# o do primeiro. `cancel-in-progress: false` porque cancelar um deploy no meio é pior que esperar.
+concurrency:
+  group: deploy-${{ inputs.stage }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # A subaction `deploy-sst` cria um GitHub Deployment com o URL do router ao fim.
+  deployments: write
+
+jobs:
+  deploy:
+    name: deploy ${{ inputs.stage }}
+    runs-on: ubuntu-latest
+    # O deploy CONSTRÓI os quatro artefatos nativos, em série, dentro do builder image do Mandrel.
+    timeout-minutes: 120
+    environment: ${{ inputs.stage }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./tools/github/deploy
+        with:
+          stage: ${{ inputs.stage }}
+          args: ${{ inputs.args }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          better-stack-url: ${{ secrets.BETTER_STACK_URL }}
+          better-stack-api-key: ${{ secrets.BETTER_STACK_API_KEY }}

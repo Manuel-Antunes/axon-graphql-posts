@@ -59,8 +59,11 @@ pnpm --filter @axonposts/web dev   # só o cliente, em http://localhost:3000
 ./mvnw install -DskipTests -pl '!apps/posts-api,!apps/tagging'   # as libs no ~/.m2 (ver abaixo)
 ./mvnw quarkus:dev -pl apps/posts-api   # uma aplicação só
 ./mvnw test                    # suíte inteira — EXIGE Docker
+pnpm test                      # o NÍVEL DE BAIXO, pelo Nx: 94 testes, ~26s (ver *Testes*)
+pnpm test:e2e                  # os DOIS níveis pesados, em série — ver *Testes*
+pnpm lint                      # ESLint nos pacotes JS + Spotless nos 8 módulos Java
+pnpm lint:fix                  # conserta os DOIS lados de uma vez (ver *O LINT*)
 ./mvnw package                 # build + testes
-./docker/e2e/run.sh            # a saga entre DOIS processos, com broker de verdade
 ./mvnw test -Dtest=PostTest                                       # uma classe
 ./mvnw test -Dtest=PostLifecycleE2ETest#aNewPostArrivesAlreadyTaggedAtVersionTwo   # um método
 ./mvnw test -Dtest='*E2ETest'                                     # só os ponta a ponta
@@ -168,7 +171,7 @@ repetir o comando.** Só apareceu quando a camada de aplicação veio para o app
 anotação do MapStruct com ela — em `libs/` isso nunca aconteceu.
 
 **Onde dói e onde não:** `./mvnw clean test` passa (o `test` não roda `quarkus:build`). Quem falha é o
-`package` — e portanto o `docker/e2e/run.sh`, que empacota antes de subir as aplicações.
+`package` — e portanto o alvo `build` de `apps/posts-api-e2e`, que empacota antes de subir as aplicações.
 
 Descartados por medição: estado sujo em `target/`, snapshots instalados no `~/.m2`, índice Jandex
 desatualizado nas libs, `quarkus.arc.exclude-types`, teste nomeando classe gerada, opções do processador
@@ -178,9 +181,36 @@ produtores de bean escritos à mão em vez do `componentModel` — com eles a fa
 e passa a ser **determinística** (`Producer method return type not found in index`), o que é pior. Daí a
 configuração atual ser a convencional.
 
-**Suspeita principal: o JDK.** A JVM aqui é a **25**, e o Quarkus 3.39 não a suporta (`release` é 21).
-Não foi possível confirmar nesta máquina — só há JDK 25, 17 e 8 instalados, e 17 não compila `release 21`.
-O próximo passo é rodar num JDK 21.
+**Suspeita principal: o JDK — e ela foi TESTADA E REFUTADA.** A JVM desta máquina é a **25**, que o
+Quarkus 3.39 não suporta (`release` é 21), e o próximo passo registrado era rodar num JDK 21. Feito,
+com um Temurin 21.0.12 baixado só para a medição: **3 empacotamentos, 3 falhas**, com a MESMA
+exceção (`Unsatisfied dependency ... PostViewMapper`). No mesmo período, o JDK 25 deu **0 sucessos em
+6**. A versão da JVM não é a variável.
+
+Duas observações novas do mesmo episódio, e as duas são pistas melhores que a anterior:
+
+- **a falha é RÁPIDA — ~4,7s no módulo**, sem recompilar. O augmentation roda contra um
+  `target/classes` que já existe e não enxerga os impls que estão lá;
+- **a taxa não é estável no tempo.** O documento registrava "cerca de metade"; numa janela de uma
+  hora foram ~15 falhas seguidas, inclusive com `clean`. Seja o que for, tem estado, e o estado não é
+  o `target/` (ver a medição do `clean` na seção do `apps/posts-api-e2e`).
+
+Quem depender de um empacotamento verde hoje — o alvo `build` de `apps/posts-api-e2e` e o
+`sst deploy` — repete o comando. **Isto continua aberto**, e o próximo passo
+deixou de ser o JDK.
+
+**O BYTECODE FOI CONFERIDO, e é a pista que sobra.** Não é o fonte gerado que está errado nem o
+`.class` que falta: `javap -v` nos dois impls mostra `RuntimeVisibleAnnotations` com
+`Ljakarta/enterprise/context/ApplicationScoped;`, em classes recém-compiladas, no mesmo minuto da
+falha. Classe presente, anotada e fresca — e o `ArcProcessor#validate` diz `Unsatisfied dependency`.
+O que não enxerga é o ÍNDICE, e é aí que a próxima investigação tem de começar.
+
+**E o estado incremental do `target/` É gatilho, pelo menos para o `test`.** Depois de uma série de
+`package` falhados, `./mvnw test` passou a falhar também — e `./mvnw clean test` voltou a passar, em
+33s. São dois caminhos de augmentation diferentes (o `test` não roda `quarkus:build`), e só o do
+`test` se recupera com `clean`: para o `package`, a medição de três execuções com `clean` deu o mesmo
+1 em 3 de sem ele. **Se a suíte começar a falhar sem que ninguém tenha mexido no código, `clean` é a
+primeira coisa a tentar.**
 
 **Duas regras que ficaram do episódio**, e as duas valem por si:
 
@@ -263,7 +293,7 @@ o outro faz o inverso. Trocar o serviço de tagueamento é trocar quem responde 
 
 **Em teste a decisão é dublada em processo** (`InProcessTagAssignment`, removido do build em dev/prod
 pelo `@IfBuildProperty`), porque consistência eventual faz mensagem em voo cruzar a fronteira do
-`truncate` entre testes. O caminho real é coberto por `docker/e2e/run.sh`, fora do Surefire.
+`truncate` entre testes. O caminho real é coberto por `apps/posts-api-e2e`, fora do Surefire.
 
 ### A integração Axon ↔ channels, nas duas direções
 
@@ -596,7 +626,7 @@ domínio na mesma classe. Não existe entidade de infraestrutura espelho; os val
 
   Por isso **`ChannelEventIngestion.ingest` não leva `@Transactional`**: a linha do inbox e o append vão
   dentro da mesma `unitOfWorkFactory().create("axon-inbox")`, que abre a transação e a commita. A
-  atomicidade é a mesma; o que muda é quem é o dono. Medido nos dois sentidos com `docker/e2e/run.sh`:
+  atomicidade é a mesma; o que muda é quem é o dono. Medido nos dois sentidos com `pnpm test:e2e`:
   **11 de 12** com a anotação, **12 de 12** sem ela — e nenhum teste do Surefire pega a diferença, porque
   em teste o tagueamento é dublado em processo e a ingestão não roda. Quem trava é
   `AxonWiringTest.theIngestionOwnsItsOwnTransaction`, que confere a ausência da anotação.
@@ -1731,6 +1761,100 @@ npx nx run web:open-next-build          # o que o SST chama no deploy
 
 Surefire roda tudo em `./mvnw test`, inclusive os `*E2ETest` — **Docker precisa estar de pé**.
 
+### TRÊS NÍVEIS, DOIS COMANDOS — e quem os conhece é o Nx, não o `package.json`
+
+`pnpm test` era `./mvnw test` e passou a ser `nx run-many -t test-unit`. A troca não é de ferramenta:
+é de QUEM SABE o que cada nível é. Um `./mvnw test` no script da raiz não tem como ser cacheado, não
+tem como ser afetado por um diff, e não tem onde um segundo tipo de teste entrar.
+
+| comando | alvo do Nx | quem declara | o que roda |
+|---|---|---|---|
+| `pnpm test` | `test-unit` | `apps/posts-api` | domínio, `*CommandTest`, fiação e schema — 94 testes, ~26s |
+| `pnpm test:e2e` | `test-e2e` | `apps/posts-api` | os `*E2ETest`, com Dev Services, num processo |
+| `pnpm test:e2e` | `test-e2e` | `apps/posts-api-e2e` | a saga entre DOIS processos, com broker de verdade |
+
+**Os dois níveis pesados têm o MESMO NOME DE ALVO de propósito.** É o que faz `nx run-many -t test-e2e`
+rodar os dois numa esteira só, e é a razão de a separação ser por alvo e não por script: um nível novo
+que provisione coisas entra declarando `test-e2e`, sem que ninguém edite um comando.
+
+**`--parallel=1` no `test:e2e` NÃO é afinamento.** Os perfis do Maven escrevem todos em `target/`, e o
+alvo `build` de `apps/posts-api-e2e` empacota enquanto o `test-e2e` do `posts-api` está rodando o
+Surefire no mesmo diretório. É a mesma necessidade que serializa os quatro `lambda-*`.
+
+**Os nomes NÃO podem ser `test` e `e2e`.** `test`, `test-ci`, `integration-test` e `verify` são alvos
+INFERIDOS pelo `@nx/maven` nos projetos Maven — e um alvo de mesmo nome no `project.json` não
+substitui o inferido: ele se FUNDE com ele e herda o `dependsOn: ["^install"]`, que é a armadilha do
+`nx-build-state.json` documentada mais acima. Conferido: `test-unit` e `test-e2e` saem com
+`dependsOn: null`. É o mesmo motivo de os alvos de empacotamento se chamarem `lambda-*`.
+
+**`-Dtest='!*E2ETest'` sozinho NÃO basta, e isto foi medido.** `-Dtest=` **sobrescreve os includes
+default do Surefire**, então a exclusão passa a arrastar os `*NativeIT` — que são
+`@QuarkusIntegrationTest`, precisam do binário nativo e falham com três erros. O filtro é
+`!*E2ETest,!*IT`. Junto vem `-Dsurefire.failIfNoSpecifiedTests=false`, para os módulos do reator que
+não têm teste nenhum.
+
+### `apps/posts-api-e2e`: a saga como APP, e não como script
+
+O que era `docker/e2e/run.sh` é hoje um app de teste do Nx — Vitest e TypeScript, porque o teste da
+saga **já era** TypeScript (`saga-choreography.mjs`), e o que estava em shell era só a provisão. Os
+dois arquivos FORAM REMOVIDOS quando o app passou verde: a mesma saga afirmada em dois lugares é a
+mesma regra em dois lugares, e o primeiro ajuste as separa em silêncio.
+
+Ele declara `implicitDependencies` nos DOIS serviços, e é isso que o põe no grafo: mexer em
+`apps/tagging` invalida o artefato dele, e um `nx affected` o alcança sem ninguém listar nada.
+
+```
+apps/posts-api-e2e/
+  src/specs/     as SPECS, com sufixo `.e2e.spec.ts` — o sufixo diz o NÍVEL
+  src/support/   o MECANISMO: a stack, os dois processos, o event store, o broker, a borda
+  src/global-setup.ts
+```
+
+**A spec leva `.e2e.spec.ts` e mora em `src/specs/`**, e as duas coisas dizem a mesma: o `include` do
+Vitest é `src/specs/**/*.e2e.spec.ts`, então `src/support/` fica de fora do padrão de propósito — o
+que há lá é mecanismo, e mecanismo não é spec. Um nível novo (`*.integration.spec.ts`, digamos) entra
+como um `include` a mais, sem mover nada.
+
+**EMPACOTAR saiu do teste.** O script fazia `clean package` "para medir o que um build do zero
+produz"; aqui isso é o alvo `build`, do qual o `test-e2e` depende, e quem garante o mesmo é o hash do
+CONTEÚDO das fontes que o Nx calcula. **E o `clean` não volta**, porque ele foi MEDIDO de novo
+neste recorte: seis empacotamentos idênticos, três com `clean` e três sem, deram **1 sucesso em 3 dos
+dois lados** — a intermitência do augmentation é a mesma com ou sem ele. É a confirmação
+independente do que a seção do `posts-api` já dizia ao descartar "estado sujo em `target/`". **UM alvo e não dois**, porque `-pl` não funciona neste reator:
+um `./mvnw package` produz os `quarkus-app` dos dois serviços, e dois alvos rodariam o reator inteiro
+duas vezes disputando `target/`.
+
+**A prontidão é uma estratégia, não um `if`** (`support/service.ts`). O `posts-api` tem `/q/health`;
+o `tagging` **não tem porta nenhuma** — `quarkus-opentelemetry` depende de `quarkus-vertx` e não de
+`quarkus-vertx-http`, que é o que permite instrumentá-lo sem lhe dar um endpoint. O único sinal de que
+ele subiu é a linha no log dele. Duas respostas para a mesma pergunta é o que faz de `HttpHealth` e
+`LogLine` duas implementações de `Readiness`.
+
+**`fileParallelism: false` e `singleFork`**: os testes disputariam o MESMO event store e o mesmo
+broker. Paralelismo aqui não acelera nada — ele muda o que está sendo medido. E `retry: 0`, pelo mesmo
+motivo: um teste que só passa na segunda tentativa esconde exatamente o que este app existe para medir.
+
+**O `globalSetup` roda NOUTRO PROCESSO**, então o objeto que ele cria não atravessa para os testes.
+Não é problema: `ChoreographyStack` é uma fachada sem estado sobre o Docker e o HTTP, e o arquivo de
+teste constrói a dele olhando para a mesma stack. O que não atravessa é o processo filho de cada
+serviço — por isso quem os derruba é o `teardown` de lá.
+
+
+**O `vitest` roda ATRÁS do `build-env.sh`, e não é para construir nada.** O script garante um JDK ≥ 21
+e exporta `JAVA_HOME`; `support/service.ts` honra essa variável em vez de chamar o `java` do PATH. A
+razão foi MEDIDA e o modo de falhar é o pior que há: o shell desta máquina traz um JDK 17, e um
+`quarkus-run.jar` compilado com `release 21` sai nele com **código 1 e log vazio** — sem
+`UnsupportedClassVersionError`, sem uma linha em stderr. O sintoma é indistinguível de "a aplicação
+morreu na partida", e a espera de prontidão levava 120s para dizer nada.
+
+Duas consequências ficaram no código, e as duas valem por si:
+
+1. **a busca pelo JDK não é reescrita em TypeScript.** Quem a faz é o `build-env.sh`, que já a fazia
+   para o build — duas buscas divergiriam, e a que estivesse errada seria a que ninguém olha;
+2. **`Service` delata a MORTE PRECOCE.** Um `exit` do processo interrompe a espera na hora, com o
+   código de saída e — quando o log está vazio — a frase que aponta para o JDK. Como o script faz
+   `cd` para a raiz, o `vitest` recebe `--root apps/posts-api-e2e` em vez de `cwd`.
+
 - **Domínio puro** (`PostTest`, `TagTest`, `SoftDeletableTest`, `AuthenticatableTest`): sem Axon, sem CDI,
   sem JPA. O único colaborador é `RecordingDomainEvents`, um duplo da porta do próprio domínio. Estes
   testes atravessaram a conversão **sem uma linha alterada**.
@@ -1752,7 +1876,7 @@ Surefire roda tudo em `./mvnw test`, inclusive os `*E2ETest` — **Docker precis
   O segundo chama o `_entities` de verdade: é o único lugar onde um argumento renomeado, um `@Id` a mais
   ou um `@NonNull` no elemento da lista falham. Inclui o custo, pela mesma propriedade do
   `BatchLoadingE2ETest`: N representações precisam custar os mesmos statements que 1.
-- **Entre PROCESSOS** (`docker/e2e/run.sh`): sobe a infraestrutura, roda as migrations fora do processo,
+- **Entre PROCESSOS** (`apps/posts-api-e2e`, via `pnpm test:e2e`): sobe a infraestrutura, roda as migrations fora do processo,
   empacota, sobe as DUAS aplicações e afirma a saga inteira — inclusive que o event store de cada serviço
   tem exatamente os eventos esperados (é o que pegaria um laço de reenvio, como contagem crescendo) e que
   reentregar a mesma mensagem não produz uma segunda decisão. Fica fora do Surefire de propósito: o que
@@ -1775,6 +1899,249 @@ Surefire roda tudo em `./mvnw test`, inclusive os `*E2ETest` — **Docker precis
   Quarkus entregava a exceção crua onde o Spring entregava embrulhada — e com a extensão ela volta
   embrulhada numa `CommandExecutionException`. Percorrer a cadeia é o que sobrevive às duas formas;
   `rootCause()` do AssertJ, não.
+
+## A esteira (`tools/github/` e `.github/workflows/`)
+
+**A REGRA: uma action principal, composta de subactions.** As subactions fazem uma coisa cada; os
+workflows não conhecem nenhuma delas, só a principal. Trocar como se roda um teste é mexer num
+arquivo, e nenhum workflow sabe que mudou.
+
+```
+tools/github/
+  setup/        Node, pnpm, JDK e os dois caches (~/.m2 e .nx/cache)
+  test/         `pnpm test` + os relatórios do Surefire como artefato
+  test-e2e/     `pnpm test:e2e` + relatórios E OS LOGS DAS DUAS APLICAÇÕES
+  web/          lint, typecheck e build do cliente, num `run-many` só
+  deploy-sst/   o `sst deploy` e o GitHub Deployment  ← a subaction que já existia
+  ci/           A PRINCIPAL da integração: `setup` + as checagens pedidas
+  deploy/       A PRINCIPAL do deploy: `setup` + credenciais da AWS + `deploy-sst`
+.github/workflows/
+  ci.yml        três jobs, os três chamando `ci` com um `checks` diferente
+  deploy.yml    workflow_dispatch com o stage
+```
+
+**A action `ci` tem um input `checks`, e ele existe por um motivo estrutural.** Uma action composta
+roda num job só — então uma principal que fizesse as três checagens em sequência poria o lint do
+cliente web atrás de um nível que sobe Postgres, Keycloak, RabbitMQ e duas JVMs. Com o `checks`, o
+MESMO ponto de entrada serve a um job por checagem: paralelismo no workflow, e a preparação do
+ambiente declarada em um lugar só. `checks: all` também funciona, e é o que faz sentido num gancho
+local.
+
+O casamento é com vírgulas nas pontas (`,${checks},`) e não com `contains` cru: sem elas, `test`
+casaria dentro de `test-e2e` e o nível de baixo rodaria junto com o de cima, calado.
+
+**O JDK da esteira é o 21, e não o 25.** O `release` do projeto é 21, e este documento registra o
+augmentation do Quarkus 3.39 falhando de forma INTERMITENTE sob a JVM 25 — que ele não suporta. Numa
+esteira, intermitência é pior que lentidão.
+
+**O `test-e2e` derruba o compose ao fim (`down -v`), e o local não.** Na máquina os containers ficam
+de pé de propósito, para a próxima execução não pagar a subida; num runner efêmero isso não vale
+nada, e um volume sobrevivente entre jobs valeria menos ainda.
+
+**Não há passo de empacotamento antes do `deploy`.** Cada função declara o alvo do Nx que a empacota
+(`QuarkusBuild.buildCommand`, em `infra/aws/support/functions.ts`) e o `triggers` do Pulumi decide se
+o comando roda. Um `package.sh` antes do deploy construiria FORA do grafo, e o SST reconstruiria
+mesmo assim.
+
+**As credenciais do Better Stack são obrigatórias no deploy**, e vão pelo `GITHUB_ENV` e não por um
+`env:` no passo: assim todo passo seguinte as enxerga, inclusive os de dentro do `deploy-sst`. Na
+máquina elas vêm do `.env` da raiz, que o SST carrega sozinho; num runner não há `.env`, e
+`requiredEnv` FALHA o deploy — de propósito, porque um coletor sem destino sobe, não reclama, e some
+com a telemetria em silêncio.
+
+Segredos que o `deploy.yml` espera: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `BETTER_STACK_URL`
+e `BETTER_STACK_API_KEY`.
+
+### O LINT — e as DUAS armadilhas de um monorepo que é quase todo Java
+
+**CADA SISTEMA TEM O SEU**, e a herança é um import. `eslint.base.config.mjs` na raiz é o que todos
+compartilham; cada projeto tem um `eslint.config.mjs` que começa por `...baseConfig` e acrescenta só o
+que é dele. `pnpm lint` é `nx run-many -t lint` e **não lista ninguém** — quem tem o alvo é quem tem a
+config.
+
+| projeto | config | o que acrescenta |
+|---|---|---|
+| `web` | `apps/web/eslint.config.mjs` | o preset do Next |
+| `posts-api-e2e` | `apps/posts-api-e2e/eslint.config.mjs` | as regras do Vitest |
+| `infra` | `infra/eslint.config.mjs` | as duas exceções do SST |
+| `dev.manuelantunes:quarkus-axon-graphql-posts` | — | Spotless, nos OITO módulos Maven |
+
+**A forma é do Nx, e ela existe por um motivo mecânico**: em flat config o ESLint usa **UM** arquivo,
+o mais próximo do diretório de onde ele roda, e cada alvo `lint` roda com `cwd` no próprio projeto.
+**Não há herança automática entre arquivos de config** — a herança é o `import baseConfig`.
+
+O que fica na BASE é o que não pode divergir: o plugin do Nx, os ignores globais, o
+`@nx/enforce-module-boundaries` (que lê o grafo do workspace INTEIRO, então escrevê-lo duas vezes
+seria a mesma regra em dois lugares) e as três regras de TypeScript que descrevem como este monorepo
+escreve código.
+
+**`infra` é projeto do Nx por UMA razão: ter o próprio lint.** São 22 arquivos TypeScript que não
+pertenciam a pacote nenhum do workspace, e por isso não eram lintados por nada. O `infra/project.json`
+existe só para o `@nx/eslint/plugin` inferir o alvo a partir do `infra/eslint.config.mjs`.
+
+**Ele custou DUAS exceções, e nas duas o SST está certo e a regra errada:**
+
+- `triple-slash-reference` — eram **21 das 27** violações do diretório, a única sistemática. O
+  `/// <reference path=".sst/platform/config.d.ts" />` é como o SST põe os tipos gerados dele em
+  escopo (`$config`, `$app`, `sst.aws.*`, o global `aws`). Não há import equivalente porque não há
+  módulo: é um arquivo de declarações. Trocar por `import` deixaria o arquivo SEM TIPO NENHUM;
+- `no-empty-object-type` com `allowInterfaces: "with-single-extends"` — não desligada, CONFIGURADA.
+  `interface MigratorArgs extends Omit<QuarkusFunctionArgs, "timeout" | "memory"> {}` é o padrão de
+  dar nome a um tipo derivado numa API pública. A predecessora depreciada `no-empty-interface` saiu,
+  porque acusava as mesmas linhas uma segunda vez.
+
+Sobraram **2 avisos**, os dois no código de infraestrutura: um `userGroup` atribuído e nunca usado
+(`identity/index.ts`) e um `!` (`support/functions.ts`). Ficaram como AVISO de propósito — são
+decisões de quem escreveu a infra, não do lint.
+
+**NÃO HÁ alvo `lint` na raiz, e a ausência é o desenho.** O projeto `root` do Nx é o **reator Maven**
+(o `@nx/maven` reivindica a raiz), não um projeto de JavaScript — o `nx show project root` traz as 50
+fases do ciclo de vida. `nx run-many -t lint` resolve os projetos sozinho; um alvo na raiz seria uma
+lista escrita à mão para dizer o que o grafo já sabe.
+
+A consequência, e ela é real: **o `sst.config.ts` não é lintado por alvo nenhum.** Ele tem de morar na
+raiz porque é onde o CLI do SST o procura. O `eslint.config.mjs` da raiz continua existindo — é o que
+o editor resolve e o que um `npx eslint sst.config.ts` usa —, e ele traz as exceções daquele arquivo,
+incluindo `enforce-module-boundaries` desligada: o `await import("./infra/aws")` É um import relativo
+para dentro de outro projeto, e tem de ser, porque os módulos de `infra/` criam recursos no topo e
+importá-los estaticamente os avaliaria antes de `app()` rodar.
+
+**O plugin EXCLUI os módulos Maven, por escrito.** Ele já não inferiria o alvo para um projeto sem
+um `.ts`/`.js` sequer, mas o `exclude` do `nx.json` diz isso de propósito: uma garantia implícita é
+uma garantia que ninguém lê antes de quebrar.
+
+**O `includedScripts: []` no bloco `nx` da RAIZ conserta uma recursão, e ela foi observada.** A raiz
+é um projeto Nx (`"nx": { "name": "root" }`), então cada script do `package.json` dela vira um alvo —
+inclusive `lint`, que É `nx run-many -t lint`. O resultado é `root:lint -> root:lint`, e o Nx o
+detecta e falha a esteira inteira. `includedScripts: []` diz o que esses scripts são: portas de
+entrada para gente, não alvos. Vale para `dev`, `test` e `test:e2e` pela mesma razão — os quatro são
+invólucros de `nx run-many`.
+
+**O `enforce-module-boundaries` precisa de um `allow` para a própria config.** `apps/web/eslint.config.mjs`
+IMPORTA a da raiz — um import relativo que atravessa a fronteira do projeto, que é exatamente o que a
+regra proíbe. Sem a exceção, compor as configs em vez de duplicá-las seria um erro de lint.
+
+As `depConstraints` são uma só e permissiva, e isso é deliberado: hoje não há lib JS compartilhada
+neste monorepo — o domínio compartilhado é Java, e quem o separa é o reator do Maven. Uma matriz de
+`scope:`/`type:` seria fronteira desenhada contra dependência que não existe, e regra que nunca
+dispara é regra que ninguém mantém. Quando nascer a primeira lib JS, o lugar de apertar é essa lista.
+
+**`apps/posts-api-e2e` tem config PRÓPRIA**, e o que ela acrescenta não é estilo. As regras do
+`@vitest/eslint-plugin` ligadas ali pegam os jeitos de uma suíte MENTIR que nenhum compilador vê —
+`it` sem `expect`, `it.only` esquecido, título repetido, `expect` fora de um teste. Num app cujo
+trabalho inteiro é afirmar coisas sobre dois processos e um broker, uma suíte que mente é pior que
+suíte nenhuma: ela fica verde enquanto a saga não fecha. E `src/support/` fica de fora dessas regras
+pela mesma razão que fica de fora do `include` do Vitest — ali é mecanismo, não spec.
+
+A regra `no-standalone-expect` pegou uma de verdade na primeira execução: havia um `expect` dentro do
+`beforeAll`, que falha como erro de HOOK e não nomeia o que se esperava. O conserto não foi calar a
+regra — foi `PostsApi.subscribe` passar a RECUSAR um status diferente de 200, porque uma subscription
+que não abriu não é uma subscription.
+
+#### `consistent-type-definitions` é AUTO-CORRIGÍVEL e o auto-conserto QUEBROU o build
+
+A regra da base exige `interface` no lugar de `type` para tipo de objeto, e o `--fix` converteu 11
+declarações de uma vez. Uma delas não podia ser convertida, e o compilador é quem disse:
+
+```
+entities-probe.tsx(65,39): error TS2352: Conversion of type 'Representation[]' to type
+'Record<string, unknown>[]' may be a mistake because neither type sufficiently overlaps
+```
+
+**Um alias de tipo de objeto ganha ÍNDICE IMPLÍCITO; uma interface não.** É por isso que
+`Representation[]` deixava de ser atribuível a `Record<string, unknown>[]` — que é como as
+representações chegam ao `_entities`. O arquivo voltou a `type`, com `eslint-disable-next-line` e a
+razão escrita ao lado.
+
+A lição é sobre a ORDEM, e ela vale para qualquer `--fix`: **rodar o typecheck depois de um conserto
+automático não é zelo, é parte do conserto.** Aqui o lint ficou verde e o build quebrou.
+
+#### `pnpm lint` confere, `pnpm lint:fix` conserta — e `--fix` NÃO é a interface
+
+`lint:fix` é `nx run-many -t lint -c fix --skip-nx-cache`: uma configuração `fix` em cada um dos três
+alvos, `eslint . --fix` nos dois de JavaScript e `spotless:apply` no do Java.
+
+**`pnpm lint --fix` foi desativado de propósito, e o motivo é o de sempre aqui: ele funcionava PELA
+METADE.** O `forwardAllArgs` do `nx:run-commands` é `true` por default, então a flag era repassada
+crua — o ESLint a entendia e consertava, o `./mvnw` não e respondia com a tela de ajuda dele mais um
+código de saída 1. Com `forwardAllArgs: false` nos três, `--fix` passa a ser ignorado em toda parte,
+uniformemente, e quem conserta é `lint:fix`.
+
+**A configuração `fix` dos alvos de ESLint repete o comando em vez de usar a opção `args`**, e isso
+também foi medido: `forwardAllArgs: false` bloqueia `args` junto, então a configuração rodava sem o
+`--fix` e **dizia que tinha passado**. Travado por um teste manual com violação plantada dos dois
+lados — `let` que devia ser `const` no TypeScript e espaço no fim da linha no Java.
+
+#### A indentação do TypeScript é 2, e quem manda é o `.editorconfig`
+
+Ele está na raiz, diz `indent_size = 2` para todos os arquivos, e `apps/web` o segue. Os arquivos de
+`apps/posts-api-e2e` nasceram com 4 e foram reindentados. **Não há Prettier**, aqui nem em `apps/web`:
+o `.editorconfig` já declara a convenção, e acrescentar um formatter só para o app de teste deixaria
+um pacote JS formatado e o outro não.
+
+A régua do Java continua sendo 4 — o `[*]` do `.editorconfig` não descreve o que os 227 arquivos Java
+fazem, e não é ele que decide lá. Ver logo abaixo por que não há formatter do lado Java.
+
+### O LADO JAVA: Spotless para o arrumável, Error Prone para o defeito
+
+O `CLAUDE.md` dizia que "não há plugin de lint/format configurado" e que o gate era o compilador.
+Continua sendo — só que agora o compilador sabe mais.
+
+**A divisão é essa, e ela decide onde cada coisa falha:**
+
+| | o que pega | como se conserta | onde falha |
+|---|---|---|---|
+| **Spotless** | import morto, espaço no fim da linha, newline final | `./mvnw spotless:apply` | o alvo `lint` |
+| **Error Prone** | defeito de código: `equals`, `Locale`, `String.split` | lendo o código | o BUILD |
+
+O que é arrumável por máquina não precisa derrubar um build; o que exige alguém ler, precisa.
+
+**NÃO HÁ FORMATTER, e a ausência foi medida.** 227 arquivos, indentação de 4 espaços, **dez** linhas
+acima de 120 colunas: o código já está formatado. Um `google-java-format` ou um `palantir` reescreveria
+os 227 para impor a régua dele, requebrando o Javadoc longo em português e levando o `git blame` junto.
+
+**Também não há `importOrder`, pela razão oposta.** Ela foi ligada, medida e desligada: a ordem dos
+grupos de import **não é consistente** neste código — uns arquivos começam por `dev`, outros por
+`java`, outros por `org`. Não existindo convenção a preservar, a regra não estaria arrumando nada,
+estaria ESCOLHENDO uma e reescrevendo quase tudo para impô-la.
+
+O que sobrou custou **5 linhas**: cinco imports não usados, em três arquivos.
+
+**O Spotless NÃO tem `<executions>`**, e são dois efeitos de uma vez: `package` e `test` não pagam por
+ele, e o `@nx/maven` não passa a inferir um alvo por execução de mojo — que é a armadilha do
+`nx-build-state.json`.
+
+**O alvo `lint` do Java mora em `apps/posts-api` e cobre o REATOR INTEIRO.** É a mesma forma do
+`test-unit`: `-pl` não funciona neste reator, então todo alvo do lado Java roda da raiz. Ter o MESMO
+NOME dos alvos de ESLint é o que faz `pnpm lint` cobrir o monorepo numa invocação.
+
+**As TRÊS armadilhas do Error Prone, e as três foram pagas aqui:**
+
+1. **`annotationProcessorPaths` de um filho SUBSTITUI o do pai, não soma.** `apps/posts-api` (MapStruct)
+   e `axon-native-support/deployment` (o processador da extensão) declaram o seu, então herdavam o
+   `-Xplugin:ErrorProne` dos `compilerArgs` e perdiam o jar que o implementa: `plug-in not found:
+   ErrorProne`, no meio do reator. O conserto é `combine.children="append"` nos dois.
+2. **O JDK 16+ exige `add-exports`/`add-opens` para os internos do javac**, e eles são do processo que
+   RODA o javac — por isso estão em `.mvn/jvm.config` e não no pom. Sem eles o compilador morre antes
+   de compilar o primeiro arquivo.
+3. **`XDcompilePolicy=simple` e `should-stop=ifError=FLOW` não são afinamento**: sem eles o javac roda
+   o plugin numa política incompatível e o Error Prone nem carrega.
+
+**TRÊS CHECAGENS DESLIGADAS, e as três são de Javadoc.** Dos 17 achados do primeiro reator inteiro,
+**8 eram delas**: `InvalidParam` (falso positivo — em `Post.java` ele acusa `{@code authors}` de ser o
+parâmetro `author` escrito errado, quando `authors` ali é o nome da TABELA), `EscapedEntity` (acusa
+`<b>` dentro de `{@code}`, que é como a prosa daqui é escrita) e `MissingSummary` (exige frase-resumo;
+os Javadoc daqui abrem com o contexto da decisão). Um lint que grita onde não há defeito é um lint que
+se aprende a ignorar INTEIRO.
+
+**O que sobrou são 9 avisos, todos sobre CÓDIGO**, e eles seguem como aviso de propósito — virar erro
+quebraria o build hoje, e a decisão de consertar cada um é de quem conhece a intenção:
+
+```
+6  MissingOverride         implementação sem @Override
+2  StringCaseLocaleUsage   toLowerCase() sem Locale — quebra em turco, e um deles é o Email
+1  StringSplitter          String.split(String) tem comportamento surpreendente
+```
 
 ## Convenções
 
