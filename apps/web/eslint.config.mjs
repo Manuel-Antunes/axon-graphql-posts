@@ -1,6 +1,7 @@
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import { FlatCompat } from "@eslint/eslintrc";
+import baseConfig from "../../eslint.base.config.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -10,6 +11,10 @@ const compat = new FlatCompat({
 });
 
 const eslintConfig = [
+  // A BASE vem primeiro, e compor é o ponto: é dela que vem o `@nx/enforce-module-boundaries`, a
+  // única regra que fala de arquitetura. Repetir a lista aqui seria a mesma regra em dois lugares —
+  // e o primeiro ajuste as separaria em silêncio.
+  ...baseConfig,
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
     ignores: [

@@ -27,13 +27,13 @@ export const PostEditor_post = graphql(`
     }
 `);
 
-type UpdateRunner = {
+interface UpdateRunner {
     run: (options: {
         variables: { input: { id: string; title?: string | null; content?: string | null } };
     }) => Promise<unknown>;
     loading: boolean;
     error?: unknown;
-};
+}
 
 /**
  * Update PARCIAL: o que fica em branco não vai na mutation.

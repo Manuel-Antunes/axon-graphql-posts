@@ -6,13 +6,13 @@ import { useApolloClient } from "@apollo/client/react";
 import { CreateSagaPostMutation, SagaProbeQuery } from "../query";
 
 
-export type SagaEvent = {
+export interface SagaEvent {
     /** Milissegundos desde o início da corrida. É a unidade que interessa aqui. */
     at: number;
     label: string;
     detail: string;
     tone: "neutral" | "pending" | "good" | "bad";
-};
+}
 
 export type SagaStatus = "idle" | "creating" | "waiting" | "closed" | "timeout" | "error";
 

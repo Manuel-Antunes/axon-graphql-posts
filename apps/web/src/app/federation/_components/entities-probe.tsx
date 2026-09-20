@@ -53,6 +53,13 @@ const EntitiesQuery = graphql(`
     }
 `);
 
+/*
+ * TEM de ser `type` e não `interface`, e a diferença não é de estilo: um alias de tipo de objeto
+ * ganha ÍNDICE IMPLÍCITO, uma interface não. Sem ele, a linha que passa as representações ao
+ * `_entities` (`as Record<string, unknown>[]`) deixa de compilar com TS2352. O `--fix` do
+ * `consistent-type-definitions` converteu isto uma vez e quebrou o build.
+ */
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
 type Representation = { __typename: string; id: string };
 
 export function EntitiesProbe() {

@@ -159,14 +159,14 @@ export function LiveConsole() {
   );
 }
 
-type Row = {
+interface Row {
   key: string;
   at: number;
   badge: string;
   title: string;
   version: number;
   postId: string;
-};
+}
 
 function EventList({
   rows,

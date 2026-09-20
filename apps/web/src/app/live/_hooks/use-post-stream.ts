@@ -8,13 +8,13 @@ import { onSseConnected } from "@/lib/apollo/links/sse-link";
 
 import { OnPostCreatedSubscription, OnPostUpdatedSubscription } from "../query";
 
-export type StreamEvent = {
+export interface StreamEvent {
     receivedAt: number;
     source: "onPostCreated" | "onPostUpdated";
     postId: string;
     title: string;
     version: number;
-};
+}
 
 /**
  * O que o ponto colorido afirma.

@@ -19,12 +19,12 @@ import { isAuthor as hasAuthorGroup, type Session } from "@/lib/auth/claims";
  * passou a falar pelo proxy — agora quem põe o `Authorization` é o servidor, lendo o cookie
  * `httpOnly`. O que este provider guarda é só o que a interface mostra, mais o relógio da renovação.
  */
-type SessionContextValue = {
+interface SessionContextValue {
     session: Session | null;
     isAuthor: boolean;
     /** Renova agora. Usada pelo relógio de expiração — o cookie novo é escrito pela server action. */
     renew: () => Promise<Session | null>;
-};
+}
 
 const SessionContext = createContext<SessionContextValue>({
     session: null,

@@ -24,12 +24,12 @@ import "server-only";
 const REGION = process.env.COGNITO_REGION ?? "us-east-1";
 const CLIENT_ID = process.env.COGNITO_CLIENT_ID ?? "";
 
-export type AuthTokens = {
+export interface AuthTokens {
     idToken: string;
     accessToken: string;
     refreshToken?: string;
     expiresIn: number;
-};
+}
 
 /** O erro que chega ao formulário. `code` é o `__type` do Cognito, e é o que distingue os casos. */
 export class CognitoError extends Error {
@@ -42,7 +42,7 @@ export class CognitoError extends Error {
     }
 }
 
-type InitiateAuthResponse = {
+interface InitiateAuthResponse {
     AuthenticationResult?: {
         IdToken: string;
         AccessToken: string;
@@ -51,7 +51,7 @@ type InitiateAuthResponse = {
     };
     ChallengeName?: string;
     Session?: string;
-};
+}
 
 async function initiateAuth(
     flow: "USER_PASSWORD_AUTH" | "REFRESH_TOKEN_AUTH",

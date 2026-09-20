@@ -6,7 +6,6 @@
     "dev": "pnpm codegen && next dev -p 3000",
     "build": "pnpm codegen && next build",
     "start": "next start",
-    "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "schema:pull": "./scripts/pull-schema.sh",
     "codegen": "graphql-codegen --config codegen.ts",

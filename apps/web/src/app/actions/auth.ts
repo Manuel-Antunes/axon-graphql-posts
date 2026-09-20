@@ -24,7 +24,7 @@ import { publicSession, toSession, type Session } from "@/lib/auth/claims";
 import { clearSession, readSession, storeSession, storedRefreshToken } from "@/lib/auth/cookies";
 import { CognitoError, refreshTokens, signInWithPassword } from "@/lib/auth/cognito";
 
-export type SignInState = {
+export interface SignInState {
     status: "idle" | "error" | "ok";
     message?: string;
     /** O `__type` do Cognito. A interface o mostra porque, num roteiro de teste, ele É a informação. */
@@ -32,7 +32,7 @@ export type SignInState = {
     email?: string;
     /** Para onde ir depois. Quem navega é o CLIENTE, e com recarga — ver abaixo. */
     next?: string;
-};
+}
 
 const credentials = z.object({
     email: z.email("Informe um e-mail válido."),

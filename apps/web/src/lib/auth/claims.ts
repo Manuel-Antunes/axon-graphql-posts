@@ -15,7 +15,7 @@
  * Aqui as claims servem para duas coisas sem consequência de segurança — mostrar quem está logado e
  * saber QUANDO o token expira, para renová-lo antes.
  */
-export type IdTokenClaims = {
+export interface IdTokenClaims {
     sub: string;
     email?: string;
     name?: string;
@@ -26,16 +26,16 @@ export type IdTokenClaims = {
     "cognito:groups"?: string[];
     /** Posto pelo trigger V1_0 de `infra/aws/identity/identity-provider.mjs`. */
     identity_provider?: string;
-};
+}
 
 /** O que a aplicação mostra e usa. É o que atravessa a fronteira servidor → cliente. */
-export type SessionUser = {
+export interface SessionUser {
     sub: string;
     email: string;
     name: string;
     groups: string[];
     provider: string;
-};
+}
 
 /**
  * O que o NAVEGADOR sabe sobre a sessão — e note o que não está aqui: o token.
@@ -48,11 +48,11 @@ export type SessionUser = {
  * O que sobra é o suficiente para a interface: quem está logado, com que grupos, e até quando — que
  * é o relógio da renovação.
  */
-export type Session = {
+export interface Session {
     /** Época em milissegundos. Vem do `exp`, que é em SEGUNDOS — daí o ×1000. */
     expiresAt: number;
     user: SessionUser;
-};
+}
 
 /** A sessão do lado do SERVIDOR, que é a única que precisa do bearer. */
 export type ServerSession = Session & { idToken: string };

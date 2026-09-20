@@ -8,6 +8,40 @@
       "!{projectRoot}/src/test/**/*",
       "!{projectRoot}/**/*.md"
     ],
+    "javaSources": [
+      "{workspaceRoot}/pom.xml",
+      "{workspaceRoot}/mvnw",
+      "{workspaceRoot}/.mvn/**/*",
+      "{workspaceRoot}/apps/*/pom.xml",
+      "{workspaceRoot}/apps/*/src/**/*.java",
+      "{workspaceRoot}/libs/**/pom.xml",
+      "{workspaceRoot}/libs/**/src/**/*.java",
+      "{workspaceRoot}/infra/scripts/build-env.sh"
+    ],
+    "quarkusTest": [
+      "default",
+      "{workspaceRoot}/mvnw",
+      "{workspaceRoot}/.mvn/**/*",
+      "{workspaceRoot}/libs/**/pom.xml",
+      "{workspaceRoot}/libs/**/src/main/**/*",
+      "{workspaceRoot}/docker/keycloak/**/*",
+      "{workspaceRoot}/docker/postgres/**/*",
+      "{workspaceRoot}/infra/scripts/build-env.sh"
+    ],
+    "quarkusStack": [
+      "{workspaceRoot}/pom.xml",
+      "{workspaceRoot}/mvnw",
+      "{workspaceRoot}/.mvn/**/*",
+      "{workspaceRoot}/libs/**/pom.xml",
+      "{workspaceRoot}/libs/**/src/main/**/*",
+      "{workspaceRoot}/apps/posts-api/pom.xml",
+      "{workspaceRoot}/apps/posts-api/src/main/**/*",
+      "{workspaceRoot}/apps/tagging/pom.xml",
+      "{workspaceRoot}/apps/tagging/src/main/**/*",
+      "{workspaceRoot}/docker-compose.yml",
+      "{workspaceRoot}/docker/**/*",
+      "{workspaceRoot}/infra/scripts/build-env.sh"
+    ],
     "quarkusLambda": [
       "production",
       "{workspaceRoot}/mvnw",
@@ -21,6 +55,17 @@
   "plugins": [
     {
       "plugin": "@nx/maven"
+    },
+    {
+      "plugin": "@nx/eslint/plugin",
+      "options": {
+        "targetName": "lint"
+      },
+      "exclude": [
+        "apps/posts-api/**",
+        "apps/tagging/**",
+        "libs/**"
+      ]
     }
   ],
   "analytics": false
