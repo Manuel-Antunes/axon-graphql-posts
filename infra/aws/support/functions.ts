@@ -1,7 +1,7 @@
 /// <reference path="../../../.sst/platform/config.d.ts" />
 
 import { createHash } from 'crypto';
-import { readdirSync, readFileSync, statSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 
 /**
@@ -239,6 +239,26 @@ export class QuarkusFunction extends $util.ComponentResource {
     return (code as QuarkusBuild).artifact !== undefined;
   }
 
+  /**
+   * A metade do gatilho que responde "o zip está aqui?", e ela é ASSIMÉTRICA de propósito.
+   *
+   * Presente, devolve um literal estável: o build continua sendo pulado quando nada mudou, que é o
+   * comportamento que o fingerprint das fontes existe para dar.
+   * <p>
+   * Ausente, devolve um valor NOVO a cada avaliação. Um literal como `"missing"` não serviria — ele
+   * seria gravado no estado e, no runner seguinte (onde o zip também falta), casaria com o que está
+   * lá e o comando seria pulado de novo. O carimbo de tempo é o que garante que a falta do artefato
+   * SEMPRE faça o build rodar.
+   * <p>
+   * O preço é uma execução a mais na primeira vez que se constrói numa máquina que já tem o zip, e
+   * ela custa o cache do Nx — 96 ms medidos, não um build.
+   */
+  private artifactPresence(output: string): string {
+    return existsSync(join(process.cwd(), output))
+      ? 'artifact-present'
+      : `artifact-missing-${Date.now()}`;
+  }
+
   constructor(
     name: string,
     args: QuarkusFunctionArgs,
@@ -331,7 +351,25 @@ export class QuarkusFunction extends $util.ComponentResource {
         // resolve a partir de `.sst/platform/`. É também o que o alvo do Nx espera — o Maven
         // precisa rodar da raiz do reator.
         dir: process.cwd(),
-        triggers: [hash.short],
+        // O FINGERPRINT NÃO BASTA: o gatilho é ele MAIS a existência do zip.
+        //
+        // `triggers` igual faz o Pulumi PULAR o comando — e um comando pulado não produz arquivo
+        // nenhum. Num runner efêmero, onde `infra/dist/` nasce vazio, o `assetPaths` abaixo passa a
+        // apontar para um caminho que só existia na MÁQUINA DO DEPLOY ANTERIOR. O
+        // `BucketObjectv2` que consome esse asset tenta lê-lo ao ser CRIADO, não acha, e o deploy
+        // morre antes de criar coisa alguma — imprimindo `✓ Complete` e saindo com código 1.
+        //
+        // MEDIDO: o deploy que mudou só arquivos de `infra/` (que não estão em `sources`, e nem
+        // deveriam estar) não construiu nada, não criou nada e levou 2m59s de silêncio. As funções
+        // do `tagging` não existiam porque o `taggingCode` nunca chegara a ser criado num deploy
+        // anterior — e é exatamente essa combinação que o expõe: objeto POR CRIAR mais comando
+        // PULADO.
+        //
+        // Na máquina de quem constrói, onde o zip está no lugar, o gatilho continua ESTÁVEL e o
+        // build segue sendo pulado — a metade nova só entra em ação quando o artefato falta, que é
+        // quando o comando precisava mesmo rodar. E rodar é barato: quem decide se ele RECONSTRÓI é
+        // o cache do Nx, que restaura o zip em vez de recompilar.
+        triggers: [hash.short, this.artifactPresence(spec.output)],
         assetPaths: [spec.output],
       },
       { parent: this, dependsOn: lastBuild ? [lastBuild] : [] },
