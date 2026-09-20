@@ -11,6 +11,6 @@ export async function setup(): Promise<void> {
   console.log(stack.broker.bindings().replace(/^/gm, '    '));
 }
 
-export function teardown(): void {
-  stack.down();
+export async function teardown(): Promise<void> {
+  await stack.down();
 }

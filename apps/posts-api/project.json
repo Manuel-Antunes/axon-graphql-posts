@@ -27,7 +27,7 @@
         "forwardAllArgs": false,
         "command": "./mvnw clean test -pl apps/posts-api -am -Dtest='*E2ETest' -Dsurefire.failIfNoSpecifiedTests=false"
       },
-      "dependsOn": ["^publish-local"]
+      "dependsOn": ["^publish-local", "docker:build"]
     },
     "publish-local": {
       "executor": "nx:run-commands",
@@ -200,6 +200,22 @@
           "prepare": "true",
           "payload": "quarkus-app"
         }
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["quarkusStack"],
+      "outputs": ["{projectRoot}/target/quarkus-app"],
+      "options": {
+        "forwardAllArgs": false,
+        "cwd": "apps/posts-api",
+        "command": "test -d target/quarkus-app || (cd ../.. && ./mvnw package -DskipTests)"
+      }
+    },
+    "docker:build": {
+      "options": {
+        "args": ["--tag axonposts/posts-api:e2e"]
       }
     }
   }

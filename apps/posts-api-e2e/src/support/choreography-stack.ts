@@ -1,4 +1,3 @@
-import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { Broker } from './broker';
@@ -10,7 +9,7 @@ import { HttpHealth, LogLine, Service } from './service';
 const POSTS_DB = 'axonposts';
 const TAGGING_DB = 'axonposts_tagging';
 
-const STAGE = 'apps/posts-api-e2e/target/stack';
+const APPS_PROFILE = 'apps';
 
 const POSTS_READ_MODEL = [
   'post_tags',
@@ -21,22 +20,12 @@ const POSTS_READ_MODEL = [
   'users',
 ];
 
-const SHARED_ENV = {
-  RABBITMQ_HOST: 'localhost',
-  RABBITMQ_PORT: '5672',
-  RABBITMQ_USERNAME: 'guest',
-  RABBITMQ_PASSWORD: 'guest',
-  QUARKUS_DATASOURCE_USERNAME: 'axonposts',
-  QUARKUS_DATASOURCE_PASSWORD: 'axonposts',
-  QUARKUS_OTEL_SDK_DISABLED: 'true',
-};
-
 export class ChoreographyStack {
   readonly logDirectory =
     process.env.E2E_LOGS ??
     join(WORKSPACE_ROOT, 'apps/posts-api-e2e/target/logs');
 
-  private readonly compose = new Compose();
+  private readonly compose = new Compose(APPS_PROFILE);
   private readonly postgres = new Container('quarkus-axonposts-postgres');
 
   readonly broker = new Broker(new Container('quarkus-axonposts-rabbitmq'));
@@ -46,23 +35,14 @@ export class ChoreographyStack {
 
   readonly postsApi = new Service(
     'posts-api',
-    `${STAGE}/posts-api/quarkus-run.jar`,
-    {
-      ...SHARED_ENV,
-      QUARKUS_DATASOURCE_JDBC_URL: `jdbc:postgresql://localhost:5432/${POSTS_DB}`,
-      KEYCLOAK_ISSUER_URI: 'http://localhost:8081/realms/axon-posts',
-    },
+    this.compose,
     new HttpHealth(this.api.healthUrl),
     this.logDirectory,
   );
 
   readonly tagging = new Service(
     'tagging',
-    `${STAGE}/tagging/quarkus-run.jar`,
-    {
-      ...SHARED_ENV,
-      QUARKUS_DATASOURCE_JDBC_URL: `jdbc:postgresql://localhost:5432/${TAGGING_DB}`,
-    },
+    this.compose,
     new LogLine('started in'),
     this.logDirectory,
   );
@@ -72,16 +52,25 @@ export class ChoreographyStack {
   }
 
   async up(): Promise<void> {
-    mkdirSync(this.logDirectory, { recursive: true });
     await this.startInfrastructure();
     await this.migrate();
     this.reset();
-    await this.startApplications();
+    try {
+      await this.startApplications();
+    } catch (failure) {
+      this.saveLogs();
+      throw failure;
+    }
   }
 
-  down(): void {
+  async down(): Promise<void> {
+    this.saveLogs();
+    await this.compose.remove('posts-api', 'tagging');
+  }
+
+  private saveLogs(): void {
     for (const service of this.services) {
-      service.stop();
+      service.saveLog();
     }
   }
 
@@ -121,9 +110,7 @@ export class ChoreographyStack {
   }
 
   private async startApplications(): Promise<void> {
-    for (const service of this.services) {
-      service.start();
-    }
+    await this.compose.start('posts-api', 'tagging');
     await Promise.all(this.services.map((service) => service.waitUntilReady()));
   }
 }

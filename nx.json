@@ -80,6 +80,17 @@
         "testMode": "run"
       },
       "include": ["apps/posts-api-e2e/**"]
+    },
+    {
+      "plugin": "@nx/docker",
+      "options": {
+        "buildTarget": {
+          "name": "docker:build"
+        },
+        "runTarget": {
+          "name": "docker:run"
+        }
+      }
     }
   ],
   "analytics": false

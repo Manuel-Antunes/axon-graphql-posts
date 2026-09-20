@@ -8,32 +8,6 @@
     "dev.manuelantunes:axonposts-tagging"
   ],
   "targets": {
-    "build": {
-      "executor": "nx:run-commands",
-      "cache": true,
-      "inputs": ["quarkusStack"],
-      "outputs": ["{projectRoot}/target/stack"],
-      "options": {
-        "parallel": false,
-        "commands": [
-          {
-            "command": "./mvnw package -DskipTests"
-          },
-          {
-            "command": "rm -rf apps/posts-api-e2e/target/stack"
-          },
-          {
-            "command": "mkdir -p apps/posts-api-e2e/target/stack"
-          },
-          {
-            "command": "cp -R apps/posts-api/target/quarkus-app apps/posts-api-e2e/target/stack/posts-api"
-          },
-          {
-            "command": "cp -R apps/tagging/target/quarkus-app apps/posts-api-e2e/target/stack/tagging"
-          }
-        ]
-      }
-    },
     "lint": {
       "options": {
         "forwardAllArgs": false
@@ -53,12 +27,16 @@
       }
     },
     "test:e2e": {
-      "dependsOn": ["build"],
+      "dependsOn": [
+        "^docker:build"
+      ],
       "inputs": [
         "default",
         "quarkusStack",
         {
-          "externalDependencies": ["vitest"]
+          "externalDependencies": [
+            "vitest"
+          ]
         },
         {
           "env": "CI"
@@ -67,7 +45,10 @@
           "env": "E2E_LOGS"
         }
       ],
-      "outputs": ["{projectRoot}/target/test-results"]
+      "outputs": [
+        "{projectRoot}/target/test-results",
+        "{projectRoot}/target/logs"
+      ]
     }
   }
 }

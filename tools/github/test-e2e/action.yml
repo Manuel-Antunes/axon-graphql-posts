@@ -28,5 +28,5 @@ runs:
 
     - name: Tear down the compose stack
       if: ${{ always() }}
-      run: docker compose down -v
+      run: docker compose --profile '*' down -v
       shell: bash

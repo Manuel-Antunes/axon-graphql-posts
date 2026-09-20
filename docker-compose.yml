@@ -96,6 +96,60 @@ services:
       timeout: 5s
       retries: 20
 
+  posts-api:
+    image: axonposts/posts-api:e2e
+    container_name: quarkus-axonposts-posts-api
+    profiles: ['apps']
+    environment:
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/axonposts
+      QUARKUS_DATASOURCE_USERNAME: axonposts
+      QUARKUS_DATASOURCE_PASSWORD: axonposts
+      KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/axon-posts
+      QUARKUS_OIDC_TOKEN_ISSUER: http://localhost:${KEYCLOAK_PORT:-8081}/realms/axon-posts
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: '5672'
+      RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      QUARKUS_OTEL_SDK_DISABLED: 'true'
+    ports:
+      - '${POSTS_API_PORT:-8080}:8080'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          "exec 3<>/dev/tcp/127.0.0.1/8080; echo -e 'GET /q/health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '\"UP\"' <&3",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
+
+  tagging:
+    image: axonposts/tagging:e2e
+    container_name: quarkus-axonposts-tagging
+    profiles: ['apps']
+    environment:
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/axonposts_tagging
+      QUARKUS_DATASOURCE_USERNAME: axonposts
+      QUARKUS_DATASOURCE_PASSWORD: axonposts
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: '5672'
+      RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      QUARKUS_OTEL_SDK_DISABLED: 'true'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
   router:
     image: ghcr.io/apollographql/router:v2.9.0
     container_name: quarkus-axonposts-router

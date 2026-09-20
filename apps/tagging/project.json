@@ -14,7 +14,7 @@
       }
     },
     "test:e2e": {
-      "dependsOn": ["^publish-local"],
+      "dependsOn": ["^publish-local", "docker:build"],
       "inputs": ["default", "^default"],
       "outputs": [
         "{projectRoot}/target/surefire-reports",
@@ -80,6 +80,23 @@
         "jvm": {
           "mvnFlags": ""
         }
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": ["dev.manuelantunes:quarkus-axon-graphql-posts:build"],
+      "inputs": ["quarkusStack"],
+      "outputs": ["{projectRoot}/target/quarkus-app"],
+      "options": {
+        "forwardAllArgs": false,
+        "cwd": "apps/tagging",
+        "command": "test -d target/quarkus-app || (cd ../.. && ./mvnw package -DskipTests)"
+      }
+    },
+    "docker:build": {
+      "options": {
+        "args": ["--tag axonposts/tagging:e2e"]
       }
     }
   }

@@ -113,8 +113,10 @@ docker compose --profile federation up -d router          # http://localhost:400
 rover supergraph compose --config docker/federation/supergraph-example.yaml   # composes with a fictional neighbour
 ```
 
-`docker-compose.yml` serves **two** cases, and only those: running the packaged JAR (`prod` profile)
-and having the Keycloak admin console. The containers carry a `quarkus-` prefix so they do not clash
+`docker-compose.yml` serves **three** cases: running the packaged JAR (`prod` profile), having the
+Keycloak admin console, and — behind the `apps` profile — the two application containers that
+`apps/posts-api-e2e` drives. The profile is what keeps a bare `docker compose up -d` unchanged for the
+first two. The containers carry a `quarkus-` prefix so they do not clash
 with the original Spring project's, and the host ports are variables (`POSTGRES_PORT`,
 `KEYCLOAK_PORT`).
 
@@ -2365,32 +2367,50 @@ apps/posts-api-e2e/
 is there is mechanism, and mechanism is not a spec. A new level (`*.integration.spec.ts`, say) goes in as
 one more `include`, with nothing moved.
 
-**PACKAGING left the test.** The script did a `clean package` "to measure what a from-scratch build
-produces"; here that is the `build` target, which `test-e2e` depends on, and what guarantees the same
-thing is the CONTENT hash Nx computes for the sources. **And the `clean` is not coming back**, because it
-was MEASURED again in this shape: six identical packagings, three with `clean` and three without, gave
-**1 success out of 3 on both sides** — augmentation's intermittency is the same with or without it. It is
-the independent confirmation of what the `posts-api` section already said when it ruled out "dirty state
-in `target/`". **ONE target and not two**, because `-pl` does not work in this reactor: a single
-`./mvnw package` produces both services' `quarkus-app`, and two targets would run the whole reactor twice
-fighting over `target/`.
+**THE SERVICES ARE CONTAINERS, AND THE TEST NO LONGER RUNS A JVM.** `ChoreographyStack` brings
+`posts-api` and `tagging` up through `docker compose --profile apps`, from images the build produced.
+The test talks to `posts-api` on the published 8080 and to everything else exactly as before.
 
-**AND THE ARTIFACT IS COPIED INTO THIS PROJECT'S `target/`, which is where the test starts the processes
-from.** Maven writes into `apps/posts-api/target/quarkus-app`, which is ANOTHER module's build directory
-— and that module's `test:e2e` runs `./mvnw clean`. Running both levels in the same invocation, which is
-exactly what `pnpm test:e2e` does, the order decided the result: MEASURED — `posts-api-e2e:build` ✔,
-`posts-api:test:e2e` ✔ (cleaning), and the saga dying with
-`Unable to access jarfile .../apps/posts-api/target/quarkus-app/quarkus-run.jar`. **The message mentions
-`clean` nowhere**, and the target that deleted it had passed. With the copy in
-`apps/posts-api-e2e/target/stack/`, the order between the targets stops mattering and `--parallel=1` goes
-back to meaning only what it always meant: two Mavens do not fight over the same `target/`. The target's
-`outputs` went along with it — a cache that restores inside another module's `target/` writes over its
-owner. The fast-jar is RELOCATABLE (the `quarkus-run.jar` finds `lib/`, `app/` and `quarkus/` through its
-own directory), so nothing in the packaging changed.
+What that removed, and none of it was cosmetic:
 
-**Why this only showed up now:** while `^publish-local` was failing in CI, neither Java app's `test:e2e`
-even ran — the job went through `build` and the saga and died before. With the cold `~/.m2` fixed, the
-target that cleans started running, and the defect hiding behind it appeared.
+- **the host's JDK.** The test used to `spawn` `java -jar` with `JAVA_HOME`, and a `release 21` fast-jar
+  under a JDK 17 exits with **code 1 and an empty log** — no `UnsupportedClassVersionError`, not a line
+  on stderr — which is indistinguishable from "the application died at startup". `Service` carried
+  bespoke code to name the JDK in that case. The image carries its own runtime, so the failure mode and
+  its detector both left;
+- **the staged copy.** There used to be a `target/stack` holding both fast-jars, and it existed for one
+  reason: Maven writes into `apps/<app>/target/quarkus-app`, and those modules' own `test:e2e` runs
+  `./mvnw clean`. Running both levels in one `pnpm test:e2e`, the order decided the result — MEASURED,
+  the saga died with `Unable to access jarfile .../quarkus-app/quarkus-run.jar` and the target that
+  deleted it had passed. The image now CONTAINS the artifact, so a later `clean` cannot reach it;
+- **the packaging step in this project.** It moved to a `build` target on each app, which is where Nx
+  expects it and what `@nx/docker`'s inferred `dependsOn: ['build', '^build']` already asks for.
+
+**THE BUILD IS `@nx/docker`, NOT A HAND-WRITTEN `docker build`.** The plugin discovers `**/Dockerfile`
+— the **exact** name, and `dirname()` of it becomes a project root, which is why the two Dockerfiles sit
+at `apps/posts-api/` and `apps/tagging/` and not under `src/main/docker/`. It infers `docker:build` and
+`docker:run`, and the only per-project override is the tag (`--tag axonposts/<app>:e2e`), because the
+plugin's default is the path-derived `apps-posts-api`.
+
+Three things about it that are worth knowing before touching this:
+
+1. **it is marked Experimental** — *"Breaking changes may occur and not adhere to semver versioning"*;
+2. **the inferred target has no `outputs` and no `cache`** (checked in `dist/src/plugins/plugin.js`).
+   Nothing about the image is cached by Nx; Docker's layer cache does all of it, and the
+   `.dockerignore` in each app is what keeps the context to `target/quarkus-app` instead of the whole
+   79 MB `target/`;
+3. **`dependsOn: ['build', '^build']` is why each app has a `build` target.** It is
+   `test -d target/quarkus-app || (cd ../.. && ./mvnw package -DskipTests)` — self-healing, and with
+   `outputs: ["{projectRoot}/target/quarkus-app"]` so each project OWNS its artifact and Nx restores
+   it. **Proven**: deleting both `target/quarkus-app` and running `pnpm test:e2e` restored them from
+   the cache and passed. `apps/tagging:build` chains after `apps/posts-api:build` because one
+   `./mvnw package` produces both, and `-pl` does not work in this reactor.
+
+**AND THE JAVA `test:e2e` TARGETS DEPEND ON `docker:build`**, which looks arbitrary and is not: they run
+`./mvnw clean`, and without that edge Nx is free to schedule the clean between `build` and
+`docker:build`, leaving the image build with no context. Observed working by luck first, then written
+into the graph so luck stops being involved.
+
 
 **THE STACK OWNS ITS DATABASES.** `ChoreographyStack.up()` drops and recreates `axonposts` and
 `axonposts_tagging` (`drop database ... with (force)`, then `create database`) before running Flyway, so
@@ -2433,20 +2453,14 @@ measure.
 
 **`globalSetup` runs in ANOTHER PROCESS**, so the object it creates does not cross into the tests. Not a
 problem: `ChoreographyStack` is a stateless facade over Docker and HTTP, and the test file builds its own
-looking at the same stack. What does not cross is each service's child process — which is why the one
-tearing them down is the `teardown` over there.
+looking at the same stack — which keeps working precisely because the container names and the published
+port are FIXED, so nothing has to be handed across the process boundary. Removing the two app containers
+and dumping their logs is the `teardown` over there.
 
-**`Service` honours `JAVA_HOME` before the PATH**, which is what Maven itself does — and ever since the
-variable moved to `~/.zshenv` both point at the same JDK, here and in any tool without a terminal.
-`vitest` once ran behind `build-env.sh` because of this and today runs directly, with `cwd` in the
-project.
-
-**The distinction still matters because of the FAILURE MODE, which is the worst there is:** MEASURED — a
-`quarkus-run.jar` compiled with `release 21` under a JDK 17 exits with **code 1 and an empty log**, with
-no `UnsupportedClassVersionError` and not a line on stderr. The symptom is indistinguishable from "the
-application died at startup", and the readiness wait took 120s to say nothing. Hence `Service`
-**reporting an early death**: a process `exit` interrupts the wait immediately, with the exit code and —
-when the log is empty — the sentence that points at the JDK.
+**`Service` still reports an early death, and it still matters** — only the question changed. It used
+to watch a child process `exit`; it now asks `docker compose ps` whether the container is still running
+and `docker inspect` for its exit code. Without it, a container that dies at startup costs the full
+180 s of the readiness wait to say nothing.
 
 - **Pure domain** (`PostTest`, `TagTest`, `SoftDeletableTest`, `AuthenticatableTest`): no Axon, no CDI,
   no JPA. The only collaborator is `RecordingDomainEvents`, a double of the domain's own port. These
