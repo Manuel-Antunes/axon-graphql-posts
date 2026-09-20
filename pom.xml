@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
 
-    <groupId>dev.manuelantunes</groupId>
-    <artifactId>quarkus-axon-graphql</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
-    <packaging>pom</packaging>
-    <name>quarkus-axon-graphql</name>
-    <description>Agregador: a aplicação e a extensão de suporte a native</description>
+  <groupId>dev.manuelantunes</groupId>
+  <artifactId>quarkus-axon-graphql</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <name>quarkus-axon-graphql</name>
+  <description>Agregador: a aplicação e a extensão de suporte a native</description>
 
-    <!--
+  <!--
       POR QUE ESTE PROJETO É MULTI-MÓDULO
       ===================================
       Por uma razão só: `@BuildStep` não pode morar na aplicação. O Quarkus só carrega build steps de um
@@ -32,7 +32,7 @@
       consome os build items que o `AxonExtensionProcessor` já produz. Enquanto a PR não existir, ele
       vive aqui.
     -->
-    <!--
+  <!--
       A FORMA DO MONOREPO, E A REGRA QUE A DECIDE
       ===========================================
       `libs/` tem DOMÍNIO e INFRAESTRUTURA. `apps/` tem APLICAÇÃO e APRESENTAÇÃO.
@@ -48,61 +48,80 @@
       ele não tem. Antes desta divisão as duas saídas eram importar tudo ou redeclarar o evento do lado
       de cá; as duas foram tentadas, e as duas eram erradas.
     -->
-    <modules>
-        <module>libs/platform</module>
-        <module>libs/users</module>
-        <module>libs/posts</module>
-        <module>libs/axon-channels</module>
-        <module>libs/axon-native-support/runtime</module>
-        <module>libs/axon-native-support/deployment</module>
-        <module>apps/posts-api</module>
-        <module>apps/tagging</module>
-    </modules>
+  <modules>
+    <module>libs/platform</module>
+    <module>libs/users</module>
+    <module>libs/posts</module>
+    <module>libs/axon-channels</module>
+    <module>libs/axon-native-support/runtime</module>
+    <module>libs/axon-native-support/deployment</module>
+    <module>apps/posts-api</module>
+    <module>apps/tagging</module>
+  </modules>
 
-    <properties>
-        <maven.compiler.release>21</maven.compiler.release>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
-        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
-        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
-        <quarkus.platform.version>3.39.2</quarkus.platform.version>
-        <quarkus-axon.version>2.0.0-alpha6</quarkus-axon.version>
-        <axon.version>5.3.1</axon.version>
+    <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+    <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+    <quarkus.platform.version>3.39.2</quarkus.platform.version>
+    <quarkus-axon.version>2.0.0-alpha6</quarkus-axon.version>
+    <axon.version>5.3.1</axon.version>
 
-        <mapstruct.version>1.6.3</mapstruct.version>
-        <assertj.version>3.27.6</assertj.version>
-        <surefire-plugin.version>3.5.3</surefire-plugin.version>
-        <compiler-plugin.version>3.14.0</compiler-plugin.version>
-        <antrun-plugin.version>3.1.0</antrun-plugin.version>
-    </properties>
+    <mapstruct.version>1.6.3</mapstruct.version>
+    <assertj.version>3.27.6</assertj.version>
+    <surefire-plugin.version>3.5.3</surefire-plugin.version>
+    <compiler-plugin.version>3.14.0</compiler-plugin.version>
+    <antrun-plugin.version>3.1.0</antrun-plugin.version>
+  </properties>
 
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>${quarkus.platform.group-id}</groupId>
-                <artifactId>${quarkus.platform.artifact-id}</artifactId>
-                <version>${quarkus.platform.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <dependency>
-                <groupId>org.axonframework</groupId>
-                <artifactId>axon-framework-bom</artifactId>
-                <version>${axon.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>${quarkus.platform.group-id}</groupId>
+        <artifactId>${quarkus.platform.artifact-id}</artifactId>
+        <version>${quarkus.platform.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.axonframework</groupId>
+        <artifactId>axon-framework-bom</artifactId>
+        <version>${axon.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>${compiler-plugin.version}</version>
-            </plugin>
-        </plugins>
-    </build>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>${compiler-plugin.version}</version>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!--
+          O build DENTRO do builder image do Mandrel. Num Mac isto não é conveniência: o
+          `native-image` produz um executável do sistema onde roda, e o Lambda precisa de ELF/Linux.
+          GraalVM instalada localmente não resolve.
+
+          MEDIDO: com 7,75 GiB de Docker o build morre com `exit 137` no `[1/8] Initializing`, sem
+          mencionar memória. Precisa de ~12 GiB. Com 13,6 GiB, um binário leva ~7 min e o pico de uso
+          fica em 7,1 GB no `[5/8] Inlining methods`.
+        -->
+    <profile>
+      <id>native-container</id>
+      <properties>
+        <quarkus.native.container-build>true</quarkus.native.container-build>
+        <quarkus.native.native-image-xmx>10g</quarkus.native.native-image-xmx>
+      </properties>
+    </profile>
+  </profiles>
 </project>
