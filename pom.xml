@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
 
-    <groupId>dev.manuelantunes</groupId>
-    <artifactId>quarkus-axon-graphql</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
-    <packaging>pom</packaging>
-    <name>quarkus-axon-graphql</name>
-    <description>Agregador: a aplicação e a extensão de suporte a native</description>
+  <groupId>dev.manuelantunes</groupId>
+  <artifactId>quarkus-axon-graphql</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <name>quarkus-axon-graphql</name>
+  <description>Agregador: a aplicação e a extensão de suporte a native</description>
 
-    <!--
+  <!--
       POR QUE ESTE PROJETO É MULTI-MÓDULO
       ===================================
       Por uma razão só: `@BuildStep` não pode morar na aplicação. O Quarkus só carrega build steps de um
@@ -32,7 +32,7 @@
       consome os build items que o `AxonExtensionProcessor` já produz. Enquanto a PR não existir, ele
       vive aqui.
     -->
-    <!--
+  <!--
       A FORMA DO MONOREPO, E A REGRA QUE A DECIDE
       ===========================================
       `libs/` tem DOMÍNIO e INFRAESTRUTURA. `apps/` tem APLICAÇÃO e APRESENTAÇÃO.
@@ -61,16 +61,16 @@
         <module>apps/tagging</module>
     </modules>
 
-    <properties>
-        <maven.compiler.release>21</maven.compiler.release>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
-        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
-        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
-        <quarkus.platform.version>3.39.2</quarkus.platform.version>
-        <quarkus-axon.version>2.0.0-alpha6</quarkus-axon.version>
-        <axon.version>5.3.1</axon.version>
+    <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+    <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+    <quarkus.platform.version>3.39.2</quarkus.platform.version>
+    <quarkus-axon.version>2.0.0-alpha6</quarkus-axon.version>
+    <axon.version>5.3.1</axon.version>
 
         <!-- Quarkus Amazon Services (Quarkiverse). A 3.22.1 declara <quarkus.version>3.39.2</quarkus.version>
              — a MESMA linha de cima, e foi o que se conferiu antes de adotá-la: o versionamento deste
