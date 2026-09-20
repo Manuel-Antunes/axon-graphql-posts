@@ -1673,6 +1673,38 @@ upgrade de WebSocket morre no load balancer com **HTTP 400**.
    `missing table [accounts]` antes de qualquer handler existir. A saída é
    `QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY=none` **só nessa função**; as outras quatro
    mantêm o `validate` e continuam recusando subir se entidade e schema divergirem.
+
+   **E AQUELA LINHA NÃO BASTOU: o mesmo ovo e galinha tem uma SEGUNDA camada**, que só apareceu
+   quando o binário arm64 finalmente executou e a função chegou a subir. O `validate` apenas
+   CONFERE o schema, e desligá-lo resolve o que ele conferia; o `PooledStreamingEventProcessor`
+   o **consulta**, e nenhum `strategy` o alcança:
+
+   ```
+   Coordinator: Processor [post-subscriptions]. Initializing (16) segments
+   ERROR: relation "aggregateevententry" does not exist        (SQLState 42P01)
+   ProcessRetriesExhaustedException: Tried invoking the action for 30 times
+   → AxonExtension.init falha → Runtime.ExitError, exit status 1
+   ```
+
+   O Coordinator lê o event store para achar o HEAD — a tabela que a **V2 cria e que esta função
+   existe para criar**. Trinta tentativas em ~3 s e a partida inteira cai. Não é nome de tabela
+   divergente: a V2 cria `aggregateevententry` e `tokenentry`, exatamente os nomes que o Axon 5
+   espera.
+
+   A saída é `QUARKUS_AXON_SUBSCRIBINGPROCESSOR_NAMESPACES` **só nessa função**
+   (`infra/aws/compute/migrations.ts`), listando os DOIS pacotes com `@EventHandler`: um processor
+   subscribing liga-se ao event bus e não toca no banco na partida. Funciona porque as duas listas
+   **particionam** — conferido no bytecode, `DefaultAxonFrameworkConfigurer.eventhandlersForPoolProcessors(todos, namespacesDoSubscribing)`
+   filtra do pool o que o subscribing reivindicou —, e porque `quarkus.axon.subscribingprocessor`
+   é `@ConfigRoot(phase = RUN_TIME)`, então o ordinal 300 do ambiente diferencia DUAS funções que
+   compartilham o mesmo zip. O bloco `pooledprocessor.post-subscriptions.*` fica órfão ali e isso
+   é inofensivo: o configurador do pool é dirigido pelos handlers DESCOBERTOS, e uma entrada que
+   nenhum namespace casa nunca é consultada.
+
+   **`apps/tagging` não precisa disso**: ele só tem processor subscribing e ainda exclui o
+   `PooledEventProcessingConfigurer`. **A lista em `migrations.ts` espelha o
+   `application.properties` e nada a confere** — pacote novo com handler entra nos dois lugares, e
+   quem ficar de fora só reaparece como uma função de migração morrendo contra banco vazio.
 2. **O atributo do conector SNS é `topic.arn`, com PONTO.** Com hífen é ignorado em silêncio
    (`SRMSG19504: Topic arn ... : null`) e a primeira publicação morre com
    `InvalidParameterException: TopicArn or TargetArn ... no value for required parameter`, que chega
