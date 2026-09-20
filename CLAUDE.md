@@ -684,8 +684,13 @@ records that validate in the canonical constructor. Consequences that matter whe
   already run — this machine's `postgres-data` volume, and the deployed stage, whose
   `PostsMigrate`/`TaggingMigrate` functions fail the next deploy the same way.
 
-  **The recovery is `repair`, and it is not `down -v`**: it rewrites the stored checksums to match the
-  files and keeps the data. There are TWO databases, so it runs twice:
+  **`apps/posts-api-e2e` no longer sees it either, and by construction**: its stack now DROPS AND
+  RECREATES both databases before migrating, so there is no history to disagree with. See *The stack
+  owns its databases* in that app's section. What remains exposed is the `docker compose up -d` +
+  packaged JAR workflow, whose database nothing recreates, and the deployed stage.
+
+  **For those, the recovery is `repair`, and it is not `down -v`**: it rewrites the stored checksums
+  to match the files and keeps the data. There are TWO databases, so it runs twice:
 
   ```bash
   docker compose run --rm flyway-posts \
@@ -2386,6 +2391,34 @@ own directory), so nothing in the packaging changed.
 **Why this only showed up now:** while `^publish-local` was failing in CI, neither Java app's `test:e2e`
 even ran — the job went through `build` and the saga and died before. With the cold `~/.m2` fixed, the
 target that cleans started running, and the defect hiding behind it appeared.
+
+**THE STACK OWNS ITS DATABASES.** `ChoreographyStack.up()` drops and recreates `axonposts` and
+`axonposts_tagging` (`drop database ... with (force)`, then `create database`) before running Flyway, so
+`migrate` always runs against an empty database. It used to create the tagging one only *if missing* and
+migrate on top of whatever was there — which meant the schema, alone among everything this test touches,
+was inherited from some earlier run instead of produced by this one.
+
+It cost a real failure to find: with the comments stripped out of the migrations, `migrate` validated the
+stored checksums, refused, and took the whole run down **before a single service started** — and the
+message talked about checksums, not about the test. The data was never the problem; `reset()` already
+truncated the read model, the event stores and the broker queues. **The schema history was the one piece
+of state nobody reset.**
+
+Recreating it is what makes the suite self-validating in the sense that matters: **nothing about the
+result depends on what ran here before.** It is the same R-for-REPEATABLE that the
+`db/init/schema.sql` episode broke from the other side, and it costs ~1 s on a run that already spends
+30 s booting two JVMs.
+
+**Proven in both directions**, which is the only way this kind of guard is worth anything: with every
+checksum in both `flyway_schema_history` tables deliberately overwritten with `999999`, the suite passes
+6/6 — and the tables come back holding the real checksums, because the databases they lived in are gone.
+Before the change, that same state was the failure.
+
+`reset()` stays. Its truncate is now redundant for the tables — it runs right after a fresh migrate — and
+its `broker.deleteKnownQueues()` is not, because RabbitMQ is not recreated. The `POSTS_READ_MODEL` list it
+carries is a hand-kept mirror of the schema and is the next thing that can rot; it survives only because
+removing it would also stop truncating the default tag that `V5` seeds, and that changes what the test
+starts from.
 
 **Readiness is a strategy, not an `if`** (`support/service.ts`). `posts-api` has `/q/health`; `tagging`
 has **no port at all** — `quarkus-opentelemetry` depends on `quarkus-vertx` and not on

@@ -87,28 +87,26 @@ export class ChoreographyStack {
 
   private async startInfrastructure(): Promise<void> {
     await this.compose.up('postgres', 'keycloak', 'rabbitmq');
+    this.recreateDatabase(POSTS_DB);
+    this.recreateDatabase(TAGGING_DB);
+  }
 
-    const exists = this.postgres.execQuietly(
+  private recreateDatabase(database: string): void {
+    this.onPostgres(`drop database if exists ${database} with (force)`);
+    this.onPostgres(`create database ${database} owner axonposts`);
+  }
+
+  private onPostgres(statement: string): void {
+    this.postgres.exec(
       'psql',
       '-U',
       'axonposts',
       '-d',
       'postgres',
-      '-tAc',
-      `select 1 from pg_database where datname = '${TAGGING_DB}'`,
+      '-q',
+      '-c',
+      statement,
     );
-    if (exists !== '1') {
-      this.postgres.exec(
-        'psql',
-        '-U',
-        'axonposts',
-        '-d',
-        'postgres',
-        '-q',
-        '-c',
-        `create database ${TAGGING_DB} owner axonposts`,
-      );
-    }
   }
 
   private async migrate(): Promise<void> {
