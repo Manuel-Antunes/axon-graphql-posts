@@ -1,7 +1,7 @@
 target/
 # artefato de build: sai do `rover supergraph compose`, não da mão de ninguém
 docker/federation/supergraph.graphql
-data/
+./data/
 .poc-logs/
 .mvn/wrapper/maven-wrapper.jar
 *.log
@@ -21,3 +21,9 @@ data/
 node_modules/
 .nx/
 .pnpm-store/
+
+# Os zips das funções do Lambda: gerados por infra/scripts/package.sh
+infra/dist/
+.sst
+sst-env.d.ts
+.env

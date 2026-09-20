@@ -18,11 +18,18 @@ libs/platform          domain/shared + infrastructure/{axon,time}
 libs/users             domain/user/**        + infrastructure/persistence/user
 libs/posts             domain/{post,tag}/**  + infrastructure/persistence/post
 libs/axon-channels     a integração Axon ↔ channels (outbox + ingestão)
+libs/axon-aws          o endereçamento de saída em SNS e SQS (uma ChannelAddressing por conector)
+libs/axon-lambda       a entrada quando o transporte é o event source mapping do Lambda
 libs/axon-native-support  a extensão de build para GraalVM native
 
 apps/posts-api         application/** + interfaces/{graphql,messaging}/** + infrastructure/security
 apps/tagging           o serviço de tagueamento: application/** + interfaces/messaging/**
+apps/web               o CLIENTE: Next.js + Apollo, o único módulo JavaScript do monorepo
 ```
+
+`apps/web` não é Maven — é um pacote do workspace pnpm, e por isso não aparece no `<modules>` do pom.
+Ele não implementa regra nenhuma: consome a API pela borda GraphQL, como qualquer cliente faria. A
+regra de camadas acima não se aplica a ele; a dele está em `apps/web/README.md`.
 
 O que isso resolve: `apps/tagging` importa `libs/posts` e ganha o `Post`, os eventos, as regras e os
 repositórios. **Não** ganha o GraphQL, a projeção nem os command handlers do outro app — que o Axon
@@ -46,7 +53,9 @@ resolve do `~/.m2` e descobre as libs pelo workspace do reator —, então a val
 o Maven percorreria os oito módulos em série para subir duas aplicações. É o que `pnpm dev` usa.
 
 ```bash
-pnpm dev                       # as DUAS aplicações em dev mode, em paralelo — ver a seção abaixo
+pnpm dev                       # os DOIS backends E o cliente web, em paralelo — ver a seção abaixo
+pnpm --filter @axonposts/web dev   # só o cliente, em http://localhost:3000
+./infra/scripts/package.sh     # os QUATRO zips de Lambda (alvos do Nx) — ver *AWS Lambda*
 ./mvnw install -DskipTests -pl '!apps/posts-api,!apps/tagging'   # as libs no ~/.m2 (ver abaixo)
 ./mvnw quarkus:dev -pl apps/posts-api   # uma aplicação só
 ./mvnw test                    # suíte inteira — EXIGE Docker
@@ -245,7 +254,8 @@ vizinho dentro da transação de escrita.
   ~~~ RabbitMQ: posts.PostCreated.<postId> ~~~
 
   → ChannelEventInbox APENDA no event store daqui (lendo o stream antes, pela sequência)
-  → PostCreatedEventHandler materializa a linha e emite onPostCreated no commit da transação
+  → PostCreatedProjection materializa a linha, DENTRO da transação do append
+  → PostCreatedEventHandler emite onPostCreated — noutro processor, em TODO container (ver abaixo)
 ```
 
 Nenhum dos dois serviços nomeia o outro: um publica `posts.PostPreCreated` e escuta `posts.PostCreated`,
@@ -360,13 +370,17 @@ a decisão repetida (`Post.isComplete()`), que é a única que sobrevive a um in
    aninhado. Vale igual para `FindPostQuery.FindPost` e `OnPostUpdatedSubscription.OnPostUpdated`.
 2. **Eventos são o inverso: uma classe por reação.** Os eventos de domínio vivem em `domain.*.event` e quem
    os dispara são as entidades, pela porta `DomainEventPublisher`. Quem reage vive em
-   `application.post.event`, um arquivo por responsabilidade.
+   `application.<agregado>.event`, um arquivo por responsabilidade, e a classe leva o nome do evento:
+   `PostCreatedEventHandler`, `PostUpdatedEventHandler`. É a mesma forma da versão Spring — o
+   `QueryUpdateEmitter` injetado por parâmetro, um `emit` e mais nada.
 3. **O command decide e salva; o evento notifica e orquestra.** Event handlers não escrevem no banco — um
    emite para as subscriptions, o outro despacha os commands que dão sequência.
    **Uma exceção, estreita e declarada**: evento que chega de OUTRO serviço não tem command local atrás
-   dele, então quem o recebe materializa a projeção (`PostCreatedEventHandler`). É o papel clássico de
-   uma projeção em CQRS; o que era incomum aqui era o command acumular esse papel, o que só funcionava
-   enquanto tudo era local.
+   dele, então quem o recebe materializa a projeção. É o papel clássico de uma projeção em CQRS; o que
+   era incomum aqui era o command acumular esse papel, o que só funcionava enquanto tudo era local.
+   **A exceção tem pacote próprio** — `application.post.projection` —, e não por gosto de simetria: é o
+   pacote que escolhe o processor, e projetar precisa de uma entrega que notificar não precisa. Ver a
+   seção *O pacote escolhe a ENTREGA*, logo abaixo.
 4. **Porta de entrada é APRESENTAÇÃO, venha de onde vier.** `interfaces/graphql` para HTTP/WebSocket/SSE
    e `interfaces/messaging` para as filas. O critério não é o transporte, é a DIREÇÃO: adaptador de saída
    (o outbox, os repositórios, o provedor de identidade) é infraestrutura; o que traz algo de fora para
@@ -378,6 +392,40 @@ a decisão repetida (`Post.isComplete()`), que é a única que sobrevive a um in
    `infrastructure.security.CurrentUser`). Nada de repositório de domínio num resolver.
 6. **Nada de pacote por papel na raiz.** Não existe mais `dto/`, `mapper/` nem `exceptions/` soltos: cada
    tipo mora na camada que o **possui**, e o pacote diz qual é.
+
+### O pacote de um event handler escolhe a ENTREGA dele
+
+Um `@EventHandler` não diz em que processor roda: quem diz é o **pacote**, numa linha de
+`application.properties`. E o processor não é afinamento — ele decide **quantas vezes** a reação
+acontece, **onde** ela acontece e **o que** acontece quando ela falha. Duas reações ao mesmo evento
+podem precisar de respostas opostas para essas três perguntas, e quando precisam, elas não cabem na
+mesma classe.
+
+É o caso de `PostCreated`:
+
+|  | projetar (`application.post.projection`) | notificar (`application.post.event`) |
+|---|---|---|
+| quantas vezes | uma | em **todo** container |
+| onde | na transação do append | fora dela |
+| se ninguém estiver ouvindo | grava assim mesmo | não há o que fazer |
+| se falhar | aborta o append | avisa e segue |
+| processor | subscribing | pooled streaming, token em memória, HEAD |
+
+As classes dos dois lados são `@EventHandler` comuns — nenhuma delas sabe em que processor está, e
+nenhuma tem uma linha de leitura de evento. **A configuração é a diferença inteira.**
+
+E as duas colunas se sustentam:
+
+- **projetar tem de ser subscribing** porque só ali o handler roda na transação de quem apendou. É daí
+  que vem a garantia que o resto usa sem saber — *quem enxerga o evento no store enxerga a linha* —, e é
+  por isso que o handler que notifica pode ler o banco sem correr atrás da escrita. Num processor com
+  token em memória, um container congelado entre invocações (que em Lambda é o estado normal) levaria a
+  materialização com ele;
+- **notificar tem de ser streaming** porque um `emit` só alcança os assinantes do próprio processo, e em
+  Lambda quem segura a conexão SSE nunca é quem atende a mutation: a invocação dele não retornou.
+
+**Consequência ao escrever código novo**: um handler que grava vai para `projection`; um que avisa, para
+`event`. Errar o pacote não quebra compilação nem teste — muda a semântica de entrega em silêncio.
 
 ### Onde cada coisa mora (e por quê)
 
@@ -702,13 +750,15 @@ Sobrou em `infrastructure/axon` o que a extensão não tem como adivinhar, um ar
 
 Duas linhas de `application.properties` valem tanto quanto código, e as duas falham em silêncio:
 
-1. `quarkus.axon.subscribingprocessor.namespaces` — a lista de pacotes que rodam **subscribing**. O valor
-   é o nome do pacote porque a extensão lê `@Namespace` da *classe* e cai no pacote como default (por isso
-   o `@Namespace` do `package-info.java` saiu: ali não tinha mais efeito).
-   **Handler novo no pacote já listado: nada a fazer. Handler num PACOTE NOVO: mais um item na lista.**
-   Quem fica de fora não dá erro — vai para um `PooledStreamingEventProcessor`, assíncrono, e a projeção
-   daquele agregado vira eventualmente consistente sem ninguém pedir. É falha silenciosa, e quem a pega é
-   `AxonWiringTest.everyPackageWithAnEventHandlerRunsInTheSubscribingProcessor`.
+1. `quarkus.axon.subscribingprocessor.namespaces` e `quarkus.axon.pooledprocessor.<nome>.namespaces` —
+   quais pacotes rodam em qual processor. O valor é o nome do pacote porque a extensão lê `@Namespace` da
+   *classe* e cai no pacote como default (por isso o `@Namespace` do `package-info.java` saiu: ali não
+   tinha mais efeito).
+   **Handler novo num pacote já listado: nada a fazer. Handler num PACOTE NOVO: mais um item numa das
+   duas.** Quem fica de fora não dá erro — vai para um `PooledStreamingEventProcessor` **anônimo**,
+   assíncrono e com token store JPA, e as duas propriedades que o pacote dele precisava deixam de valer
+   em silêncio. Quem a pega é
+   `AxonWiringTest.everyPackageWithAnEventHandlerIsAssignedToAProcessor`.
    **A ordem é handler primeiro, propriedade depois**: namespace listado sem nenhum handler faz a
    aplicação não subir, com `NullPointerException` na partida (`getEventhandlers` faz
    `map(mapa::get).flatMap(...)` sobre um `null`).
@@ -849,6 +899,834 @@ agregado nenhum — ele trabalha com o `Post` de verdade, importado de `libs/pos
   este serviço em produção e o dublê em processo na suíte do outro app — e os dois têm de chegar ao mesmo
   id; com a regra no domínio isso é consequência, não coincidência mantida à mão.
 
+## AWS Lambda (`infra/aws/`)
+
+Um segundo alvo de implantação, **aditivo**: nenhum arquivo que existia antes dele foi alterado. As
+mesmas duas aplicações, empacotadas por perfil Maven, viram **seis funções**; o RabbitMQ vira um topic
+SNS FIFO com três filas SQS FIFO (mais três DLQ) assinando por filter policy; e a identidade é um user
+pool do **Cognito**, com os três usuários do realm semeados.
+
+**O KEYCLOAK CONTINUA SENDO TUDO EM DEV E TESTE** — o Dev Services sobe o container, importa
+`docker/keycloak/realm-axon-posts.json` e os 155 testes usam aquele realm. O Cognito vale só na AWS,
+e a troca saiu porque a aplicação é apenas resource server: o Keycloak custava Fargate + ALB + ECR
+(~US$ 25/mês) para entregar o que o Cognito entrega no free tier.
+
+O preço são **quatro linhas** no `application-lambda.properties` (issuer, client id, audience e
+`quarkus.oidc.roles.role-claim-path=cognito:groups`). A última é a única divergência de
+COMPORTAMENTO, e falha em silêncio: sem ela toda mutation de escrita responde `FORBIDDEN`, e nenhum
+teste pega, porque em teste o emissor é outro.
+
+**E o bearer é o ID TOKEN, não o access token.** O access token do Cognito não traz `email`, e
+`UserProvisioning` chama `Email.of(identity.email())`. Pôr `email` nele exige o trigger V2_0, que a
+AWS só oferece nos planos Essentials/Plus; o tier Lite só tem V1_0, que customiza o ID token. O que
+mantém isso seguro é `quarkus.oidc.token.audience` conferindo o `aud`. Ver `infra/aws/cognito.ts`.
+Consequência prática: o token de teste NÃO sai de `/oauth2/token` (o Cognito não aceita
+`grant_type=password` ali) — sai de `aws cognito-idp initiate-auth`.
+
+```bash
+pnpm add -D sst                            # uma vez
+./infra/scripts/package.sh                 # os quatro zips em infra/dist/ (atalho para o Nx)
+npx sst deploy --stage dev                 # ...e as migrations rodam AQUI DENTRO
+./infra/scripts/e2e.sh                     # a saga inteira, afirmada contra a stack
+npx sst remove --stage dev                 # NÃO é opcional: ~US$ 0,13/hora
+
+npx nx run "dev.manuelantunes:quarkus-axon-graphql-posts:lambda-http"      # atrás do API Gateway
+npx nx run "dev.manuelantunes:quarkus-axon-graphql-posts:lambda-sqs"       # movido pela fila de volta
+npx nx run "dev.manuelantunes:quarkus-axon-graphql-posts:lambda-stream"    # a Function URL que streama
+npx nx run "dev.manuelantunes:axonposts-tagging:lambda"                    # o MESMO zip serve as duas
+npx nx run "dev.manuelantunes:axonposts-tagging:lambda:jvm"                # sem binário nativo
+npx nx run-many -t lambda-http,lambda-sqs,lambda-stream,lambda -c native --parallel=1   # os quatro
+```
+
+**SEIS funções de TRÊS zips**, e as duas últimas são as de fila com outra variável de ambiente:
+`quarkus.lambda.handler` é configuração de RUNTIME, então `QUARKUS_LAMBDA_HANDLER=flyway-migrate`
+transforma o mesmo artefato na função que cria o schema. **`migrate-at-start` continua `false`** — em
+Lambda isso deixa de ser contorno e vira a única escolha correta: migration na partida de uma função
+que escala para N ambientes seria N tentativas concorrentes, cada cold start esperando o lock do
+Flyway de outro dentro do timeout de uma invocação. A ordem é: deploy, invocar as duas migrações,
+testar.
+
+**Quatro coisas que o SST 4.17.1 faz diferente do que se supõe**, todas medidas contra a versão
+instalada: (1) `sst.aws.Function` **não suporta Java** — os runtimes são node, go, rust, python e
+container, então as seis funções são `aws.lambda.Function` do provider Pulumi cru, que o SST expõe
+como o global `aws`; (2) o código vai por **S3**, porque os zips têm 59–72 MB e o upload direto para
+em 50 MB — e sem `sourceCodeHash` trocar o conteúdo na mesma chave **não atualiza a função**, e o
+deploy publica o artefato antigo dizendo que deu certo; (3) `dlq` exige o par `{ queue, retry }`, e a
+DLQ de uma fila FIFO também é FIFO; (4) `rawMessageDelivery` não é opção da subscription — vai por
+`transform.subscription`. E no `image` do `Service`, o `dockerfile` é relativo ao **context**; e
+caminho de arquivo na config é resolvido a partir de `.sst/platform/` e não da raiz, então o
+`FileAsset` precisa de `$cli.paths.root`.
+
+**`✓ Complete` do `sst deploy` NÃO quer dizer que deu certo.** O deploy que tropeçou nesse caminho
+imprimiu `✓ Complete` na tela — com o URL do Keycloak — e deixou de criar as SEIS funções, o API
+Gateway e os três objetos no S3. O erro estava só em `.sst/log/pulumi.log` (`3 errors`). Recurso que
+não aparece depois de um deploy "bem-sucedido": é esse arquivo que responde, e `npx sst diff`
+confirma, porque ele passa a não enxergar o que falhou ao registrar.
+
+**Os três perfis escrevem em `target/function.zip`** — o segundo apaga o primeiro. Por isso o script
+copia para `dist/` entre eles, e por isso não há como empacotar os três numa invocação só.
+
+**A troca de protocolo não é código.** O `@AxonOutbox` continua dizendo `channel = "post-events-out"`,
+`namespaces = "posts"` — porque o que um serviço publica é contrato dele — e quem troca RabbitMQ por
+SNS é uma linha de `application-lambda.properties`. É exatamente o que a porta `ChannelAddressing`
+existia para comprar.
+
+**`quarkus.profile=lambda,prod` tem de valer nos DOIS momentos**, e as duas entradas importam:
+build time (vem do perfil Maven) e runtime (`QUARKUS_PROFILE` na função). Com `lambda` sozinho, as
+linhas `%prod.` do `application.properties` deixam de valer **em silêncio** e a função sobe apontando
+para o datasource de desenvolvimento. Só em build time, a função ignora o
+`application-lambda.properties` e tenta falar com um RabbitMQ que não existe.
+
+**Por que DOIS módulos novos, e quem decidiu:** o build.
+`quarkus-amazon-lambda-http` **traz** o processador do `quarkus-amazon-lambda`, que varre o índice
+atrás de `RequestHandler` e recusa o que achar (`Multiple handler classes`). Não basta a função de
+HTTP não usar o handler — ele não pode estar no classpath dela. Daí `libs/axon-aws` (endereçamento de
+saída, nas três funções) e `libs/axon-lambda` (o handler, só nas de fila).
+
+**Os `@Incoming` que já existem continuam sendo a porta de entrada.** O canal passa a
+`smallrye-in-memory` e o handler do Lambda empurra o registro para dentro dele — então
+`PostPreCreatedListener`, `PostChangesListener` e `PostCompletionListener` rodam sem uma linha
+alterada, com o `@Blocking(ordered = false)` e a unidade de trabalho do Axon que já estão medidos ali.
+O conector in-memory é, portanto, **dependência de produção**, e tem um segundo papel: na função de
+API Gateway ele é o objeto nulo do canal `post-completed-in`, que está declarado sem perfil e não pode
+ser removido por arquivo de perfil, só sobrescrito.
+
+**FIFO não é afinamento.** `MessageGroupId` é a tag do agregado (o `EventAddress.orderingKey()`, que
+na routing key não desempatava nada). Em fila standard esta saga não funciona pior — ela quebra, com
+`duplicate key ... uk_aggregateevententry_aggregate`, de forma intermitente e proporcional à carga.
+
+**A infraestrutura é SST**, e o `sst.config.ts` da raiz não a contém: ele faz `app()` e um
+`await import("./infra/aws")` dentro de `run()` — dinâmico porque os módulos criam recursos no topo do
+arquivo, e estaticamente seriam avaliados antes de `app()` rodar.
+
+```
+infra/dist/      os três zips (gerados)
+infra/scripts/   package.sh (atalho para os alvos do Nx), build-env.sh, migrate.sh, discover.sh, e2e.sh
+infra/aws/
+  index.ts       a fachada: ordem de carga e outputs. Não cria nada.
+  support/       as DEFINIÇÕES: ArtifactStore, QuarkusFunction/QueueWorker/Migrator, HttpApi.
+                 NADA aqui cria recurso ao ser importado.
+  network/ data/ messaging/ identity/    a infraestrutura de base
+  compute/       as seis funções e o API Gateway; platform.ts é onde support/ encontra os recursos
+  edge/          o Router: UMA distribuição do CloudFront na frente do site e do subgraph
+  web/           o cliente Next.js, atrás do router
+```
+
+**A seta aponta sempre para o mesmo lado**: quem define não conhece quem instancia. `compute/platform.ts`
+é o único ponto onde os dois lados se encontram, e é por isso que ele existe separado — sem ele,
+`support/functions.ts` teria de importar `network` e `role`, e um helper que importa infraestrutura
+deixa de ser helper.
+
+**Tudo que tem satélite é um `ComponentResource`**: `ArtifactStore` (bucket + um objeto por artefato),
+`ExecutionRole` (papel + política), `QuarkusFunction` e as subclasses `QueueWorker` (+ event source
+mapping) e `Migrator` (+ a invocação), e `HttpApi` (API + integração + rota + stage + permissão). Isso
+dá ciclo de vida junto, URN própria por peça e uma árvore de deploy que descreve o sistema.
+
+**AS MIGRATIONS RODAM SOZINHAS NO DEPLOY.** `Migrator` cria a função e a `aws.lambda.Invocation` que a
+chama, com `input: Date.now().toString()` para rodar a cada vez (Flyway é idempotente) e `if (!$dev)`
+porque em `sst dev` não há artefato publicado. Migration que falha vira DEPLOY que falha.
+
+**Caminho de arquivo na config usa `$asset()`**, que resolve relativo à raiz do app. `$cli.paths` é
+`@internal` e caminho relativo cru quebra — ver a armadilha logo abaixo.
+
+**Três coisas que falham em SILÊNCIO no provisionamento**, e as três estão em `infra/aws/`:
+`RawMessageDelivery=true` em cada subscription (sem ele o corpo é o envelope do SNS e a ingestão morre
+com `UnrecognizedPropertyException: Type`); `ReportBatchItemFailures` em cada event source mapping
+(sem ele a AWS ignora o `SQSBatchResponse` e o lote volta inteiro); e `AXONPOSTS_LAMBDA_SQS_CHANNEL`
+em cada função de fila.
+
+**A SUBSCRIPTION NO LAMBDA — as TRÊS camadas, e as TRÊS estão resolvidas.** Importa separá-las porque
+cada uma tem causa e conserto próprios, e consertar uma não faz as outras desaparecerem:
+
+1. **O handler não streama, e não é configuração.** No bytecode da 3.39.2:
+   `LambdaHttpHandler implements RequestHandler<APIGatewayV2HTTPEvent, APIGatewayV2HTTPResponse>` — o
+   tipo de retorno É a resposta inteira. O `NettyResponseHandler` acumula cada `HttpContent` num
+   `ByteArrayOutputStream` e só completa o `CompletableFuture` no fim. Zero ocorrências de
+   `vnd.awslambda`, `RESPONSE_STREAM` ou `HttpResponseStream` no JAR.
+
+   **E o `RequestStreamHandler` do `quarkus-amazon-lambda` também não resolve — mas chega perto.** O
+   `AbstractLambdaPollLoop` (em `quarkus-amazon-lambda-common`) faz, no ramo de stream,
+   `responseStream(url).getOutputStream()` e passa ESSE stream ao handler: os bytes escritos vão para a
+   conexão com a Runtime API, não para um buffer intermediário. O que falta está em `responseStream`,
+   que tem exatamente cinco instruções — `openConnection`, `User-Agent`, `setDoOutput(true)`,
+   `setRequestMethod("POST")`, `return`:
+   <ul>
+     <li>sem `setChunkedStreamingMode`, o `HttpURLConnection` do JDK <b>bufferiza tudo</b> para
+         calcular o `Content-Length`. Nada sai antes do `close()`;</li>
+     <li>sem `Content-Type: application/vnd.awslambda.http-integration-response`, a AWS não lê prelúdio
+         nenhum — não há como definir status nem cabeçalhos.</li>
+   </ul>
+   O método é `protected`, mas quem o herda é `AmazonLambdaRecorder$1`, anônima dentro do recorder:
+   trocar as duas linhas significa forkar a extensão ou sombrear a classe no classpath.
+2. **O transporte na frente não suporta streaming.** O API Gateway não o oferece em modo nenhum:
+   response streaming na AWS existe só em Function URL com `InvokeMode: RESPONSE_STREAM`.
+
+**AS DUAS PRIMEIRAS FORAM RESOLVIDAS — e não por um fork.** A saída foi inverter o problema:
+`StreamingFunction` (`infra/aws/support/functions.ts`) empacota a aplicação com o perfil
+`-Plambda-stream`, que <b>não acrescenta extensão de Lambda nenhuma</b> — ela é o servidor HTTP que
+sempre foi. Quem a transforma numa função é o <b>AWS Lambda Web Adapter</b>, uma layer oficial que
+roda como extensão, espera o health check e traduz cada invocação numa requisição para `localhost`.
+Com `AWS_LWA_INVOKE_MODE=response_stream` e Function URL em `RESPONSE_STREAM`, o que o Vert.x escreve
+sai conforme escreve.
+
+MEDIDO contra a stack: os comentários de keep-alive do `SseStream` chegaram às 21:48:58 e 21:49:13 —
+<b>15 segundos de intervalo, exatamente o `axonposts.graphql.sse.keep-alive`</b>. A conexão fica de pé
+e os bytes chegam progressivamente. Pelo API Gateway, nenhum byte chega em 30 s.
+
+A única dependência que o perfil acrescenta é `axonposts-axon-aws`, e não tem nada a ver com Lambda:
+são os conectores que o `application-lambda.properties` nomeia. Sem ela o build falha em BUILD TIME
+com `The channel 'post-events-out' is configured with an unknown connector (smallrye-sns)`.
+3. **E a fonte era EM PROCESSO — a que sobreviveu aos outros dois consertos.** Medido na Function URL
+   com o streaming já funcionando: assinar `onPostUpdated`, criar um post e editá-lo não entregou
+   evento nenhum — a mutation cai noutro container, porque o que segura a conexão está ocupado com uma
+   invocação que não retornou.
+
+**A TERCEIRA FOI RESOLVIDA POR CONFIGURAÇÃO, e o conserto não tem uma linha de leitura de evento.**
+Quem avisa os assinantes continua sendo `PostCreatedEventHandler` e `PostUpdatedEventHandler` — as
+mesmas duas classes da versão Spring, em `application.post.event`, com o `QueryUpdateEmitter` injetado
+por parâmetro e um `emit` no corpo. Elas não sabem em que processor rodam. **O que mudou foi o processor
+do pacote delas**: `application.post.event` está declarado como <b>pooled streaming</b> em
+`application.properties`, com <b>token store em memória</b> e posição inicial no <b>HEAD</b>. A
+consequência é a solução inteira:
+
+- **streaming** — o processor lê o EVENT STORE, que é compartilhado. Ele enxerga o que qualquer
+  container apendou. (O `AggregateBasedJpaEventStorageEngine` suporta isso: ele tem
+  `stream(StreamingCondition)` com `GapAwareTrackingToken`, gaps e lotes — verificado no bytecode.)
+- **token em memória** — cada container tem o próprio cursor. Com o token store JPA, um container
+  reclamaria o segmento e os outros não veriam nada: é o oposto de um fan-out, onde TODO container
+  precisa ver TODO evento.
+- **HEAD** — quem sobe agora quer o que vier a partir de agora, não o histórico reemitido.
+
+Quem lê, mantém o cursor, faz o lote e trata falha é o Axon, com o `EventStorageEngine` e o
+`TokenStore` que a aplicação já configura.
+
+**O que teve de sair de lá foi a PROJEÇÃO, não o emit.** Materializar a linha de um `PostCreated` que
+chegou de outro serviço precisa do oposto: uma vez, na transação do append, abortando o append se
+falhar. Num processor com token em memória, um container congelado entre invocações — que em Lambda é
+o estado normal — levaria a materialização com ele. Por isso ela mora em `application.post.projection`,
+que é subscribing. Ver *O pacote de um event handler escolhe a ENTREGA dele*.
+<p>
+E a ordem, que antes era cuidado escrito à mão (reconciliar antes de emitir, na mesma função), passou a
+vir da transação: o processor streaming só enxerga o evento **depois** do commit que gravou a linha.
+
+**E isso exigiu DESFAZER uma exclusão de bean que escondia um defeito maior.** O
+`PooledEventProcessingConfigurer` estava em `quarkus.arc.exclude-types`, com o argumento de que
+processor pooled "não é o que este projeto quer em lugar nenhum". O efeito real não era desligar um
+acidente, era desligar a CAPACIDADE: enquanto ele esteve fora, um namespace esquecido em
+`subscribingprocessor.namespaces` não virava um processor assíncrono — virava <b>nenhum processor</b>, e
+os handlers dele nunca rodavam, sem um aviso em lugar nenhum. O que protege contra o acidente original
+agora é `AxonWiringTest.everyPackageWithAnEventHandlerIsAssignedToAProcessor`, que exige que todo pacote
+com `@EventHandler` esteja declarado no subscribing OU num pooled nomeado.
+
+**MEDIDO NA FUNCTION URL**, com a subscription aberta num container e a mutation atendida em outro:
+
+```
+event: next
+data: {"data":{"onPostUpdated":{"id":"e91dad31-…","title":"editado — deve chegar na subscription","version":2}}}
+```
+
+### O BINÁRIO NATIVO — e os quatro defeitos que só ele revela
+
+O cold start da JVM era de **14,8 s**, e com o Lambda Web Adapter ele é cobrado como tempo de
+invocação (o boot acontece DENTRO do handler, então não há `Init Duration` no REPORT). O binário
+nativo resolve isso, e `libs/axon-native-support` existe exatamente para que ele funcione.
+
+**Medido na stack, a mesma função, o mesmo código:**
+
+| | JVM | nativo |
+|---|---|---|
+| cold start (health 200) | 14,8 s | **2,8 s** |
+| `createPost` quente | 0,70–0,89 s | **0,50–0,57 s** |
+| abrir uma subscription | 26 s | **5 s** |
+| memória usada (REPORT) | 413 MB | **187 MB** |
+| zip | 70 MB | 56 MB |
+
+Ele ganha nos DOIS eixos. A leitura intermediária de que "native é mais lento quente" era medição de
+um processo morrendo — `curl -w %{time_total}` mede o tempo até a resposta, e uma resposta de erro
+também tem tempo.
+
+**COMO SE CONSTRÓI:** um alvo do Nx, na configuração `native` (o default) ou `native-container`.
+
+`native` compila com a GraalVM **da máquina**; `native-container`, dentro do builder image do
+Mandrel. A diferença não é conveniência: `native-image` gera um executável do SISTEMA onde roda, e o
+Lambda precisa de ELF/Linux — então **de um Mac, só o `native-container` produz um binário que o
+Lambda executa**. O local serve para rodar e depurar a aplicação nativa aqui, e serve inteiro num
+Linux com a GraalVM instalada. **A nota de que o container precisa de ~12 GiB no Docker ficou
+desatualizada**: os quatro artefatos foram construídos com o Docker em **8 GiB**, com o
+`native-image` enxergando 8,23 GB e `-J-Xmx10g`. O `exit 137` no `[1/8] Initializing` continua
+sendo o sintoma de faltar memória, e ele não menciona memória em lugar nenhum — mas 8 GiB bastam
+hoje. O `build-env.sh` avisa abaixo de 12 GiB em vez de falhar, o que continua certo.
+
+**E num Mac com o Xcode quebrado o build local falha sem nomear o Xcode.** Medido: `xcode-select -p`
+aponta para o `Xcode.app`, o `cc` que vem dali nem carrega (`dlopen(@rpath/libxcodebuildLoader.dylib):
+Symbol not found: _XPCTypeBool`, exit 72), e o `native-image` morre em ~20s com `Unable to detect
+supported DARWIN native software development toolchain`. Os Command Line Tools são uma instalação
+independente e funcionam; quem os põe no jogo é o `infra/scripts/build-env.sh`, com as DUAS coisas
+que a receita exige — o PATH (é dali que o `native-image` tira o `cc`) e o `-isysroot`, porque o
+`native-image` **não** repassa `SDKROOT` nem `DEVELOPER_DIR` ao compilador. A troca só acontece
+quando o `cc` do sistema está quebrado.
+
+**AS QUATRO FALHAS, e o que cada uma ensina.** Nenhuma aparece na JVM; três das quatro só aparecem
+em RUNTIME:
+
+1. **`org.LatencyUtils` ausente** — `io.micrometer.core.instrument.AbstractTimer` a referencia e o
+   Micrometer a declara OPCIONAL. Quem normalmente a traz é o `quarkus-micrometer`, que este projeto
+   não usa de propósito. Falha em BUILD, no `[2/8] Performing analysis` — a única das quatro que o
+   compilador pega. Conserto: declarar a dependência em `libs/platform`.
+2. **`AnnotationBasedEntityIdResolver` não registrado** — a reflexão do Axon tem DOIS níveis, e o
+   `AxonNativeImageProcessor` só cobria o primeiro: registrava as `*Definition` e não o que elas
+   INSTANCIAM. A aplicação sobe o bastante para o health responder 200 e **morre a cada requisição**
+   com `Runtime exited with error: exit status 1`, que o Lambda reporta sem causa. Conserto:
+   `AXON_DEFAULT_IMPLEMENTATIONS` no mesmo processor.
+3. **As classes-base do Relay** — `PostConnection` é uma subclasse VAZIA de `Connection<N, E>`, e um
+   método herdado não entra no registro da subclasse. O cliente recebe `"System error"` com
+   `path: ["posts","edges"]` e o servidor **não loga uma linha**. O que denuncia é `pageInfo` e
+   `edges` falharem juntos enquanto `__typename` e o SDL respondem: o problema é o OBJETO, não um
+   campo. Conserto: `@RegisterForReflection` em `Connection` e `Edge`.
+4. **A precedência de configuração muda entre JVM e nativo.** `application-lambda.properties` diz
+   `quarkus.oidc.auth-server-url=${OIDC_ISSUER_URL}` sem prefixo; `application.properties` diz
+   `%prod.quarkus.oidc.auth-server-url=...localhost:8081...`. Na JVM a primeira vence; em nativo, a
+   segunda — e a função sobe apontando para um Keycloak que não existe. Público responde, autenticado
+   dá 500. **Não é o arquivo que deixa de carregar**: `axonposts.graphql.sse.keep-alive=2s`, do mesmo
+   arquivo, vale (medido: keep-alives a cada 2 s). É a disputa entre uma propriedade COM perfil e uma
+   SEM. Conserto: `QUARKUS_OIDC_AUTH_SERVER_URL` como variável de ambiente em `environment.ts` —
+   ordinal 300 ganha de qualquer arquivo, nos dois empacotamentos.
+
+**AS SEIS FUNÇÕES SÃO NATIVAS.** As três empacotadas pelas extensões `quarkus-amazon-lambda*`
+produzem um `function.zip` com um `bootstrap` nativo no lugar do handler Java — por isso
+`runtime: provided.al2023`. A de streaming é a única em `java21`: lá quem executa é o `run.sh` pela
+layer do Web Adapter, e esse gancho é do runtime GERENCIADO; o sandbox traz uma JVM que nunca roda.
+
+**A saga fecha em ~6 s** — era ~21 s com o `tagging` em JVM e ~50 s com tudo em JVM.
+
+**MAIS DUAS FALHAS, e as duas só apareceram quando o SEGUNDO serviço virou binário:**
+
+5. **`apps/tagging` não declarava `axon-native-support`.** Só o `posts-api` a tinha. O binário é
+   gerado, sobe, e morre na PARTIDA com `No suitable constructor found for entity of type
+   [AnnotationBasedEventSourcedEntityFactoryDefinition]` — a primeira das falhas que o Javadoc daquela
+   extensão descreve. **Serviço que usa Axon e compila nativo declara a extensão**, e agora o pom diz
+   isso por escrito.
+6. **A reflexão de uma MENSAGEM não para na classe dela.** `PostCreatedEvent` é `@Event` e era
+   registrado; o `AssignedTag` que ele carrega dentro de `List<AssignedTag>` é um record ANINHADO, sem
+   anotação, e ficava de fora. O `tagging` consumia `PostPreCreated` (record PLANO, que serializa
+   bem), decidia a tag e não conseguia publicar o `PostCreated`:
+
+   ```
+   ConversionException: Exception when trying to convert object of type
+     'dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent' to 'byte[]'
+   ```
+
+   **O que tornava isso difícil de achar**: a saga parava na versão 1, o contador `Errors` do Lambda
+   ficava em ZERO (a exceção é tratada pelo interceptador), as filas ficavam VAZIAS e o SNS mostrava
+   `NumberOfMessagesPublished` positivo com zero falhas. Tudo apontava para o lugar errado. Quem
+   respondeu foi comparar as métricas: `TaggingDecide` com 7 invocações e 0 erros, `PostsApiInbox` com
+   NENHUMA — o elo quebrado estava no meio.
+   <p>
+   O conserto é uma regra, não uma lista: `AxonNativeImageProcessor` agora registra o **fecho
+   transitivo** dos tipos que compõem cada mensagem, parando no que o índice Jandex não conhece
+   (`String`, `Instant` e o resto do JDK não precisam).
+
+### A TELEMETRIA: o coletor do OpenTelemetry como layer, e o Better Stack no fim
+
+Toda função carrega a layer oficial do coletor (`opentelemetry-collector-arm64-0_23_0`), que lê
+`infra/lambda/collector.yaml` do próprio zip e reexporta para o Better Stack. A aplicação continua
+exportando OTLP para `localhost` — ela não sabe qual é o destino, e é isso que faz trocar de backend
+ser uma mudança de infraestrutura.
+
+**Por que um coletor, e não o exportador da aplicação falando direto.** Um Lambda é CONGELADO quando
+o handler retorna. Um exportador em processo perde o que ainda não saiu — e o que ainda não saiu é o
+fim da requisição. A layer é uma EXTENSÃO: recebe o gancho de fim de invocação e faz o flush antes do
+congelamento. É a explicação do que o `CLAUDE.md` já registrava — log não chegando enquanto o trace
+chegava.
+
+**A LAYER COBRE UM DOS DOIS SALTOS, E O DEFEITO ESTAVA NO OUTRO.** O caminho é
+`aplicação --(1) OTLP p/ localhost--> coletor (layer) --(2) HTTPS--> Better Stack`. A layer recebe o
+gancho de fim de invocação e despeja o que **já está dentro dela** — o salto (2). Quem decide quando
+acontece o salto (1) é o `BatchSpanProcessor` DENTRO do processo, numa thread que dispara a cada 5 s
+(1 s para logs), e o Lambda é congelado antes disso.
+
+Medido, com os binários nativos: `TaggingDecide` 438 ms, `PostsApiInbox` 233 ms, `TaggingReplicate`
+195 ms — as três funções de fila com **zero spans e zero logs** no backend, enquanto o coletor subia,
+rodava e fazia flush sem um único erro, de um buffer vazio. Provado nos dois sentidos: depois de uma
+saga sem telemetria nenhuma, invocar a função com um lote VAZIO fez aparecer o span da invocação
+anterior, **com o carimbo de tempo original**. O dado não estava perdido — estava congelado do lado
+de cá do salto (1).
+
+**Só apareceu com o nativo**, e a razão é boa: na JVM o cold start de ~15 s acontecia DENTRO do
+handler e o lote disparava no meio dele. A telemetria chegava por uma janela acidental que a lentidão
+abria (o `tagging` chegou a ter 166 logs). O nativo sobe em 0,6 s e a janela fechou.
+
+**O conserto é `TelemetryFlush`, em `libs/axon-lambda`**: um `forceFlush` dos três providers no fim do
+handler de SQS e no da migração. Depois dele, sem acordar nada: `axonposts-tagging` com spans e 65
+logs, e a saga num trace só.
+
+**A ALTERNATIVA ÓBVIA FOI TENTADA E QUEBRA A SAGA.** A extensão tem `quarkus.otel.simple`
+(`OTelBuildConfig#simple`), que troca o processador em lote pelo `SimpleSpanProcessorWithBatchShutdown`
+— cada span sai na hora, e o lote passa a ser do `batch` do coletor. É a divisão de responsabilidade
+certa, foi implantada, e **a saga parou na versão 1**:
+
+```
+ARJUNA012094: Commit of action ... invoked while multiple threads active within it.
+ARJUNA012107: CheckedAction::check - atomic action ... commiting with 2 threads active!
+Caused by: java.sql.SQLException: Enlisted connection used without active transaction
+```
+
+Exportar no `onEnd` é exportar DENTRO da transação, e o exportador do Quarkus despacha num worker do
+Vert.x que entra na mesma transação. É a MESMA família de falha que a seção de subscriptions já
+registra para o `@Transactional` na ingestão — lá "aborting with 2 threads active", aqui "commiting".
+É também o que torna o flush explícito a escolha certa e não a que sobrou: ele roda **depois** do
+commit, na thread do handler, sem transação ativa.
+
+**O que ele NÃO resolve: métricas.** Elas não têm processador — têm leitor periódico
+(`MetricsRuntimeConfig` só expõe `exportInterval()`); o `forceFlush` do `SdkMeterProvider` entra junto,
+mas o que estiver fora do intervalo de coleta continua saindo na invocação seguinte.
+
+**O flush NÃO entra nas funções de HTTP e de streaming**: a primeira é invocada em sequência (o lote de
+uma requisição sai na seguinte) e a segunda mantém o processo vivo — foram as duas únicas que
+exportaram durante todo o episódio.
+
+**O `collector.yaml` não tem `batch`** — ele segura dados esperando encher um lote, e um lote pela
+metade morre com o congelamento.
+
+**Mas TEM `decouple`, e essa linha é uma reversão que a medição impôs.** A versão anterior o excluía
+com o argumento de que ele "é a mesma aposta que o batch com outro nome". Medido na stack: **14
+falhas em 5 minutos, e só na função de streaming**, todas `context canceled`. Isso não é rede — é a
+INVOCAÇÃO TERMINANDO com o export em voo. Exportar dentro do ciclo da invocação só funciona quando a
+invocação dura mais que o export, e a função de streaming é justamente a que responde rápido e a que
+produz mais spans: sem `decouple`, o trace dela era o que mais se perdia.
+<p>
+Junto vieram `timeout: 30s` e `retry_on_failure` no exportador, e o número saiu de
+`net/http: TLS handshake timeout` no log: o primeiro export de um container novo paga DNS mais
+handshake TLS saindo de um VPC, por NAT, e o que se perdia era o trace do cold start — o mais
+interessante de todos.
+<p>
+**Depois**: `no more retries left` = **0** nas quatro funções. O que restou no log são tentativas
+(`dial tcp ... i/o timeout`) que a retry resolve — falha visível, dado entregue.
+
+**As credenciais vêm do `.env` da raiz**, que o SST carrega sozinho; `support/functions.ts` as repassa
+a toda função e FALHA o deploy se faltarem — um coletor sem destino sobe, não reclama, e some com a
+telemetria em silêncio. Medido depois do deploy: zero `Exporting failed` nas três funções.
+
+### A PROPAGAÇÃO DO TRACE ENTRE OS SERVIÇOS
+
+Com o RabbitMQ a saga inteira era **um trace só**, de graça: o `tracing.enabled` do conector já vinha
+ligado dos dois lados. Na AWS isso regrediu por uma assimetria que este documento já registrava —
+`smallrye-reactive-messaging-aws-sqs` traz um instrumentador e injeta; **`aws-sns` 4.37.0 não tem
+pacote de tracing nenhum** —, e a saída deste sistema é SNS.
+
+**A saída passou a injetar à mão**, em `AwsEventAttributes.inject`: o `traceparent` do W3C entra no
+mapa de atributos, ao lado de `axon-routing-key` e companhia. É o único lugar por onde passam os
+atributos das DUAS saídas (SNS e SQS), e para o fio o `traceparent` é um atributo como os outros.
+
+**A entrada extrai**, em `SqsChannelIngress`: não há conector para instrumentar (o Lambda entrega o
+`SQSEvent` direto ao handler), então o contexto é lido dos atributos e ativado com `makeCurrent`.
+
+**MEDIDO na stack**, no log do publish:
+
+```
+sns → grupo=939a4535-… atributos={axon-message-name=PostPreCreated, …,
+      traceparent=00-7fc419aec2bb7739d0472b62d998f8d1-7c487761ccc959e1-03}
+```
+
+**A IDA ESTÁ FECHADA, e foi confirmada no backend** — não só no log do publish. Um trace único, com
+os dois serviços dentro:
+
+```
+quarkus-axon-graphql-posts   POST                         server
+quarkus-axon-graphql-posts   GraphQL                      internal
+axonposts-tagging            post-precreated-in receive   consumer
+```
+
+Quem cria o span do lado de lá é `SqsChannelIngress`: não há conector para instrumentar (o Lambda
+entrega o `SQSEvent` direto ao handler), então ele extrai o contexto dos atributos e abre um CONSUMER
+à mão. Sem esse span o `tagging` não aparecia em trace nenhum — e vale lembrar que ele ficou invisível
+por um SEGUNDO motivo, independente deste: o lote congelado, que a seção da telemetria descreve.
+
+**MEDIDO, com uma raiz injetada à mão no proxy** (fazendo o papel do navegador): a ida fecha
+`navegador → web → posts-api → GraphQL:Criar → tagging`, tudo sob o mesmo trace e com o aninhamento
+certo. A VOLTA não:
+
+```
+post-precreated-in receive   tagging     e090ff06…   o trace do navegador   tem pai
+post-completed-in receive    posts-api   92d47d4b…   TRACE NOVO             (raiz)
+post-changes-in receive      tagging     8bddc39d…   -                      tem pai
+```
+
+A terceira linha é a que fecha o diagnóstico: a réplica do `updatePost` TEM pai, então não é o
+SNS/SQS que perde o contexto — ele o carrega bem quando quem publica é o `posts-api` a partir da
+thread da requisição HTTP. Quebra só quando o publish vem DEPOIS de uma ingestão.
+
+**O QUE AINDA NÃO ATRAVESSA, e a causa é conhecida.** O `apps/tagging` recebe o contexto, mas o
+`PostCreated` que ele publica de volta sai **sem** `traceparent`. O `Context` do OpenTelemetry é
+thread-local, e a ingestão entrega a mensagem a um canal in-memory que roda o trabalho em OUTRA
+thread (`source.runOnVertxContext(true)`): o `makeCurrent` vale na thread que espera o ack, não na
+que faz o append e o publish. O conserto é carregar o contexto na METADATA da mensagem e restaurá-lo
+em `ChannelEventIngestion` — infraestrutura, sem tocar nos listeners, que por regra só entregam e
+saem.
+
+### OS SPANS DE GRAPHQL
+
+Eram uma linha, e não código. O SmallRye traz um `TracingService` em `smallrye-graphql-cdi` que fala
+a API do OpenTelemetry direto; ele é um `EventingService` descoberto por ServiceLoader e **gateado
+por `quarkus.smallrye-graphql.tracing.enabled`**. Desligado, nada acontece e nada avisa.
+
+E o registro para o binário nativo vem junto: o `SmallRyeGraphQLProcessor` do Quarkus tem um
+`activateTracing` que emite o `ServiceProviderBuildItem` quando a propriedade está ligada. Houve aqui
+um `@RegisterForReflection` à mão mais um `quarkus.native.resources.includes`; **os dois saíram**
+quando isso foi conferido no bytecode da extensão — o que a plataforma já faz não precisa ser
+reescrito.
+
+### O CLIENTE WEB TAMBÉM EXPORTA
+
+`apps/web/src/instrumentation.ts` é o gancho do Next, e ele é só um `if`: o SDK do Node depende de
+`async_hooks` e de patch de módulo, então importá-lo no topo quebraria o BUILD do bundle de edge.
+`instrumentation.node.ts` liga o `@vercel/otel` com `fetch` e a instrumentação de GraphQL;
+`instrumentation.edge.ts` liga só `fetch` — `@opentelemetry/instrumentation-graphql` não roda em
+edge, e deixá-la lá é um build quebrado esperando a primeira rota de edge.
+
+A função do Next carrega a MESMA layer do coletor, com o `collector.yaml` injetado por
+`transform.server` (o `server` do componente não expõe `copyFiles`). Ela exporta para `localhost:4318`
+— HTTP, que é o que o `@vercel/otel` fala; as funções Java usam 4317 (gRPC), e o mesmo `collector.yaml`
+abre as duas portas.
+
+**O que isso acrescenta**: o salto que faltava. Uma operação do navegador atravessa DUAS funções — o
+proxy de `/api/graphql` e o `posts-api` — e só a segunda aparecia.
+
+**E a instrumentação de `fetch` precisa de `propagateContextUrls`, que começa VAZIO.** No
+`@vercel/otel` o default é `[]` (fora as URLs de deploy da Vercel): ela cria o span da chamada — ele
+aparece no trace — e **não injeta o `traceparent`**. O resultado é enganoso, porque o salto está
+desenhado e mesmo assim o serviço do outro lado abre um trace novo. Medido antes: 317 spans de
+`axonposts-web` e 127 de `quarkus-axon-graphql-posts` na mesma hora, e ZERO traces com os dois. Depois
+da linha, o `POST /graphql` do `posts-api` passou a chegar com PAI REMOTO.
+
+**Limite conhecido, e é o mesmo da seção da telemetria**: a função do Next também é congelada ao
+retornar, e o `@vercel/otel` também usa processador em lote. Os spans dela chegam, mas **atrasados de
+uma invocação** — num site com tráfego isso não se nota, e num ambiente parado sim. O
+`TelemetryFlush` não a alcança: ele é Java, e ali quem exporta é o SDK de Node.
+
+### O BUILD É UM ALVO DO NX, E O ALVO VIVE NO GRAFO DE RECURSOS
+
+Declarar uma função é declarar o build dela. `QuarkusFunction` recebe em `code` ou um
+{@code QuarkusBuild} — artefato, **comando de build**, **caminho do zip**, bucket e fontes — ou o
+`code` de outra função, porque são **seis funções e quatro artefatos**, e três delas compartilham zip
+com outra.
+
+```ts
+export const postsInbox = new QueueWorker("PostsApiInbox", {
+    code: {
+        artifact: "posts-api-sqs",
+        buildCommand: `npx -y nx run "${projects.postsApi}:lambda-sqs:native"`,
+        output: "infra/dist/posts-api-sqs.zip",
+        bucket: codeBucket,
+        sources: sources.postsApi,
+    },
+});
+export const postsMigrate = new Migrator("PostsMigrate", { code: postsInbox.code });
+```
+
+**Quem constrói é um alvo do Nx — a mesma decisão que o `apps/web` já tinha.** Eram ~250 linhas de
+`infra/scripts/package.sh` fazendo à mão o que uma ferramenta de monorepo faz: escolher o que
+reconstruir, guardar o resultado, e ser o mesmo comando na máquina, em CI e no deploy. Hoje o script
+tem 76 linhas e **não sabe construir nada**: ele traduz as flags antigas para os alvos e roda os
+quatro em série.
+
+| alvo | perfil do Maven | zip |
+|---|---|---|
+| `lambda-http` (posts-api) | `-Plambda-http` | `infra/dist/posts-api-http.zip` |
+| `lambda-sqs` (posts-api) | `-Plambda-sqs` | `infra/dist/posts-api-sqs.zip` |
+| `lambda-stream` (posts-api) | `-Plambda-stream` | `infra/dist/posts-api-stream.zip` |
+| `lambda` (tagging) | `-Plambda` | `infra/dist/tagging.zip` |
+
+**Um alvo por ARTEFATO, e não um com o artefato em `--args`.** O Nx interpola `{args.x}` no comando,
+mas em `outputs` ele só interpola `{options.x}` — então um alvo genérico teria o caminho do zip
+dependendo de um argumento da linha de comando, e rodá-lo sem o argumento produziria
+`infra/dist/.zip` em silêncio. Com um alvo por artefato o `outputs` é literal e o cache tem uma
+entrada estável por artefato.
+
+**O NOME NÃO PODE SER `package`.** O `@nx/maven` infere 132 alvos para cada app, um por fase do ciclo
+de vida e um por execução de mojo — e `package` é um deles, com `dependsOn: ["^install"]`. Um alvo de
+mesmo nome no `project.json` não substitui o inferido: ele se FUNDE com ele, e herdaria aquele
+`dependsOn` — que é exatamente a armadilha do `nx-build-state.json` já documentada mais acima. Daí
+`lambda-*`, que são os nomes dos perfis do Maven e não colidem com fase nenhuma.
+
+**As configurações são as DUAS maneiras de compilar nativo, mais a de JVM:**
+
+| configuração | o que passa ao Maven | o que produz |
+|---|---|---|
+| `native` (default) | `-Dnative` | binário da GraalVM **desta máquina** |
+| `native-container` | `-Dnative -Pnative-container` | binário ELF/Linux, no builder do Mandrel |
+| `jvm` | nada | o `quarkus-app`/`function.zip` de sempre |
+
+No `apps/tagging` o gatilho é `-Dnative.tagging`, e isso é do desenho: como `-pl` não funciona neste
+reator, um gatilho compartilhado faria aquele módulo compilar um binário em toda invocação que pede
+native para o outro app. A configuração faz parte do comando escrito no componente do SST, que é onde se lê qual
+empacotamento cada função recebe.
+
+**O QUE VAI PARA A AWS É `:native-container`, e o default `:native` NÃO serve.** `native-image`
+gera um executável do SISTEMA onde roda e não cruza: num Mac o `cc` tem alvo
+`arm64-apple-darwin`, o `bootstrap` sai **Mach-O**, e o `provided.al2023` só executa ELF/Linux.
+O modo de falhar é o pior que há — o deploy publica o zip e imprime `✓ Complete`, e a função
+morre na invocação. O default continua sendo `native` porque quem constrói na máquina quase
+sempre quer rodar a aplicação ali.
+
+**E há um argumento de passagem**: `--extraFlags='...'` entra no comando do Maven e — por ser uma
+opção do alvo — **entra no hash**, então o cache continua correto quando alguém experimenta uma flag.
+
+**O cache, medido:** a primeira execução leva o que o Maven levar; a segunda, **96 ms**. Apagar o zip
+e rodar de novo o **restaura do cache** em vez de reconstruir — que é o caso do clone novo e o do
+`sst refresh`. E `touch` num fonte **não** invalida nada: o Nx compara CONTEÚDO, não data.
+
+Os `inputs` são o named input `quarkusLambda`, no `nx.json`, e o que ele diz é o que importa:
+`production` do próprio app (que já exclui `src/test/**` e `*.md`), mais `libs/**/pom.xml`,
+`libs/**/src/main/**`, o `mvnw`, o `.mvn/`, o `collector.yaml` e o `build-env.sh`. Conferido com o
+inspetor de hash do próprio Nx: **207 arquivos** para o `posts-api`, **118** para o `tagging`, e
+ZERO vindos de `target/`, de `src/test/` ou de `.DS_Store` — o Nx monta o mapa de arquivos
+respeitando o `.gitignore`, então os dois modos de falhar que custaram ~25 min de rebuild num deploy
+deixaram de ser possíveis. E os dois apps ficam isolados: mexer no `apps/tagging` não invalida
+artefato nenhum do `posts-api`.
+
+**Três mecanismos, e cada um cobre o que o outro não cobre:**
+
+- **`triggers`** com o fingerprint dos FONTES decide se o COMANDO roda. É dos fontes e não do zip
+  porque na primeira vez o zip não existe — ele é produto do recurso, não insumo;
+- **o cache do Nx** decide se rodar o comando RECONSTRÓI alguma coisa. É o que substituiu a checagem
+  de mtime do script, e ganha nos três pontos em que aquela doía: compara conteúdo, respeita o
+  `.gitignore` e conhece o grafo;
+- **`assetPaths`** lê o zip DEPOIS do build e o entrega ao S3 como asset do Pulumi. A doc é explícita:
+  *"a list of path globs to read after the command completes"*. **Eles não decidem se o build roda** —
+  isso é `triggers`.
+
+**Dois detalhes que custaram tempo de verdade:**
+
+- os quatro builds são **serializados** por `dependsOn` encadeado, porque os perfis do Maven escrevem
+  todos em `target/function.zip` e dois em paralelo se apagam. É a mesma necessidade que faz o
+  `siteBuilder` do próprio SST usar um semáforo de 1. **O Nx não sabe disso**: rodar os alvos à mão
+  com `run-many` exige `--parallel=1`, que é o que o `package.sh` passa;
+- o `build-env.sh` existe porque duas coisas que o build exige são DINÂMICAS e não cabem numa linha
+  de `env` no `project.json`: achar um JDK ≥ 21 (o shell desta máquina traz um 17, que não compila
+  `release 21`) e conferir a toolchain nativa. Deixaram de ser conveniência quando o build passou a
+  ser disparado pelo `sst deploy`, onde quem escolhe o ambiente é o CLI.
+
+**O laço de desenvolvimento que tornou isso viável**: rodar o binário num container local
+(`arm64v8/ubuntu` + o `application` montado) contra um Postgres de Dev Services. Cada ciclo
+build→deploy→teste custa 11 minutos; build→container custa 7 e responde a mesma pergunta. Duas das
+quatro falhas foram achadas assim. O que NÃO dá para testar assim é o que depende do ambiente do
+Lambda — `AWS_REGION` (sem ela o publish no SNS falha com `Unable to load region`) e o DNS, que na
+bridge do Docker devolve só IPv6.
+
+**E há um efeito colateral que custou duas falhas de teste, porque ele não está no caminho da
+subscription.** A estatística do Hibernate é da `SessionFactory` — ela conta os `PreparedStatement` de
+TODAS as threads. Com um processor streaming lendo a linha de cada post que passa pelo event store, a
+PRIMEIRA medição de `BatchLoadingE2ETest` e de `FederationEntitiesE2ETest` cai em cima da varredura
+dele e a segunda não: medido, 11 statements para 1 post contra 4 para 5 posts. O teste acusava um N+1
+inexistente e, pior, passaria a esconder um N+1 de verdade sob o ruído. Quem conserta é
+`AbstractGraphQlE2ETest.statisticsOfAQuietDatabase()`, que abre a janela de medição só depois de duas
+amostras iguais da contagem. **Medição que conta statements de uma aplicação com processor assíncrono
+precisa esperar o silêncio** — e é isso que o controle provou: as mesmas duas classes passam 2/2 sem
+nenhum processor pooled e falham 3/3 com ele.
+
+**E há uma quarta razão, que é ARITMÉTICA e não arquitetura.** Uma subscription é uma conexão longa, e
+o Lambda cobra e limita exatamente isso: o ambiente é CONGELADO entre invocações (um assinante parado
+não recebe keep-alive nem escrita) e a conexão só existe enquanto o handler não retorna. Segurar um
+assinante é, portanto, manter uma invocação viva — teto de 15 min, cobrada por duração.
+
+Nesta função (arm64, 2048 MB): 2 GB × 900 s = 1800 GB-s × US$ 0,0000133334 = **US$ 0,024 por
+assinante a cada 15 min**, ou **US$ 0,096/hora por assinante conectado**. Uma task Fargate de
+0,25 vCPU / 0,5 GB custa US$ 0,0123/hora e atende todos eles. <b>UM assinante em Lambda custa oito
+vezes a máquina inteira que serviria todos</b> — e ainda cai a cada 15 minutos.
+
+**O que NÃO atravessa, medido e não deduzido:**
+
+- **subscriptions, por WebSocket ou SSE.** O JAR do `quarkus-amazon-lambda-http` 3.39.2 não tem uma
+  ocorrência de `vnd.awslambda.http-integration-response` nem de `RESPONSE_STREAM`: a resposta é um
+  `APIGatewayV2HTTPResponse` montado inteiro em memória. E o `RequestStreamHandler` do
+  `quarkus-amazon-lambda` **não é** response streaming — ele dá `InputStream`/`OutputStream` sobre o
+  payload da invocação, bufferizado. Mas o transporte é a metade menor: `SimpleQueryBus.emitUpdate` é
+  **em processo**, e quem apenda o `PostCreated` é outra função. Não há de onde emitir, e reconectar
+  não resolve porque não é a conexão que falta, é a fonte;
+- **o trace único.** Na entrada não há conector para instrumentar; na saída,
+  `smallrye-reactive-messaging-aws-sns` 4.37.0 não tem pacote de tracing (o de SQS tem). Vale a regra
+  que já está escrita mais abaixo: um trace pela metade é pior que nenhum, porque a lacuna parece
+  latência. Quem responde por enquanto é o `AxonMetrics`.
+
+**RODADO NA CONTA DE VERDADE** (`us-east-1`, via `./infra/aws/e2e.sh`): a saga fecha — post nasce na
+versão 1 sem tag, volta na 2 com `Untagged` em ~50s, atualiza para a 3; as seis filas (três de
+trabalho, três de DLQ) ficam vazias; `_entities` responde sem token. Os ~50s são quase todos cold
+start de duas JVMs de 72 MB numa VPC — é o número que justifica o binário nativo.
+
+E as duas afirmações sobre subscriptions foram confirmadas na stack, não só no JAR: `Accept:
+text/event-stream` fica **25 segundos sem receber um byte** (nem o keep-alive de 15s chega) e o
+upgrade de WebSocket morre no load balancer com **HTTP 400**.
+
+**Três coisas que só apareceram na AWS**, e as três falham de forma enganosa:
+
+1. **A função de migração não subia — pelo problema que ela existe para resolver.** O recorder do Axon
+   toca o EntityManager na PARTIDA, o `validate` roda contra banco vazio e a aplicação morre com
+   `missing table [accounts]` antes de qualquer handler existir. A saída é
+   `QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY=none` **só nessa função**; as outras quatro
+   mantêm o `validate` e continuam recusando subir se entidade e schema divergirem.
+2. **O atributo do conector SNS é `topic.arn`, com PONTO.** Com hífen é ignorado em silêncio
+   (`SRMSG19504: Topic arn ... : null`) e a primeira publicação morre com
+   `InvalidParameterException: TopicArn or TargetArn ... no value for required parameter`, que chega
+   ao cliente GraphQL como `System error`/`invalid-parameter` sem mencionar configuração. O nome foi
+   lido do BYTECODE do conector; ele também usa `group.id` e `email.subject`.
+3. **O `iss` do Keycloak vem em minúsculas** — o DNS do ALB tem maiúsculas, mas o `iss` é montado do
+   cabeçalho `Host`. DNS é insensível a caixa; `iss` não é.
+
+**E a troca do Keycloak pelo Cognito cobrou o que o `V1__initial_schema.sql` tinha prometido.** A
+primeira execução falhou com `usuário … já tem conta em KEYCLOAK` — não um bug, a regra de domínio: o
+`sub` do Cognito não é o do Keycloak, e sem `identity_provider` no token os dois viravam o mesmo
+provedor. O conserto foi o caminho que aquela migration já documentava: `COGNITO` no enum
+`AuthProvider`, a `V6__cognito_provider.sql` refazendo o `ck_accounts_provider`, e um trigger
+*pre token generation* **V1_0** pondo `identity_provider: "cognito"` no ID token. Resultado melhor que
+"voltou a funcionar": a mesma pessoa atravessou a troca de emissor sem virar dois usuários —
+`account linking: … de COGNITO ligada ao usuário …`, uma linha em `users` e duas em `accounts`.
+**ENUM `AuthProvider` NOVO = MIGRATION NOVA**, e agora há precedente.
+
+**Variável de ambiente sem default derruba a partida, inclusive de quem não serve HTTP.**
+`quarkus.oidc.auth-server-url=${OIDC_ISSUER_URL}` não tem default (a `%prod.` que ela substitui tinha),
+e dar a variável só à função de API matou as outras duas do `posts-api` na partida: a extensão OIDC
+inicializa com a APLICAÇÃO, não com a primeira requisição. Por isso o OIDC mora em `postsEnv`.
+
+E uma de ferramenta: **`sst outputs` não existe no 4.17.1** (o comando imprime o help) — os outputs
+só saem no `sst deploy`. Daí `infra/aws/discover.sh`, que pergunta à AWS pelos prefixos dos nomes.
+
+O documento dessa migração, decisão por decisão, é `infra/aws/README.md`.
+
+
+## O cliente de teste (`apps/web`)
+
+Um Next.js (App Router) com Apollo Client, **aditivo como o resto**: nenhum arquivo de aplicação Java
+foi alterado para ele existir. Sete páginas, uma por fluxo, e cada uma existe para provar uma coisa —
+a tabela completa e as decisões estão em `apps/web/README.md`. O que precisa ser sabido daqui:
+
+**Organização de arquivos é por FEATURE; atomic design é por COMPOSIÇÃO.** Não há pasta `atoms/` nem
+`organisms/`: há a rota e o que ela precisa (`app/<feature>/_components`, `_hooks`), mais
+`app/_components` para o que atravessa features e `components/ui` para as primitivas do shadcn. A
+escala atômica continua existindo — ela só não é uma pasta.
+
+**As props vêm de FRAGMENTOS, e isso é verificado pelo compilador.** O `client-preset` do
+graphql-codegen gera *fragment masking*: o componente declara o fragmento de que precisa e recebe
+`FragmentType<typeof Fragmento>`, um tipo opaco. Ler um campo fora do fragmento **não compila**, mesmo
+que a query da página o tenha trazido. A demonstração está no par `PostCard_post` / `PostArticle_post`
+— o card **não pede `content`**. Componente novo = fragmento novo no mesmo arquivo; a página só
+espalha (`...PostList_connection`) e não enumera campo nenhum.
+
+**A QUERY É DA PÁGINA, e ela é prefetchada no servidor.** Cada página com query tem um `query.ts` ao
+lado do `page.tsx`; o server component a passa ao `PreloadQuery` de
+`@apollo/client-integration-nextjs` e o componente de cliente lê o MESMO documento com
+`useSuspenseQuery`. O resultado atravessa pelo stream do React — o HTML já chega preenchido e a
+hidratação não refaz a requisição. As variáveis são constantes compartilhadas (`FEED_PAGE_SIZE`,
+`LIVE_SNAPSHOT_SIZE`): servidor e cliente pedindo tamanhos diferentes não dá erro, dá uma segunda
+requisição, e só a aba de rede conta. `errorPolicy: "all"` dos dois lados, porque com o default um
+erro vira exceção no render do RSC e a rota inteira cai. Duas páginas não têm prefetch, e as duas
+dizem o porquê no próprio arquivo: `/saga` mede um post que ainda não existe, e subscription não
+termina.
+
+**`possibleTypes` é gerado, não escrito.** `me` devolve a interface `User` e `_entities` a união
+`_Entity`; sem o mapa, o casamento de `... on Author` no cache é heurístico e aplica o fragmento ao
+tipo errado em silêncio. Quem o gera é o plugin `fragment-matcher` (`codegen.ts`), e quem o consome é
+`lib/apollo/cache.ts`.
+
+**A autenticação é por SERVER ACTION.** `app/actions/auth.ts` é a única porta para o Cognito: a senha
+vai para o servidor do Next, que chama `InitiateAuth` e guarda os dois tokens em cookies `httpOnly`. O
+navegador nunca vê o refresh token, e o ID token só chega a ele em memória. O bearer é o **ID token**
+pela razão já documentada em `infra/aws/identity/index.ts`.
+
+**O NAVEGADOR SÓ CONHECE `/api/graphql`** — o proxy da própria aplicação
+(`app/api/graphql/route.ts`). Três coisas que isso resolve: o ID token **para de existir no
+navegador** (quem o põe no header é o proxy, lendo o cookie `httpOnly`; `lib/apollo/token.ts` e o
+`auth-link` sumiram, e o `Session` que desce para o cliente não tem mais o campo); não há CORS no
+caminho; e existe um lugar só onde o streaming pode ser resolvido. O SERVIDOR não passa pelo proxy —
+o `PreloadQuery` fala direto com a API, porque abrir uma conexão HTTP para si mesma custaria mais uma
+invocação e latência.
+
+**Subscriptions: o proxy REPASSA, e mais nada.** `/api/graphql` faz um `fetch` para o upstream e
+devolve `upstream.body` — o corpo da resposta, como veio. Ele não interpreta o protocolo, não monta
+frame nenhum e não sabe o que é uma subscription. A semântica é do domínio, servida pelo `posts-api`:
+`onPostCreated` quando o post ALCANÇA a versão 2, `onPostUpdated` a cada mudança daí para a frente.
+
+**Houve uma EMULAÇÃO aqui, e ela morreu de causa boa.** Enquanto o upstream era o API Gateway — que
+monta a resposta inteira em memória —, o stream não abria, e o proxy consultava em laço recortando a
+seleção do cliente para uma query `post(id:)` com alias. Deixou de ter função quando
+`NEXT_PUBLIC_GRAPHQL_URL` passou a apontar para a Function URL com response streaming: o repasse
+sempre funciona, e um caminho alternativo que nunca executa é um caminho que ninguém conserta. Saíram
+com ela o `subscription-probe.ts`, o frame de anúncio de modo e o distintivo "stream real / emulado"
+da página `/live`.
+
+**O QUE SEGURA ESSE REPASSE É UM NÚMERO DE CDN**, e ele não está no código do proxy. O CloudFront
+corta a origem que ficar calada por mais que o `OriginReadTimeout`, e um `sst.aws.Nextjs` SOLTO cria
+a distribuição dele com **20 s literais** (`ssr-site.ts:996`) — conferido na conta. Um cold start do
+`posts-api` leva 15–26 s (cronometrado duas vezes) e nesse intervalo o proxy não tem byte para
+repassar: metade dos cold starts virava 504. O proxy já teve keep-alives só para preencher esse
+silêncio. **Proxy calado NÃO é proxy parado — mas o CDN não sabe a diferença.**
+
+Quem resolve é o `sst.aws.Router` de `infra/aws/edge/`: com o site ROTEADO, o SST espelha o `timeout`
+do servidor na metadata da rota (`ssr-site.ts:1857`), e o número deixa de ser escrito duas vezes. **60
+s é o teto**, e não por gosto: é o máximo do CloudFront para origem escolhida dinamicamente, e passar
+disso faz a borda recusar a origem — uma tentativa com 360 s derrubou o site inteiro com 502.
+
+**MEDIDO na stack depois da troca**: uma subscription pelo proxy levou **26 s até o primeiro byte** e
+entregou o evento normalmente. Com os 20 s de antes, essa conexão teria sido cortada — é a prova de
+que o teto era o gargalo, e não o proxy.
+
+**E há um efeito que nenhuma configuração conserta: CADA ASSINANTE CONCORRENTE PAGA UM COLD START.**
+Uma conexão SSE segura a invocação enquanto estiver aberta, e um container do Lambda atende uma
+invocação por vez — então o segundo assinante simultâneo cai obrigatoriamente num container novo.
+Medido: duas conexões abertas juntas levaram 27 s, com a função já quente. É a mesma aritmética que
+torna `warm: 1` insuficiente aqui: ele aquece UM container, e o segundo assinante não o encontra
+livre. O que remove isso é concorrência provisionada (≈US$ 21/mês para um container de 2 GB) ou o
+binário nativo — o `libs/axon-native-support` existe para isso.
+
+**CORS é do API GATEWAY, não da aplicação** (`infra/aws/support/http-api.ts`). Assim o preflight não
+acorda uma JVM de 72 MB. `allowOrigins: ["*"]` porque liberar a URL do site criaria dependência
+circular com o componente que precisa da URL da API. Em dev o Quarkus não tem CORS ligado: use
+`QUARKUS_HTTP_CORS=true QUARKUS_HTTP_CORS_ORIGINS='http://localhost:3000'` no `quarkus:dev`.
+
+**O build é do Nx, o empacotamento é do OpenNext, a publicação é do SST.** O alvo
+`web:open-next-build` depende de `build`, e é ele que o `sst.aws.Nextjs` chama (`buildCommand`) — uma
+definição só de como se constrói o site, com cache. Duas linhas do `next.config.ts` existem por causa
+disso e nenhuma é afinamento: `outputFileTracingRoot` apontando a raiz do monorepo (sem ela o bundle
+sai sem os pacotes que o pnpm deixou em symlink, e o erro só aparece em runtime) e `output:
+"standalone"` ligado por `INFRA_PROVIDER=aws` (que o `environment` do componente injeta no build).
+
+**Armadilhas já pagas**, e as primeiras falham em silêncio:
+
+0. **NÃO deixe `next dev` rodando durante um `sst deploy`.** O `open-next.config.ts` tem
+   `buildCommand: "exit 0"` — ele EMPACOTA `.next`, não o constrói —, e o dev server reescreve esse
+   diretório continuamente. O que sobe vira um build de desenvolvimento: o HTML referencia
+   `/_next/static/chunks/main-app.js` (sem hash, nome que só o dev usa), o S3 responde 403, a página
+   não hidrata, o formulário cai no POST nativo e a server action morre com
+   `TypeError: a[d] is not a function` no `webpack-runtime`. Nenhuma dessas mensagens aponta para a
+   causa.
+1. **Login: toda navegação SUAVE para `/feed` quebrava o cabeçalho.** O layout lê o cookie, e o Next
+   faz prefetch dos `<Link>` visíveis — o payload ANÔNIMO do layout já está no Router Cache quando o
+   login acontece. Em `next dev` (sem prefetch) nada aparece. Foram TRÊS fontes de navegação suave,
+   removidas uma a uma: o `redirect()` da própria ação; o `revalidatePath("/", "layout")` nela (que
+   revalida `/login`); e — a que sobreviveu às outras duas — o fato de **o Next re-renderizar a rota
+   atual depois de toda server action**, o que disparava o `redirect` que havia no `page.tsx` de
+   `/login`. Desenho final: a página de login não redireciona (quem tem sessão vê um cartão), e o
+   formulário chama `signIn` à mão — não por `useActionState` — para `window.location.assign` rodar
+   no mesmo tick da resposta. Sessão nova é documento novo.
+2. **`Query.posts` é ordem de criação CRESCENTE.** `posts(first: 10)` são os dez mais ANTIGOS; um post
+   criado agora entra no fim. O painel de tempo real ficou mudo por isso. Sem `last`/`before` no
+   schema, `/live` pede a página inteira (teto 100) e olha a cauda — acima de 100 posts os mais novos
+   somem, e o conserto honesto é paginação reversa na API.
+3. **`relayStylePagination()` sem `keyArgs` funde TODA leitura de `posts`** — a de `/live`
+   (`first: 100`) com a do feed (`first: 6`), e o feed voltava com cem cards. `keyArgs: ["first"]`
+   separa as duas sem quebrar o "carregar mais".
+4. `@graphql-typed-document-node/core` precisa ser dependência DIRETA (o pnpm não expõe transitiva, e
+   sem ela todo `graphql()` vira `unknown`); o `Button` do shadcn *base-nova* é Base UI e usa
+   `render={<Link/>}`, não `asChild`; e `secure: true` no cookie mata o login em `next dev`, porque a
+   origem é http.
+
+```bash
+pnpm --filter @axonposts/web dev        # http://localhost:3000
+pnpm --filter @axonposts/web codegen    # regenera src/gql/ (roda junto com o build)
+pnpm --filter @axonposts/web schema:pull GRAPHQL_URL   # atualiza apps/web/schema.graphql
+npx nx run web:open-next-build          # o que o SST chama no deploy
+```
+
 ## Testes
 
 Surefire roda tudo em `./mvnw test`, inclusive os `*E2ETest` — **Docker precisa estar de pé**.
@@ -863,10 +1741,12 @@ Surefire roda tudo em `./mvnw test`, inclusive os `*E2ETest` — **Docker precis
 - **Schema** (`RelaySchemaTest`): lê o SDL gerado e falha se `Connection_`/`Edge_` voltarem a aparecer, ou
   se a `interface User` sumir. É o guarda do mecanismo dos genéricos, que nenhum compilador confere.
 - **Wiring do Axon** (`AxonWiringTest`): três coisas que a extensão decide por default e que este projeto
-  decide diferente — o `TransactionManager`, o tipo do id de cada entidade, e a cobertura de
-  `subscribingprocessor.namespaces`. As duas primeiras valem por **ausência** de `@DefaultBean` (sumir não
+  decide diferente — o `TransactionManager`, o tipo do id de cada entidade, e a cobertura das
+  propriedades de processor (`subscribingprocessor.namespaces` mais os `pooledprocessor.<nome>`). As duas primeiras valem por **ausência** de `@DefaultBean` (sumir não
   quebra compilação); a terceira varre o `BeanManager` atrás de `@EventHandler` e falha se algum pacote
-  ficou de fora da propriedade.
+  ficou de fora das DUAS listas — a do subscribing e a de cada pooled nomeado. Quem fica de fora não dá
+  erro: cai num pooled anônimo, com token store JPA, e a entrega que aquele pacote precisava deixa de
+  valer em silêncio.
 - **Federação** (`FederationSchemaTest`, `FederationEntitiesE2ETest`): o primeiro lê o `_service { sdl }`
   — que é o que o `rover` leria, e onde `@key`/`@shareable` aparecem, coisa que a introspecção não mostra.
   O segundo chama o `_entities` de verdade: é o único lugar onde um argumento renomeado, um `@Id` a mais

@@ -208,11 +208,16 @@ dependência do domínio para uma biblioteca de plataforma, exatamente o que a c
 desnecessário. Implementar o `EventSourcedEntityConfigurer` custa um mapa de três linhas e mantém
 `domain` como estava.
 
-**Qual processor roda em modo subscribing**, numa linha de `application.properties`:
+**Qual processor roda cada pacote de event handler**, em linhas de `application.properties`:
 
 ```properties
-quarkus.axon.subscribingprocessor.namespaces=dev.manuelantunes.axonposts.application.post.event
+quarkus.axon.subscribingprocessor.namespaces=dev.manuelantunes.axonposts.application.post.projection
+quarkus.axon.pooledprocessor.post-subscriptions.namespaces=dev.manuelantunes.axonposts.application.post.event
 ```
+
+São dois porque as duas reações ao mesmo evento precisam de entregas opostas: a projeção grava uma vez,
+na transação do append; os `*EventHandler` avisam os assinantes em TODO container, lendo o event store.
+O código dos dois lados é o mesmo `@EventHandler` de sempre — a diferença inteira está nestas linhas.
 
 O valor é o **nome do pacote**. A extensão agrupa event handlers por `@Namespace` lido *da classe*, e cai
 no pacote quando não há anotação — então o `@Namespace` que ficava no `package-info.java` deixou de ter
@@ -857,6 +862,45 @@ DevTools do Spring tornava.
 Trocar por um event store persistente é acrescentar a dependência `quarkus-axon-jpa-eventstore`.
 
 ---
+
+## AWS Lambda: o mesmo sistema, outro alvo de implantação
+
+Um segundo alvo, e ele é **aditivo**: nenhum arquivo que existia antes dele foi alterado. As mesmas
+duas aplicações, empacotadas por perfil Maven, viram quatro funções; o RabbitMQ vira um topic SNS FIFO
+com três filas SQS FIFO assinando por filter policy.
+
+O que isto prova sobre as decisões tomadas até aqui é mais interessante do que a migração em si.
+
+**O `ChannelAddressing` pagou o que prometia.** O Javadoc dele dizia, desde antes de existir uma linha
+de AWS: *"Protocolo novo = uma `ChannelAddressing` a mais"*. Foi literalmente isso — `SnsAddressing` e
+`SqsAddressing`, uma classe cada, mais uma linha de `.properties` por canal. O `@AxonOutbox` das duas
+aplicações não mudou, porque o que um serviço publica é contrato dele e não muda por ambiente.
+
+**A regra de camadas pagou também.** Os `@Incoming` continuam sendo a porta de entrada: o canal passa
+a `smallrye-in-memory` e o handler do Lambda empurra o registro para dentro dele, então
+`PostPreCreatedListener` e os irmãos rodam sem uma linha alterada — com o `@Blocking(ordered = false)`
+e a unidade de trabalho do Axon que já estavam medidos ali. O handler do Lambda não é a porta; é o
+transporte, o lugar equivalente ao conector do RabbitMQ.
+
+**E a chave de ordenação encontrou a razão de existir.** O `EventAddress.orderingKey()` era o terceiro
+segmento da routing key, e o próprio `application.properties` admitia por escrito que ele não
+desempatava nada. Numa fila FIFO ele é o `MessageGroupId` — ou seja, é o que faz a ordem existir. E
+ela não é opcional: `apps/tagging` escreve no stream do `Post`, e num event store em *aggregate mode*
+um evento fora de ordem faz o append seguinte cair em
+`duplicate key ... uk_aggregateevententry_aggregate`.
+
+**O que regrediu, e é honesto dizer:** subscriptions não funcionam em Lambda — nem por WebSocket nem
+por SSE, e o transporte é a metade menor do problema, porque `SimpleQueryBus.emitUpdate` é em processo
+e quem apenda o `PostCreated` é outra função. O trace único também regride, porque na entrada não há
+conector para instrumentar e o conector de SNS não tem tracing. As duas coisas, com a medição que as
+sustenta e os caminhos que as resolveriam, estão em **[`infra/aws/README.md`](infra/aws/README.md)** —
+o documento dessa migração, decisão por decisão.
+
+```bash
+npx sst deploy --stage dev                # o deploy CONSTRÓI os quatro zips: cada função declara
+                                          # em `code` o alvo do Nx que a constrói
+npx nx run "dev.manuelantunes:axonposts-tagging:lambda"   # ou um artefato só, à mão
+```
 
 ## Rodando
 
