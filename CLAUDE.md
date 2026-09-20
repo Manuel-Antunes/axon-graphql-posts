@@ -1042,6 +1042,13 @@ Gateway e os três objetos no S3. O erro estava só em `.sst/log/pulumi.log` (`3
 não aparece depois de um deploy "bem-sucedido": é esse arquivo que responde, e `npx sst diff`
 confirma, porque ele passa a não enxergar o que falhou ao registrar.
 
+**E NUM RUNNER EFÊMERO AQUELE ARQUIVO MORRIA COM O JOB.** Isto aconteceu de novo, e a segunda vez
+custou o dobro: `✓ Complete`, exit 1, e o log do job sem UMA linha sobre a causa. Numa máquina o
+arquivo está ali para ser lido; na esteira a única saída era redeployar às cegas, 25 minutos por
+tentativa, contra uma stack que cobra. Hoje o `tools/github/deploy-sst` tem um passo
+`if: failure()` que despeja as linhas de erro no log do job e sobe `.sst/log/**` inteiro como
+artefato. **Deploy que falha na esteira: é esse grupo do log que se abre primeiro.**
+
 **Os três perfis escrevem em `target/function.zip`** — o segundo apaga o primeiro. Por isso o script
 copia para `dist/` entre eles, e por isso não há como empacotar os três numa invocação só.
 
@@ -1595,8 +1602,25 @@ artefato nenhum do `posts-api`.
 
 **Três mecanismos, e cada um cobre o que o outro não cobre:**
 
-- **`triggers`** com o fingerprint dos FONTES decide se o COMANDO roda. É dos fontes e não do zip
-  porque na primeira vez o zip não existe — ele é produto do recurso, não insumo;
+- **`triggers`** com o fingerprint dos FONTES **mais a existência do zip** decide se o COMANDO roda.
+  A primeira metade é dos fontes e não do zip porque na primeira vez o zip não existe — ele é produto
+  do recurso, não insumo. **A segunda metade foi acrescentada depois, e custou um deploy inteiro para
+  aparecer:** fingerprint igual faz o Pulumi PULAR o comando, e comando pulado não produz arquivo.
+  Num runner efêmero, onde `infra/dist/` nasce vazio, o `assetPaths` passa a apontar para um caminho
+  que só existia na máquina do deploy ANTERIOR; o `BucketObjectv2` tenta lê-lo ao ser criado, não
+  acha, e o deploy morre **antes de criar coisa alguma** — imprimindo `✓ Complete` e saindo com
+  código 1.
+  <p>
+  MEDIDO: o deploy que mudou só arquivos de `infra/` (que não estão em `sources`, e nem deveriam
+  estar) não construiu nada, não criou nada e levou **2m59s de silêncio** entre `~ Deploy` e
+  `✓ Complete`. Precisa das DUAS condições para aparecer: objeto do S3 por CRIAR **e** comando
+  PULADO — por isso as funções do `posts-api`, cujos objetos já existiam, sobreviveram, e as três do
+  `tagging` não.
+  <p>
+  `QuarkusFunction.artifactPresence` é assimétrico de propósito: zip presente devolve um literal
+  estável (o build segue pulado), zip ausente devolve um valor novo a cada avaliação. Um literal como
+  `"missing"` seria gravado no estado e casaria no runner seguinte — onde o zip também falta —,
+  pulando o comando de novo;
 - **o cache do Nx** decide se rodar o comando RECONSTRÓI alguma coisa. É o que substituiu a checagem
   de mtime do script, e ganha nos três pontos em que aquela doía: compara conteúdo, respeita o
   `.gitignore` e conhece o grafo;

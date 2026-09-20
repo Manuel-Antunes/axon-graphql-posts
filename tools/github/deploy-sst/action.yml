@@ -45,6 +45,48 @@ runs:
         STAGE: ${{ inputs.stage }}
         ARGS: ${{ inputs.args }}
 
+    # O QUE FALHOU ESTÁ SÓ NO `.sst/log/pulumi.log`, e sem este passo a esteira o joga fora.
+    #
+    # `✓ Complete` do `sst deploy` NÃO quer dizer que deu certo — o `CLAUDE.md` já registrava isso,
+    # e foi exatamente o que aconteceu: um deploy imprimiu `✓ Complete` com os URLs, saiu com
+    # código 1, e o log do job não trazia UMA linha sobre a causa. Entre `~ Deploy` e `✓ Complete`
+    # havia dois minutos de silêncio.
+    #
+    # Numa máquina o arquivo está ali para ser lido. Num runner efêmero ele morre com o job, e a
+    # única saída era redeployar às cegas — 25 minutos por tentativa, contra uma stack que cobra.
+    #
+    # `if: failure()` e não `always()`: num deploy verde o arquivo não acrescenta nada, e um passo
+    # que despeja log em toda execução é um passo que se aprende a rolar para baixo.
+    - name: Report what actually failed
+      if: ${{ failure() }}
+      shell: bash
+      run: |
+        log=.sst/log/pulumi.log
+        if [ ! -f "$log" ]; then
+          echo "não há $log — a falha foi ANTES de o Pulumi registrar qualquer coisa"
+          exit 0
+        fi
+        echo "::group::os erros de $log"
+        # `error` cru traz muita linha de diagnóstico do provider; o que nomeia a causa são as
+        # linhas de erro do Pulumi e as mensagens dos providers da AWS.
+        grep -iE '"level":"error"|\berror\b|failed|denied|exception' "$log" | tail -60 || true
+        echo "::endgroup::"
+        echo "::group::as últimas 120 linhas, para o contexto em volta"
+        tail -120 "$log"
+        echo "::endgroup::"
+
+    # O arquivo INTEIRO como artefato, porque o recorte acima é um recorte: quando a causa não
+    # estiver nele, é este download que responde. Vai junto com o `outputs.json` e sob a mesma
+    # retenção.
+    - name: Upload the SST logs
+      if: ${{ failure() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: sst-logs-${{ inputs.stage }}
+        path: .sst/log/**
+        if-no-files-found: warn
+        retention-days: 30
+
     - name: Upload SST outputs
       if: ${{ inputs.upload_outputs == 'true' }}
       uses: actions/upload-artifact@v4
