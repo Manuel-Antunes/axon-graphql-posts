@@ -3,16 +3,12 @@ package dev.manuelantunes.axonposts.e2e;
 import java.util.List;
 import java.util.Map;
 
-import org.hibernate.SessionFactory;
-import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.Test;
 
 import dev.manuelantunes.axonposts.support.AbstractGraphQlE2ETest;
 import dev.manuelantunes.axonposts.support.GraphQl;
 import dev.manuelantunes.axonposts.support.Realm;
 import io.quarkus.test.junit.QuarkusTest;
-import jakarta.inject.Inject;
-import jakarta.persistence.EntityManagerFactory;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -42,9 +38,6 @@ class FederationEntitiesE2ETest extends AbstractGraphQlE2ETest {
                 ... on Reader { id email }
               }
             }""";
-
-    @Inject
-    EntityManagerFactory entityManagerFactory;
 
     private static Map<String, Object> ref(String typename, String id) {
         return Map.of("__typename", typename, "id", id);
@@ -169,12 +162,13 @@ class FederationEntitiesE2ETest extends AbstractGraphQlE2ETest {
 
     @SuppressWarnings("unchecked")
     private long statementsResolving(List<String> postIds) {
-        Statistics statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
-        statistics.clear();
-        List<Map<String, Object>> entities = (List<Map<String, Object>>) anonymous
-                .execute(ENTITIES, "reps", postIds.stream().map(id -> ref("Post", id)).toList())
-                .list("_entities");
-        assertThat(entities).hasSize(postIds.size());
-        return statistics.getPrepareStatementCount();
+        // o MENOR de três execuções: o processor que notifica os assinantes é assíncrono e conta na
+        // mesma estatística, então ele pode acordar no meio da janela — ver `cheapestStatementCount`
+        return cheapestStatementCount(() -> {
+            List<Map<String, Object>> entities = (List<Map<String, Object>>) anonymous
+                    .execute(ENTITIES, "reps", postIds.stream().map(id -> ref("Post", id)).toList())
+                    .list("_entities");
+            assertThat(entities).hasSize(postIds.size());
+        });
     }
 }

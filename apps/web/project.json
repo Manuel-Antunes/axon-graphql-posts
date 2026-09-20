@@ -1,0 +1,83 @@
+{
+  "name": "web",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/web/src",
+  "targets": {
+    "serve": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "continuous": true,
+      "options": {
+        "cwd": "apps/web",
+        "command": "pnpm dev"
+      }
+    },
+    "codegen": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/schema.graphql",
+        "{projectRoot}/codegen.ts",
+        "{projectRoot}/src/**/*.{ts,tsx}"
+      ],
+      "outputs": ["{projectRoot}/src/gql"],
+      "options": {
+        "cwd": "apps/web",
+        "command": "pnpm codegen"
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "outputs": ["{projectRoot}/.next"],
+      "inputs": [
+        "default",
+        { "env": "INFRA_PROVIDER" },
+        { "env": "NEXT_PUBLIC_GRAPHQL_URL" },
+        { "env": "NEXT_PUBLIC_COGNITO_ISSUER" }
+      ],
+      "options": {
+        "cwd": "apps/web",
+        "command": "pnpm build"
+      }
+    },
+    "open-next-build": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["build"],
+      "cache": true,
+      "outputs": ["{projectRoot}/.open-next"],
+      "inputs": [
+        "default",
+        { "env": "INFRA_PROVIDER" },
+        { "env": "NEXT_PUBLIC_GRAPHQL_URL" },
+        { "env": "NEXT_PUBLIC_COGNITO_ISSUER" }
+      ],
+      "options": {
+        "cwd": "apps/web",
+        "command": "open-next build"
+      }
+    },
+    "lint": {
+      "metadata": {
+        "description": "O alvo é INFERIDO pelo @nx/eslint/plugin; o que está declarado aqui só se funde com ele. `forwardAllArgs: false` é o que impede `pnpm lint --fix` de funcionar PELA METADE: o default repassa a flag, então o ESLint consertava enquanto o Spotless do lado Java apenas conferia — meia correção, sem aviso. Quem conserta é `pnpm lint:fix`, que roda a configuração `fix` nos TRÊS projetos. Ela repete o comando (`eslint . --fix`) em vez de usar a opção `args`, e isso foi MEDIDO: `forwardAllArgs: false` bloqueia `args` junto, então a configuração rodava sem o `--fix` e dizia que tinha passado."
+      },
+      "options": {
+        "forwardAllArgs": false
+      },
+      "configurations": {
+        "fix": {
+          "command": "eslint . --fix"
+        }
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "cwd": "apps/web",
+        "command": "pnpm typecheck"
+      }
+    }
+  }
+}

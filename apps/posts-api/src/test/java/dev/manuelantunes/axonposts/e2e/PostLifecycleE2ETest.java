@@ -1,6 +1,5 @@
 package dev.manuelantunes.axonposts.e2e;
 
-import java.time.Duration;
 
 import org.junit.jupiter.api.Test;
 
@@ -9,7 +8,6 @@ import io.quarkus.test.junit.QuarkusTest;
 import dev.manuelantunes.axonposts.support.GraphQl;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.awaitility.Awaitility.await;
 
 /**
  * O ciclo de vida inteiro de um Post, pela API: criar → tag padrão → editar → apagar → restaurar.

@@ -64,6 +64,47 @@
             <groupId>io.opentelemetry.instrumentation</groupId>
             <artifactId>opentelemetry-micrometer-1.5</artifactId>
         </dependency>
+        <!-- SEGUNDA dependência que existe POR CAUSA DO BINÁRIO NATIVO — e o irmão da de baixo.
+
+             `org.axonframework.messaging.core.annotation.MessageStreamResolverUtils` referencia
+             `reactor.core.publisher.Mono`, e o Axon declara o Project Reactor OPCIONAL: ele só é usado
+             por quem devolve `Mono`/`Flux` de um handler, o que este projeto não faz.
+
+             O `apps/posts-api` tinha reactor-core 3.7.10 por transitividade e nunca soube disso. O
+             `apps/tagging` não tem — e foi exatamente ele que quebrou, em `[2/8] Performing analysis`:
+
+               Discovered unresolved type during parsing: reactor.core.publisher.Mono
+               ... because class ...MessageStreamResolverUtils is registered for linking at image build time
+
+             Declarar aqui é o que garante que os DOIS apps tenham o mesmo classpath do Axon. A versão
+             é a que o posts-api já resolvia; o `axon-framework-bom` não gerencia este artefato. -->
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-core</artifactId>
+            <version>3.7.10</version>
+        </dependency>
+        <!-- ATENÇÃO: esta dependência existe POR CAUSA DO BINÁRIO NATIVO, e por nada mais.
+
+             `io.micrometer.core.instrument.AbstractTimer` referencia `org.LatencyUtils.PauseDetector`
+             e `IntervalEstimator` — e o Micrometer as declara OPCIONAIS, porque só são usadas por
+             histograma de percentil com detector de pausa. Na JVM elas nunca são carregadas e ninguém
+             percebe a ausência.
+
+             O native-image linka em build time e cobra: com o `AbstractTimer` alcançável, o build
+             morre em `[2/8] Performing analysis` com
+
+               Discovered unresolved type during parsing: org.LatencyUtils.IntervalEstimator
+               Error encountered while parsing io.micrometer.core.instrument.AbstractTimer.record
+
+             Quem normalmente a traz é o `quarkus-micrometer`, que este projeto NÃO usa de propósito
+             (ver o comentário do opentelemetry-micrometer acima: ele arrastaria `quarkus-vertx-http`
+             para um serviço que não quer porta HTTP). Então ela é declarada aqui, à mão, ao lado do
+             Micrometer que a exige. -->
+        <dependency>
+            <groupId>org.latencyutils</groupId>
+            <artifactId>LatencyUtils</artifactId>
+            <version>2.0.3</version>
+        </dependency>
         <!-- O bean `OpenTelemetry` que AxonMetrics recebe. `provided` porque quem o PRODUZ é a extensão
              na aplicação: a plataforma só o consome, e declarar compile o arrastaria para o runner sem
              necessidade. Toda aplicação deste repositório tem OpenTelemetry — é regra, não coincidência. -->
@@ -71,6 +112,47 @@
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-opentelemetry</artifactId>
             <scope>provided</scope>
+        </dependency>
+        <!--
+          O TESTE DE DOMÍNIO MORA NA LIB QUE ELE TESTA — e é só JUnit e AssertJ.
+
+          Nada de `quarkus-junit`: estes testes não sobem aplicação, não têm CDI e não tocam em JPA.
+          Dar-lhes Quarkus seria convidá-los a deixar de ser o que são — a prova de que o domínio
+          decide sozinho. Foi o que permitiu a eles atravessarem a conversão de Spring para Quarkus
+          sem uma linha alterada.
+        -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!--
+          MOCKITO nas libs — e ele NÃO entra no domínio.
+
+          Os testes de `Post`, `Tag` e `Authenticatable` continuam sem mock nenhum: o domínio decide
+          sozinho, e o único colaborador dele é uma porta que um lambda de três linhas dubla melhor
+          que qualquer framework. Mock ali seria acoplar o teste à FORMA da chamada em vez de ao
+          resultado dela.
+
+          Onde ele ganha é na INFRAESTRUTURA: `ChannelEventIngestion`, `OutboxRouting` e companhia
+          falam com `EventStore`, `Emitter` e `ChannelRegistry` — tipos de biblioteca, com dezenas de
+          métodos, que ninguém quer implementar à mão para afirmar uma chamada.
+        -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 

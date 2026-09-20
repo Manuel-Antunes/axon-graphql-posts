@@ -1,5 +1,8 @@
 package dev.manuelantunes.axonposts.nativesupport.deployment;
 
+import java.lang.reflect.Modifier;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -9,7 +12,9 @@ import org.jboss.jandex.AnnotationTarget;
 import org.jboss.jandex.AnnotationValue;
 import org.jboss.jandex.ClassInfo;
 import org.jboss.jandex.DotName;
+import org.jboss.jandex.FieldInfo;
 import org.jboss.jandex.IndexView;
+import org.jboss.jandex.RecordComponentInfo;
 import org.jboss.jandex.Type;
 
 import io.quarkus.deployment.annotations.BuildProducer;
@@ -95,6 +100,40 @@ public class AxonNativeImageProcessor {
             "org.axonframework.eventsourcing.annotation.AnnotationBasedEventCriteriaResolverDefinition",
             "org.axonframework.modelling.annotation.AnnotationBasedEntityIdResolverDefinition");
 
+    /**
+     * O que as {@code *Definition} INSTANCIAM — e por que elas não bastam.
+     *
+     * <h3>A reflexão do Axon tem DOIS níveis, e registrar só o primeiro engana</h3>
+     * {@link #AXON_DEFAULT_DEFINITIONS} cobre as fábricas; cada uma delas, ao ser chamada, instancia
+     * por reflexão o objeto que faz o trabalho. Registrar a fábrica e não o produto dela passa no
+     * build inteiro e falha na PARTIDA, com uma mensagem que não menciona native-image nenhuma:
+     *
+     * <pre>{@code
+     * Failed to instantiate id resolver:
+     *   org.axonframework.modelling.annotation.AnnotationBasedEntityIdResolver
+     * }</pre>
+     *
+     * Medido contra a stack: a aplicação sobe o bastante para o health check responder 200, e depois
+     * <b>morre a cada requisição</b> com `Runtime exited with error: exit status 1` — que o Lambda
+     * reporta como erro de runtime, sem uma linha sobre a causa. O log da aplicação é o único lugar
+     * onde a exceção aparece.
+     *
+     * <h3>Por que a lista é da FAMÍLIA, e não da classe que falhou</h3>
+     * Porque cada round-trip custa um build nativo de seis minutos. As três primeiras são os pares
+     * exatos das três {@code *Definition}; as outras são os demais {@code EntityIdResolver} concretos
+     * do 5.3.1, que a configuração alcança por caminhos que dependem do modelo — registrar um
+     * construtor a mais custa bytes, e descobri-lo em produção custa uma partida quebrada.
+     */
+    private static final List<String> AXON_DEFAULT_IMPLEMENTATIONS = List.of(
+            "org.axonframework.eventsourcing.annotation.reflection.AnnotationBasedEventSourcedEntityFactory",
+            "org.axonframework.eventsourcing.annotation.AnnotationBasedEventCriteriaResolver",
+            "org.axonframework.modelling.annotation.AnnotationBasedEntityIdResolver",
+            "org.axonframework.modelling.PropertyBasedEntityIdResolver",
+            "org.axonframework.eventsourcing.configuration.RepresentationConvertingEntityIdResolver",
+            "org.axonframework.modelling.entity.annotation.AnnotatedEntityIdResolver",
+            "org.axonframework.modelling.annotation.AnnotationBasedEntityEvolvingComponent",
+            "org.axonframework.eventsourcing.eventstore.AnnotationBasedTagResolver");
+
     /** Anotações de classe: a entidade e os três tipos de mensagem, que são contrato serializado. */
     private static final List<DotName> ON_CLASS = List.of(
             DotName.createSimple("org.axonframework.eventsourcing.annotation.EventSourcedEntity"),
@@ -169,11 +208,83 @@ public class AxonNativeImageProcessor {
             }
         }
 
+        // UMA MENSAGEM É SERIALIZADA INTEIRA — então registrar só a classe de fora é registrar metade.
+        types.addAll(composedTypesOf(types, index));
+
         if (!types.isEmpty()) {
             reflective.produce(ReflectiveClassBuildItem.builder(types.toArray(String[]::new))
                     .constructors().methods().fields()
-                    .reason("Axon invoca handlers, @EntityCreator e payloads de mensagem por reflexão")
+                    .reason("Axon invoca handlers, @EntityCreator e payloads de mensagem por reflexão,"
+                            + " e serializa cada payload com tudo que ele contém")
                     .build());
+        }
+    }
+
+    /**
+     * O FECHO TRANSITIVO dos tipos que compõem as mensagens — e por que ele é obrigatório.
+     *
+     * <h3>O que acontece sem isto</h3>
+     * As anotações do Axon marcam a mensagem, não as peças dela. {@code PostCreatedEvent} é
+     * {@code @Event} e é registrado; o {@code AssignedTag} que ele carrega dentro de
+     * {@code List<AssignedTag>} é um record ANINHADO, sem anotação nenhuma, e ficava de fora.
+     * <p>
+     * O build passa. O binário sobe. E o serviço falha ao APENDAR o evento, com uma mensagem que não
+     * menciona native-image nem reflexão:
+     *
+     * <pre>{@code
+     * ConversionException: Exception when trying to convert object of type
+     *   'dev.manuelantunes.axonposts.domain.post.event.PostCreatedEvent' to 'byte[]'
+     * }</pre>
+     *
+     * Medido na stack: o `apps/tagging` consumia `PostPreCreated` (record PLANO, que serializa bem),
+     * decidia a tag e não conseguia publicar o `PostCreated`. A saga parava na versão 1, o contador de
+     * erros do Lambda ficava em ZERO — a exceção é tratada pelo interceptador — e as filas ficavam
+     * vazias. Nada apontava para o binário.
+     *
+     * <h3>O critério de parada</h3>
+     * Só entram tipos que o ÍNDICE conhece, o que na prática significa "código deste repositório":
+     * `String`, `Instant` e companhia não precisam de registro, e sair atrás deles percorreria o JDK
+     * inteiro. Os argumentos de tipo entram junto — é o que faz `List<AssignedTag>` render
+     * `AssignedTag`.
+     */
+    private static Set<String> composedTypesOf(Set<String> roots, IndexView index) {
+        Set<String> found = new LinkedHashSet<>();
+        Deque<DotName> pending = new ArrayDeque<>();
+        roots.forEach(root -> pending.add(DotName.createSimple(root)));
+
+        while (!pending.isEmpty()) {
+            ClassInfo owner = index.getClassByName(pending.poll());
+            if (owner == null) continue;
+
+            for (RecordComponentInfo component : owner.recordComponents()) {
+                collect(component.type(), index, found, pending);
+            }
+            for (FieldInfo field : owner.fields()) {
+                if (!Modifier.isStatic(field.flags())) {
+                    collect(field.type(), index, found, pending);
+                }
+            }
+        }
+        return found;
+    }
+
+    private static void collect(Type type, IndexView index, Set<String> found, Deque<DotName> pending) {
+        if (type.kind() == Type.Kind.PARAMETERIZED_TYPE) {
+            for (Type argument : type.asParameterizedType().arguments()) {
+                collect(argument, index, found, pending);
+            }
+            return;
+        }
+        if (type.kind() == Type.Kind.ARRAY) {
+            collect(type.asArrayType().constituent(), index, found, pending);
+            return;
+        }
+        if (type.kind() != Type.Kind.CLASS) return;
+
+        DotName name = type.name();
+        if (index.getClassByName(name) == null) return;
+        if (found.add(name.toString())) {
+            pending.add(name);
         }
     }
 
@@ -185,6 +296,7 @@ public class AxonNativeImageProcessor {
     void registerEntityDefinitions(CombinedIndexBuildItem combinedIndex,
             BuildProducer<ReflectiveClassBuildItem> reflective) {
         Set<String> definitions = new LinkedHashSet<>(AXON_DEFAULT_DEFINITIONS);
+        definitions.addAll(AXON_DEFAULT_IMPLEMENTATIONS);
 
         for (AnnotationInstance entity : combinedIndex.getIndex().getAnnotations(EVENT_SOURCED_ENTITY)) {
             for (String attribute : DEFINITION_ATTRIBUTES) {
@@ -197,7 +309,8 @@ public class AxonNativeImageProcessor {
 
         reflective.produce(ReflectiveClassBuildItem.builder(definitions.toArray(String[]::new))
                 .constructors()
-                .reason("o Axon instancia as *Definition de @EventSourcedEntity por reflexão")
+                .reason("o Axon instancia as *Definition de @EventSourcedEntity por reflexão, "
+                        + "e cada uma delas instancia o resolver/fábrica que faz o trabalho")
                 .build());
     }
 

@@ -1,0 +1,98 @@
+name: 'deploy-sst'
+description: 'Deploy SST apps'
+inputs:
+  stage:
+    description: 'Stage to deploy to (dev, prod, stg etc.)'
+    default: 'develop'
+    required: true
+  args:
+    description: >
+      Extra arguments appended to `sst deploy` — e.g. `--target Server`,
+      `--exclude Web`, `--continue`, `--verbose`. Word-split on whitespace,
+      so values containing spaces are not supported.
+    default: ''
+    required: false
+  upload_outputs:
+    description: >
+      Keep the deploy's outputs.json as a build artifact. Holds the values
+      `run()` returns — urls, arns, resource ids, the cache stores — so anyone
+      with read access to the run can download them. Never return a credential
+      from `run()` while this is on.
+    default: 'true'
+    required: false
+runs:
+  using: composite
+  steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Force Sst Unlock
+      run: pnpm sst unlock --stage ${{ inputs.stage }}
+      shell: bash
+
+    - name: Deploy SST app
+      # ARGS goes through the environment, not `${{ }}` interpolation: a
+      # dispatched run types this string by hand, and splicing it into the
+      # command line would let `;` in it run as a shell statement. Left
+      # unquoted on purpose — word splitting is what turns it into flags —
+      # with globbing disabled so a stray `*` stays literal.
+      run: |
+        set -f
+        echo "sst deploy --stage $STAGE $ARGS"
+        NX_TUI=false pnpm sst deploy --stage "$STAGE" $ARGS
+      shell: bash
+      env:
+        STAGE: ${{ inputs.stage }}
+        ARGS: ${{ inputs.args }}
+
+    - name: Upload SST outputs
+      if: ${{ inputs.upload_outputs == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: sst-outputs-${{ inputs.stage }}
+        path: .sst/outputs.json
+        # Warn rather than fail: a deploy that shipped is still a good deploy,
+        # and the steps below already report a missing outputs.json.
+        if-no-files-found: warn
+        retention-days: 30
+
+    - name: Extract deployment URL
+      id: deployment_url
+      shell: bash
+      run: |
+        if [ -f .sst/outputs.json ]; then
+          ROUTER_URL=$(node -p "JSON.parse(require('fs').readFileSync('.sst/outputs.json', 'utf8')).ROUTER_URL || ''")
+          echo "url=${ROUTER_URL}" >> $GITHUB_OUTPUT
+          echo "Deployment URL: ${ROUTER_URL}"
+        else
+          echo "outputs.json not found"
+          echo "url=" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Create GitHub Deployment
+      if: steps.deployment_url.outputs.url != ''
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const deployment = await github.rest.repos.createDeployment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            ref: context.ref,
+            environment: '${{ inputs.stage }}',
+            required_contexts: [],
+            auto_merge: false,
+            description: 'SST deployment to ${{ inputs.stage }}'
+          });
+
+          if (deployment.data.id) {
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.data.id,
+              state: 'success',
+              environment_url: '${{ steps.deployment_url.outputs.url }}',
+              description: 'Deployment completed successfully'
+            });
+
+            core.info(`✅ Deployment created: ${{ steps.deployment_url.outputs.url }}`);
+          }

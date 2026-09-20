@@ -1,6 +1,7 @@
 package dev.manuelantunes.axonposts.support;
 
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicLong;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -9,12 +10,16 @@ import java.sql.Statement;
 
 import javax.sql.DataSource;
 
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 import org.junit.jupiter.api.BeforeEach;
 
 import jakarta.inject.Inject;
+import jakarta.persistence.EntityManagerFactory;
 
 /**
  * Base dos testes ponta a ponta: aplicação de verdade, Postgres de verdade, Keycloak de verdade, token
@@ -48,6 +53,9 @@ public abstract class AbstractGraphQlE2ETest {
 
     @Inject
     protected DataSource dataSource;
+
+    @Inject
+    protected EntityManagerFactory entityManagerFactory;
 
     protected GraphQl anonymous;
 
@@ -170,4 +178,91 @@ public abstract class AbstractGraphQlE2ETest {
                 .isEqualTo(2));
         return id;
     }
+
+    /**
+     * Intervalo entre duas amostras da estatística. Duas amostras <b>iguais</b> seguidas definem o
+     * silêncio — uma só não bastaria, porque um processor em lote pode passar 150 ms entre uma página e
+     * a seguinte.
+     */
+    private static final Duration QUIET_SAMPLE = Duration.ofMillis(150);
+
+    /**
+     * Zera a estatística do Hibernate <b>depois</b> de o banco ficar quieto, e a devolve para a medição.
+     *
+     * <h2>Por que esperar, e por que isso não é frescura de teste</h2>
+     * A {@link Statistics} é da {@code SessionFactory} — ela conta os {@code PreparedStatement} de
+     * <b>todas</b> as threads, e esta aplicação tem uma que não é a do teste: o processor que avisa os
+     * assinantes ({@code application.post.event}) é <i>pooled streaming</i>, roda no próprio pool e lê
+     * a linha de cada post que passa pelo event store.
+     * <p>
+     * Sem esperar, a PRIMEIRA medição de um teste cai em cima dessa varredura — os posts acabaram de ser
+     * criados — e a segunda não. O resultado é uma comparação entre uma medição poluída e uma limpa, e
+     * ela falha com números que não têm nada a ver com o lote: medido, 11 statements para 1 post contra
+     * 4 para 5 posts, e 8 para uma representação contra 1 para cinco. O teste acusaria um N+1 onde não
+     * há, e — pior — passaria a esconder um N+1 de verdade por baixo do ruído.
+     * <p>
+     * É o mesmo efeito que este projeto já tinha registrado quando um pacote caiu num processor pooled
+     * por engano. A diferença é que agora ele é <b>de propósito</b>: sem um processor streaming a
+     * subscription não funciona com mais de um container. Então quem tem de se adaptar é a medição.
+     *
+     * <h2>O que "quieto" quer dizer</h2>
+     * Duas amostras consecutivas da mesma contagem, 150 ms entre elas. Não é uma pausa
+     * fixa: um banco que continua trabalhando adia a medição em vez de deixá-la começar errada, e um
+     * banco já parado custa duas amostras. O teto existe só para a falha ser um erro de espera, e não um
+     * teste pendurado.
+     */
+    protected Statistics statisticsOfAQuietDatabase() {
+        Statistics statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
+
+        AtomicLong previous = new AtomicLong(-1);
+        await().atMost(Duration.ofSeconds(20))
+                .pollDelay(QUIET_SAMPLE)
+                .pollInterval(QUIET_SAMPLE)
+                .until(() -> {
+                    long now = statistics.getPrepareStatementCount();
+                    return previous.getAndSet(now) == now;
+                });
+
+        statistics.clear();
+        return statistics;
+    }
+
+    /**
+     * O CUSTO em statements de uma consulta, medido pelo MENOR de várias execuções.
+     *
+     * <h2>Por que o menor, e por que isto não é um truque</h2>
+     * {@link #statisticsOfAQuietDatabase()} prova que o banco estava quieto ANTES da janela — e não
+     * que ele fica quieto DURANTE. O processor que notifica os assinantes é assíncrono e conta na
+     * MESMA {@code Statistics} (ela é da {@code SessionFactory}, não da sessão), então ele pode
+     * acordar no meio da medição e somar statements que não são da consulta.
+     * <p>
+     * A observação que resolve: o processor só ACRESCENTA. A consulta custa sempre o mesmo, e
+     * interferência só faz a conta subir — então <b>o menor de várias execuções É o custo real</b>.
+     * <p>
+     * E a propriedade que o teste afirma continua intacta: um N+1 de verdade encarece TODAS as
+     * execuções, inclusive a mais barata. O mínimo sobe junto e a asserção quebra — que é o ponto.
+     *
+     * <h2>O que ele substituiu</h2>
+     * A medição de uma amostra só, que violava o <b>R</b> de REPEATABLE do FIRST: o mesmo código
+     * passava 3 de 3 com a classe isolada e falhava com as oito classes ponta a ponta juntas
+     * (`dois autores custaram 7 statements contra 4 de um autor`), porque com mais posts no event
+     * store o processor varre mais e a chance de cair em cima da janela cresce. Um teste que depende
+     * de quem mais está rodando não está medindo o que diz medir.
+     */
+    protected long cheapestStatementCount(Runnable query) {
+        long cheapest = Long.MAX_VALUE;
+        for (int attempt = 0; attempt < STATEMENT_SAMPLES; attempt++) {
+            Statistics statistics = statisticsOfAQuietDatabase();
+            query.run();
+            cheapest = Math.min(cheapest, statistics.getPrepareStatementCount());
+        }
+        return cheapest;
+    }
+
+    /**
+     * TRÊS execuções, e o número não é chute: com uma não há mínimo, com duas uma interferência em
+     * cada estraga as duas. Três é a menor quantidade que sobrevive a duas janelas azaradas, e a
+     * consulta é de leitura — repeti-la não muda estado nenhum.
+     */
+    private static final int STATEMENT_SAMPLES = 3;
 }

@@ -9,7 +9,7 @@ import dev.manuelantunes.axonposts.domain.post.vo.PostTitle;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
 import dev.manuelantunes.axonposts.support.InMemoryPostRepository;
 import dev.manuelantunes.axonposts.support.InMemoryTagRepository;
-import dev.manuelantunes.axonposts.support.UserFixtures;
+import dev.manuelantunes.axonposts.testing.UserFixtures;
 import dev.manuelantunes.axonposts.support.PostCommandFixtures;
 import org.axonframework.test.fixture.AxonTestFixture;
 import org.junit.jupiter.api.AfterEach;

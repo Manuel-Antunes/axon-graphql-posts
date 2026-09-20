@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.manuelantunes</groupId>
+        <artifactId>quarkus-axon-graphql</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>axonposts-test-support</artifactId>
+    <name>test-support</name>
+
+    <!--
+      OS DUPLOS E FIXTURES QUE MAIS DE UM MÓDULO USA — e a única lib que não é domínio nem
+      infraestrutura.
+
+      A regra do CLAUDE.md diz que `libs/` tem domínio e infraestrutura, e este módulo é a exceção
+      declarada. Ele existe porque os testes de domínio passaram a morar na lib que testam, e dois
+      fixtures atravessam a fronteira nos DOIS sentidos: `UserFixtures` é usado pelo teste do
+      `Authenticatable` (em `libs/users`), pelo do `Post` (em `libs/posts`) e pelos quatro testes de
+      command que ficaram em `apps/posts-api`.
+
+      POR QUE `src/main` E NÃO UM `test-jar`: um `test-jar` exigiria uma `<execution>` do
+      maven-jar-plugin em cada lib que exporta fixture, e o `@nx/maven` infere um alvo por execução de
+      mojo — a armadilha do `nx-build-state.json` que o CLAUDE.md documenta. Aqui não há plugin
+      nenhum: é uma dependência comum, e quem a consome declara `<scope>test</scope>`, que é o que
+      mantém este código fora de todo artefato de produção.
+
+      O PACOTE É `...testing` E NÃO `...support` de propósito. `apps/posts-api` mantém o próprio
+      `support/` (o `GraphQl`, os repositórios em memória, o `PostCommandFixtures`), e repetir o nome
+      do pacote nos dois módulos seria split package — o mesmo defeito que fez a persistência ser
+      escopada por agregado. O nome também diz de onde o fixture vem, no ponto do import.
+
+      NÃO HÁ DEPENDÊNCIA DE FRAMEWORK DE TESTE aqui, e isso é medida e não sorte: os dois arquivos são
+      Java puro. `RecordingDomainEvents` implementa a porta do domínio e levanta `AssertionError`, que
+      é do JDK; `UserFixtures` só monta estado. Acrescentar JUnit os convidaria a crescer para dentro
+      do que é responsabilidade de quem afirma.
+    -->
+    <dependencies>
+        <!-- `DomainEvent` e a porta `DomainEventPublisher`, que o RecordingDomainEvents dubla. -->
+        <dependency>
+            <groupId>dev.manuelantunes</groupId>
+            <artifactId>axonposts-platform</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- `User`, `Author`, `Account` e os value objects que o UserFixtures monta. -->
+        <dependency>
+            <groupId>dev.manuelantunes</groupId>
+            <artifactId>axonposts-users</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!--
+          Ler a configuração efetiva, que é o que `DevServicesSchema` compara com o classpath. Vem
+          transitivamente com o domínio, mas declarar é o que impede a comparação de quebrar no dia em
+          que a transitiva mudar.
+        -->
+        <dependency>
+            <groupId>org.eclipse.microprofile.config</groupId>
+            <artifactId>microprofile-config-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

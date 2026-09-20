@@ -1,0 +1,24 @@
+{
+  "name": "infra",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "infra/aws",
+  "metadata": {
+    "description": "A infraestrutura SST/Pulumi. É projeto do Nx por UMA razão: ter o próprio alvo `lint`, inferido pelo @nx/eslint/plugin a partir de `infra/eslint.config.mjs`. Em flat config o ESLint usa UM arquivo, o mais próximo do `cwd` — e é o `cwd` do alvo que decide qual. Sem um projeto aqui, os 22 arquivos TypeScript de `infra/` não eram lintados por nada."
+  },
+  "targets": {
+    "lint": {
+      "metadata": {
+        "description": "O alvo é INFERIDO pelo @nx/eslint/plugin a partir de `infra/eslint.config.mjs`; o que está aqui só se funde com ele. `forwardAllArgs: false` impede que um `--fix` solto na linha de comando funcione pela metade — quem conserta é `pnpm lint:fix`, que roda a configuração `fix`."
+      },
+      "options": {
+        "forwardAllArgs": false
+      },
+      "configurations": {
+        "fix": {
+          "command": "eslint . --fix"
+        }
+      }
+    }
+  }
+}

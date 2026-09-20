@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.manuelantunes</groupId>
+        <artifactId>quarkus-axon-graphql</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>axonposts-axon-lambda</artifactId>
+    <name>axon-lambda</name>
+    <description>A entrada quando o transporte é o event source mapping do Lambda</description>
+
+    <!--
+      POR QUE ESTE MÓDULO EXISTE, E QUEM O DECIDIU
+      ===========================================
+      O build. Estas classes moravam em `libs/axon-aws`, junto com o endereçamento de saída, e o
+      empacotamento da função de API Gateway falhou:
+
+        Build step AmazonLambdaProcessor#discover threw an exception
+        Caused by: Multiple handler classes. You have a custom handler class and the AWS Lambda HTTP
+        extension. Please remove one of them from your deployment.
+
+      A causa é que `quarkus-amazon-lambda-http` TRAZ o processador do `quarkus-amazon-lambda`, e ele
+      varre o índice inteiro atrás de `RequestHandler`. Um handler numa lib indexada conta. Ou seja:
+      não basta a função de HTTP não usar o handler — ele não pode estar no CLASSPATH dela.
+
+      Então a fronteira não é "AWS" contra "não AWS", é por FUNÇÃO:
+
+        libs/axon-aws     o endereçamento de SAÍDA (SNS/SQS). As TRÊS funções publicam, então as três
+                          o têm — inclusive a de API Gateway, que publica `posts.PostPreCreated` no
+                          meio de uma mutation.
+
+        libs/axon-lambda  a ENTRADA por event source mapping. Só as funções movidas por fila, porque
+                          é ele que carrega o `RequestHandler`.
+
+      E é por isso que este módulo NÃO depende de `axon-aws`: ele não endereça nada. Ele só recebe.
+    -->
+    <dependencies>
+        <!-- A API do OpenTelemetry, para propagar o contexto do trace nas mensagens (ver
+             `AwsEventAttributes.inject` e `SqsChannelIngress`). `provided` porque quem traz a
+             implementação é a APLICAÇÃO, pelo `quarkus-opentelemetry` — a lib só fala a API, e sem
+             span ativo ela é no-op. -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- O SDK, e não só a API, porque `forceFlush` não existe na API: ela é deliberadamente
+             agnóstica de implementação, e quem tem lote para esvaziar é a implementação. `provided`
+             pela mesma razão da linha acima — quem o traz é a aplicação, pelo `quarkus-opentelemetry`.
+             Ver `TelemetryFlush`. -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- ChannelRegistry (a conferência do canal) e o próprio maquinário de canais -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-messaging</artifactId>
+        </dependency>
+
+        <!-- O conector in-memory, em escopo de COMPILAÇÃO e não de teste. É ele que deixa os
+             `@Incoming` que já existem nas aplicações continuarem sendo a porta de entrada quando o
+             transporte passa a ser o event source mapping. Ver o Javadoc de SqsChannelIngress. -->
+        <dependency>
+            <groupId>io.smallrye.reactive</groupId>
+            <artifactId>smallrye-reactive-messaging-in-memory</artifactId>
+        </dependency>
+
+        <!-- SQSEvent/SQSBatchResponse e a interface RequestHandler. São os TIPOS, não a extensão:
+             qual extensão de Lambda empacota a função é decisão do perfil Maven de cada aplicação, e
+             pôr uma aqui a tomaria por elas. -->
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-lambda-java-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-lambda-java-events</artifactId>
+        </dependency>
+
+        <!--
+          O Flyway do FlywayMigrationLambda, em escopo `provided`.
+          =======================================================
+          `provided` e não `compile` porque este módulo não quer DAR Flyway a ninguém: ele só quer
+          poder compilar contra ele. As duas aplicações já o têm (as duas têm migrations e as duas
+          rodam com `schema-management.strategy=validate`), então em runtime a classe resolve. Um
+          consumidor futuro que não tenha Flyway simplesmente não deve apontar
+          `quarkus.lambda.handler` para este handler.
+        -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Sem o índice o `@Named` do handler não existe para o augmentation da aplicação — e a
+                 falha seria o oposto da que criou este módulo: "Unable to find handler class". -->
+            <plugin>
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <id>make-index</id>
+                        <goals>
+                            <goal>jandex</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

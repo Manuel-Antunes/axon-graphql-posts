@@ -25,6 +25,31 @@
             <artifactId>axon-native-support</artifactId>
             <version>${project.version}</version>
         </dependency>
+
+        <!--
+          O TESTE DESTA EXTENSÃO — e ele precisa do Axon só para os FIXTURES.
+
+          O processor não depende do Axon em tempo de compilação: ele trabalha sobre o índice Jandex e
+          nomeia as anotações por `DotName`, como string. Mas um teste honesto precisa de classes
+          ANOTADAS DE VERDADE para indexar — senão ele estaria afirmando sobre um índice que ele mesmo
+          inventou, e não sobre o que o Quarkus entrega.
+        -->
+        <dependency>
+            <groupId>org.axonframework</groupId>
+            <artifactId>axon-eventsourcing</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -33,7 +58,9 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
-                    <annotationProcessorPaths>
+                    <!-- combine.children: soma com o error_prone_core do pom raiz em vez de substituí-lo.
+                             Sem isto, `plug-in not found: ErrorProne` — o argumento vem por herança e o jar não. -->
+                    <annotationProcessorPaths combine.children="append">
                         <!-- É este processador que gera o META-INF/quarkus-build-steps.list. Sem ele
                              o jar sai com as classes e o Quarkus não descobre um único @BuildStep. -->
                         <path>

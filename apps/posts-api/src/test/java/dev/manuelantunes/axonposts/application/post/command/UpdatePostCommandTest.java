@@ -9,7 +9,7 @@ import dev.manuelantunes.axonposts.domain.post.vo.PostId;
 import dev.manuelantunes.axonposts.domain.post.vo.PostTitle;
 import dev.manuelantunes.axonposts.domain.post.vo.PostVersion;
 import dev.manuelantunes.axonposts.support.InMemoryPostRepository;
-import dev.manuelantunes.axonposts.support.UserFixtures;
+import dev.manuelantunes.axonposts.testing.UserFixtures;
 import dev.manuelantunes.axonposts.support.PostCommandFixtures;
 import org.axonframework.modelling.repository.EntityNotFoundException;
 import org.axonframework.test.fixture.AxonTestFixture;

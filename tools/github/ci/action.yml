@@ -1,0 +1,51 @@
+name: 'ci'
+description: 'A integração contínua deste monorepo: prepara o ambiente e roda as checagens pedidas'
+inputs:
+  checks:
+    description: >
+      Quais checagens rodar, separadas por vírgula: `test`, `test-e2e`, `web`. `all` roda as três.
+
+      O parâmetro existe para que o MESMO ponto de entrada sirva a um job por checagem — é o que dá
+      paralelismo no workflow sem duplicar a preparação do ambiente em três lugares. Um job só, com
+      `all`, também funciona, e é o que faz sentido num gancho local.
+    default: 'all'
+    required: true
+  java-version:
+    description: 'Repassado ao `setup`. Ver a justificativa do default 21 lá.'
+    default: '21'
+    required: false
+runs:
+  using: composite
+  steps:
+    - name: Resolve the requested checks
+      id: selection
+      # `,${checks},` com as vírgulas nas pontas: sem elas, `contains` casaria `test` dentro de
+      # `test-e2e` e a checagem de baixo rodaria junto com a de cima, calada.
+      run: |
+        set -euo pipefail
+        selected=",${CHECKS},"
+        wants() { [ "$CHECKS" = "all" ] && return 0; case "$selected" in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+        for check in test test-e2e web; do
+          if wants "$check"; then echo "${check//-/_}=true" >> "$GITHUB_OUTPUT"; else echo "${check//-/_}=false" >> "$GITHUB_OUTPUT"; fi
+        done
+        echo "rodando: $CHECKS"
+      shell: bash
+      env:
+        CHECKS: ${{ inputs.checks }}
+
+    - name: Set up the environment
+      uses: ./tools/github/setup
+      with:
+        java-version: ${{ inputs.java-version }}
+
+    - name: Unit, wiring and schema tests
+      if: ${{ steps.selection.outputs.test == 'true' }}
+      uses: ./tools/github/test
+
+    - name: End-to-end tests
+      if: ${{ steps.selection.outputs.test_e2e == 'true' }}
+      uses: ./tools/github/test-e2e
+
+    - name: Web client checks
+      if: ${{ steps.selection.outputs.web == 'true' }}
+      uses: ./tools/github/web

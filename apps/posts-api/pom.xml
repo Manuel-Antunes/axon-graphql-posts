@@ -55,7 +55,17 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-        </dependencies>
+            <!--
+          `quarkus-junit5-mockito` e não `mockito-core` puro: ele traz o `@InjectMock`, que SUBSTITUI
+          um bean do CDI dentro de um `@QuarkusTest` em vez de só criar um objeto solto. É a
+          diferença entre testar o grafo de verdade com uma peça trocada e testar uma peça sozinha.
+        -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5-mockito</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
     </dependencyManagement>
 
     <dependencies>
@@ -297,6 +307,13 @@
             <artifactId>quarkus-jacoco</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Os fixtures compartilhados; `test` é o que os mantém fora do artefato publicado. -->
+        <dependency>
+            <groupId>dev.manuelantunes</groupId>
+            <artifactId>axonposts-test-support</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -316,54 +333,7 @@
         </resources>
         <plugins>
             <!-- ==== O SCHEMA COMO SCRIPT DE INICIALIZAÇÃO ========================================= -->
-            <!-- Concatena as migrations num único `db/init/schema.sql`, que vai para o classpath e é o
-                 que o Dev Services do Postgres executa ao CRIAR o container.
-
-                 POR QUE O SCHEMA PRECISA EXISTIR ANTES DA APLICAÇÃO SUBIR
-                 =========================================================
-                 Porque `migrate-at-start` perdeu a corrida. `AxonExtension.init` é um recorder de
-                 RUNTIME_INIT que resolve o event storage engine e, ao fazê-lo, toca o EntityManager —
-                 construindo a persistence unit ANTES de o Flyway ter a vez. Com
-                 `schema-management.strategy=validate` contra um banco vazio a aplicação morre com
-                 `Schema validation: missing table [accounts]`, e adiar dentro do ComponentBuilder não
-                 resolve: a lambda é chamada de dentro do próprio init.
-
-                 Com o event store em memória isso nunca apareceu — o Axon não tocava JPA na partida.
-
-                 A saída é a que vale em produção de qualquer jeito: migrar FORA do processo. Em dev e
-                 teste quem faz isso é este script, no `initdb` do container; no compose e em produção é
-                 o serviço `flyway`, que roda antes da aplicação. E o gate do `validate` CONTINUA
-                 valendo, porque o script é gerado das próprias migrations: entidade que divergir delas
-                 ainda derruba a partida.
-
-                 A ordem vem do `<sort>` do Ant, não da ordem que o filesystem devolve — que é
-                 arbitrária e faria a V4 rodar antes da V1 em alguma máquina, sem aviso. -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-antrun-plugin</artifactId>
-                <version>${antrun-plugin.version}</version>
-                <executions>
-                    <execution>
-                        <id>db-init-script</id>
-                        <phase>process-resources</phase>
-                        <goals>
-                            <goal>run</goal>
-                        </goals>
-                        <configuration>
-                            <target>
-                                <concat destfile="${project.build.outputDirectory}/db/init/schema.sql"
-                                        fixlastline="true">
-                                    <sort>
-                                        <fileset dir="${project.build.outputDirectory}/db/migration"
-                                                 includes="V*.sql"/>
-                                    </sort>
-                                </concat>
-                            </target>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
+<plugin>
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>quarkus-maven-plugin</artifactId>
                 <version>${quarkus.platform.version}</version>
@@ -385,7 +355,10 @@
                     <!-- -parameters: o SmallRye GraphQL casa o nome do argumento do schema com o nome
                          do parâmetro do método quando não há @Name. -->
                     <parameters>true</parameters>
-                    <annotationProcessorPaths>
+                    <!-- combine.children: o MapStruct daqui SOMA com o error_prone_core do pom raiz, em vez de
+                                         substituí-lo. Sem isto o módulo herda o `-Xplugin:ErrorProne` dos
+                                         compilerArgs e perde o jar que o implementa: `plug-in not found`. -->
+                    <annotationProcessorPaths combine.children="append">
                         <path>
                             <groupId>org.mapstruct</groupId>
                             <artifactId>mapstruct-processor</artifactId>
@@ -413,6 +386,15 @@
                         <arg>-Amapstruct.unmappedTargetPolicy=ERROR</arg>
                         <arg>-Amapstruct.defaultComponentModel=jakarta-cdi</arg>
                     </compilerArgs>
+                </configuration>
+            </plugin>
+            <!-- Este módulo mede cobertura pelo `quarkus-jacoco`; o plugin herdado do pom raiz
+                 é para as libs, e dois agentes no mesmo módulo dão dois `.exec` que não somam. -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
                 </configuration>
             </plugin>
             <plugin>
@@ -516,6 +498,161 @@
                 <quarkus.native.container-build>true</quarkus.native.container-build>
                 <quarkus.native.native-image-xmx>10g</quarkus.native.native-image-xmx>
             </properties>
+        </profile>
+
+        <!--
+          ================================================================================
+          AWS LAMBDA: DOIS PERFIS PARA ESTA MESMA APLICAÇÃO, E DUAS FUNÇÕES
+          ================================================================================
+          Não é redundância: uma função do Lambda tem UM handler, e esta aplicação tem duas portas de
+          entrada de naturezas diferentes — HTTP (o GraphQL) e fila (o `posts.PostCreated` que volta de
+          quem decidiu a tag). Com o RabbitMQ as duas conviviam no mesmo processo porque o processo era
+          longo e escutava as duas coisas ao mesmo tempo. Um Lambda não escuta: ele é CHAMADO, e quem o
+          chama é o API Gateway ou o event source mapping, nunca os dois.
+
+          As duas extensões também não convivem: cada uma instala o seu handler, e o
+          `quarkus-amazon-lambda` falha o build ao encontrar mais de um `RequestHandler`. Por isso são
+          perfis mutuamente exclusivos, e não duas dependências.
+
+          O MESMO artefato de código, empacotado duas vezes:
+
+            ./mvnw package -Plambda-http     -> API Gateway  (query, mutation, schema, _entities)
+            ./mvnw package -Plambda-sqs      -> event source mapping da fila de volta
+
+          POR QUE `quarkus.profile` TEM DUAS ENTRADAS
+          ==========================================
+          `lambda` traz o `application-lambda.properties`; `prod` é o que mantém valendo todas as linhas
+          `%prod.` do `application.properties` — datasource, issuer do Keycloak, endpoint do OTLP. Um
+          perfil só chamado `lambda` DESLIGARIA as três em silêncio, e a aplicação subiria apontando
+          para o Postgres de dev.
+
+          E ISTO PRECISA SER REPETIDO EM RUNTIME: `QUARKUS_PROFILE=lambda,prod` como variável de
+          ambiente da função. O que se fixa aqui é a configuração de BUILD TIME; a de runtime é relida
+          na partida da função, com o perfil que o ambiente disser — e o default é `prod` sozinho.
+          Ver `infra/aws/template.yaml`.
+        -->
+        <profile>
+            <id>lambda-http</id>
+            <properties>
+                <quarkus.profile>lambda,prod</quarkus.profile>
+            </properties>
+            <dependencies>
+                <!--
+                  Traduz o evento do API Gateway para uma requisição do Vert.x e devolve a resposta
+                  pronta. Por ser o MESMO roteador do Vert.x, tudo que hoje é servido em /graphql
+                  continua sendo: o POST, o SDL em /graphql/schema.graphql, `_service`/`_entities`, o
+                  OIDC e a GraphiQL. Não há uma linha de código desta aplicação envolvida.
+
+                  O QUE NÃO ATRAVESSA: a resposta é UM `APIGatewayV2HTTPResponse` montado inteiro em
+                  memória — conferido no JAR 3.39.2, que não tem uma referência a
+                  `vnd.awslambda.http-integration-response` nem a `RESPONSE_STREAM`. Então a porta de
+                  SSE de `interfaces/graphql/sse` e o WebSocket do SmallRye continuam compilados e
+                  registrados, e não entregam nada por aqui. Ver `infra/aws/README.md`.
+                -->
+                <dependency>
+                    <groupId>io.quarkus</groupId>
+                    <artifactId>quarkus-amazon-lambda-http</artifactId>
+                </dependency>
+                <!-- SnsAddressing/SqsAddressing: o conector novo da SAÍDA. O @AxonOutbox desta
+                     aplicação não muda — ele continua dizendo `channel = "post-events-out"` e
+                     `namespaces = "posts"`. Quem troca o protocolo é uma linha de .properties. -->
+                <dependency>
+                    <groupId>dev.manuelantunes</groupId>
+                    <artifactId>axonposts-axon-aws</artifactId>
+                    <version>${project.version}</version>
+                </dependency>
+            </dependencies>
+        </profile>
+
+        <profile>
+            <id>lambda-sqs</id>
+            <properties>
+                <quarkus.profile>lambda,prod</quarkus.profile>
+            </properties>
+            <dependencies>
+                <!--
+                  O runtime do Lambda "cru": procura o único `RequestHandler` do índice e o liga. Aqui
+                  ele acha o `AxonSqsLambda` de `libs/axon-aws` — e `quarkus.lambda.handler=axon-sqs`,
+                  no application-lambda.properties, o nomeia explicitamente para que a escolha esteja
+                  escrita em vez de depender de haver exatamente um.
+
+                  Esta função continua tendo o GraphQL inteiro no classpath e nunca o serve. É
+                  desperdício de tamanho de artefato e de cold start, e é consciente: o alternativo era
+                  extrair a camada de aplicação do posts-api para uma lib só para que uma segunda
+                  aplicação pudesse importá-la — uma reorganização grande para economizar megabytes num
+                  artefato de POC.
+                -->
+                <dependency>
+                    <groupId>io.quarkus</groupId>
+                    <artifactId>quarkus-amazon-lambda</artifactId>
+                </dependency>
+                <dependency>
+                    <groupId>dev.manuelantunes</groupId>
+                    <artifactId>axonposts-axon-aws</artifactId>
+                    <version>${project.version}</version>
+                </dependency>
+                <!-- O handler e a ponte SQSEvent -> canal. Está SÓ aqui, e não no perfil
+                     lambda-http, porque o `quarkus-amazon-lambda-http` recusa qualquer
+                     `RequestHandler` que ache no índice: "Multiple handler classes. You have a
+                     custom handler class and the AWS Lambda HTTP extension." Foi medido. -->
+                <dependency>
+                    <groupId>dev.manuelantunes</groupId>
+                    <artifactId>axonposts-axon-lambda</artifactId>
+                    <version>${project.version}</version>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>lambda-stream</id>
+            <properties>
+                <quarkus.profile>lambda,prod</quarkus.profile>
+            </properties>
+            <!--
+              O perfil que NÃO tem extensão de Lambda nenhuma — e é justamente essa a graça.
+
+              A aplicação é empacotada como o que ela é: um servidor HTTP do Quarkus. Quem a
+              transforma numa função é o AWS LAMBDA WEB ADAPTER, uma layer oficial da AWS que roda
+              como extensão do Lambda, sobe antes do processo, espera o health check e depois traduz
+              cada invocação numa requisição HTTP para localhost. Com
+              `AWS_LWA_INVOKE_MODE=response_stream` e uma Function URL em `RESPONSE_STREAM`, o que o
+              servidor escreve sai para o cliente CONFORME ESCREVE.
+
+              É o que o `quarkus-amazon-lambda-http` não consegue fazer, e não por configuração:
+              o `LambdaHttpHandler` dele é um `RequestHandler<APIGatewayV2HTTPEvent,
+              APIGatewayV2HTTPResponse>` — o tipo de retorno É a resposta inteira — e o
+              `NettyResponseHandler` acumula cada `HttpContent` num `ByteArrayOutputStream`. Mesmo o
+              `RequestStreamHandler` do `quarkus-amazon-lambda` não resolveria: o
+              `AbstractLambdaPollLoop` entrega ao handler o `OutputStream` da conexão com a Runtime
+              API, mas nunca chama `setChunkedStreamingMode` — então o `HttpURLConnection` do JDK
+              bufferiza tudo para calcular o `Content-Length`.
+
+              Por isso este perfil não acrescenta dependência alguma: ele só liga os perfis de
+              runtime. O `application-lambda.properties` continua valendo inteiro (SNS na saída,
+              Cognito na identidade); as linhas `quarkus.lambda.handler` e `axonposts.lambda.sqs.*`
+              passam a ser configuração desconhecida, e o Quarkus as ignora com um aviso.
+
+              O empacotamento é o `quarkus-app` normal mais um `run.sh` — quem o monta é o alvo
+              `lambda-stream` do Nx, em `apps/posts-api/project.json`.
+            -->
+            <dependencies>
+                <!--
+                  A ÚNICA dependência, e ela não tem nada a ver com Lambda: são os conectores que o
+                  `application-lambda.properties` nomeia. Sem ela o build falha na hora certa, em
+                  build time, com as duas linhas exatas:
+
+                    The channel 'post-events-out'   is configured with an unknown connector (smallrye-sns)
+                    The channel 'post-completed-in' is configured with an unknown connector (smallrye-in-memory)
+
+                  O que NÃO entra aqui é o `axonposts-axon-lambda`: o handler de SQS não tem o que
+                  fazer num processo que é servidor HTTP, e o canal `post-completed-in` fica com o
+                  conector in-memory como objeto nulo — exatamente como na função de API Gateway.
+                -->
+                <dependency>
+                    <groupId>dev.manuelantunes</groupId>
+                    <artifactId>axonposts-axon-aws</artifactId>
+                    <version>${project.version}</version>
+                </dependency>
+            </dependencies>
         </profile>
     </profiles>
 </project>

@@ -1,0 +1,46 @@
+{
+  "name": "dev.manuelantunes:axon-native-support-deployment",
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": [
+        "^publish-local"
+      ],
+      "inputs": [
+        "default",
+        "^default"
+      ],
+      "outputs": [
+        "{projectRoot}/target/surefire-reports",
+        "{projectRoot}/target/jacoco-report"
+      ],
+      "metadata": {
+        "description": "O que esta EXTENSÃO registra para o binário nativo. Cada teste corresponde a uma falha que já aconteceu e que o Javadoc do processor descreve — e nenhuma delas aparece na JVM. Provado que não são vazios: comentando o `types.addAll(composedTypesOf(...))`, exatamente os dois testes do fecho transitivo falham."
+      },
+      "options": {
+        "forwardAllArgs": false,
+        "command": "./mvnw test -pl libs/axon-native-support/deployment -Dtest='!*E2ETest,!*IT' -Dsurefire.failIfNoSpecifiedTests=false"
+      }
+    },
+    "publish-local": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": [
+        "^publish-local"
+      ],
+      "inputs": [
+        "default",
+        "^default"
+      ],
+      "outputs": [],
+      "metadata": {
+        "description": "Instala o JAR deste módulo no `~/.m2`, que é de onde o `-pl` de quem depende dele o resolve. O `dependsOn: [^publish-local]` deixa a ORDEM com o grafo do Nx — é o Nx gerenciando o publish. NÃO se usa o `mvn-install` inferido pelo @nx/maven para isso: MEDIDO, ele expande em ~155 tarefas (uma por fase do ciclo de vida, de cada dependência), o Nx marcou 65 delas como flaky e o log de uma execução passou de 130 MB. Um alvo por módulo são NOVE tarefas."
+      },
+      "options": {
+        "forwardAllArgs": false,
+        "command": "./mvnw install -DskipTests -q -pl libs/axon-native-support/deployment"
+      }
+    }
+  }
+}

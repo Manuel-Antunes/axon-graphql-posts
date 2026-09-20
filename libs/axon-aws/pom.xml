@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.manuelantunes</groupId>
+        <artifactId>quarkus-axon-graphql</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>axonposts-axon-aws</artifactId>
+    <name>axon-aws</name>
+    <description>A mesma integração do axon-channels, falando AWS: SNS/SQS na saída e Lambda na entrada</description>
+
+    <!--
+      POR QUE UM MÓDULO, E NÃO MAIS ARQUIVOS EM axon-channels
+      ======================================================
+      Porque `ChannelAddressing` é carregado por TODO serviço que usa a lib, e cada implementação arrasta
+      o SDK do broker dela. Pôr `SnsAddressing` ao lado de `RabbitMqAddressing` obrigaria quem roda em
+      RabbitMQ a carregar o SDK da AWS, e vice-versa — o custo de um ponto de extensão bem desenhado
+      sendo pago por quem não o usa.
+
+      Aqui a regra continua a mesma do módulo vizinho: o CÓDIGO diz o quê sai, a CONFIGURAÇÃO diz para
+      onde. O que este módulo acrescenta é um terceiro e um quarto conector — e nada mais. Nenhum tipo
+      de evento é citado, nenhum nome de fila é escrito, nenhum arquivo de `axon-channels` foi tocado
+      para isto existir. É exatamente o que aquele Javadoc previa: "Protocolo novo = uma
+      ChannelAddressing a mais".
+
+      O QUE ESTE MÓDULO NÃO TEM, DE PROPÓSITO: NADA DE LAMBDA.
+      =======================================================
+      A extensão de Lambda é ESCOLHA DE EMPACOTAMENTO, e as três funções deste sistema não fazem a
+      mesma escolha: a API vai de `quarkus-amazon-lambda-http` (API Gateway), as duas movidas por fila
+      vão de `quarkus-amazon-lambda` (SQSEvent). As duas extensões não convivem — cada uma instala o
+      seu handler. Se a extensão morasse aqui, importar este módulo decidiria o empacotamento da
+      aplicação, que é justamente a decisão que o perfil Maven de cada app precisa tomar.
+
+      O que mora aqui é só o que NÃO muda entre as três funções: o endereçamento da SAÍDA. A entrada
+      por event source mapping está em `libs/axon-lambda` — e a separação foi o BUILD que a exigiu: o
+      `quarkus-amazon-lambda-http` varre o índice atrás de `RequestHandler` e recusa o que encontrar,
+      então o handler não pode sequer estar no classpath da função de API Gateway. Ver o comentário
+      daquele pom.
+    -->
+    <dependencies>
+        <!-- A API do OpenTelemetry, para propagar o contexto do trace nas mensagens (ver
+             `AwsEventAttributes.inject` e `SqsChannelIngress`). `provided` porque quem traz a
+             implementação é a APLICAÇÃO, pelo `quarkus-opentelemetry` — a lib só fala a API, e sem
+             span ativo ela é no-op. -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- ChannelAddressing, EventAddress, AxonEventEnvelope: o ponto de extensão que este módulo preenche -->
+        <dependency>
+            <groupId>dev.manuelantunes</groupId>
+            <artifactId>axonposts-axon-channels</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- O conector SQS (smallrye-sqs) + o cliente. A extensão do Quarkiverse na 3.22.1 declara
+             <quarkus.version>3.39.2</quarkus.version> — a MESMA deste projeto; foi o que se conferiu
+             antes de escolhê-la. -->
+        <dependency>
+            <groupId>io.quarkiverse.amazonservices</groupId>
+            <artifactId>quarkus-messaging-amazon-sqs</artifactId>
+        </dependency>
+
+        <!-- SNS é DUAS dependências e não uma, e a razão é que NÃO EXISTE `quarkus-messaging-amazon-sns`:
+             o Quarkiverse publica `quarkus-amazon-sns` (o cliente, com suporte a native e dev services)
+             mas não uma extensão para o conector. O conector vem do SmallRye direto — e funciona porque
+             o JAR dele traz `META-INF/beans.xml` e `META-INF/jandex.idx`, então o ArC o descobre sem
+             extensão nenhuma. A versão é a do quarkus-bom (4.37.0), a mesma dos outros conectores. -->
+        <dependency>
+            <groupId>io.quarkiverse.amazonservices</groupId>
+            <artifactId>quarkus-amazon-sns</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.smallrye.reactive</groupId>
+            <artifactId>smallrye-reactive-messaging-aws-sns</artifactId>
+        </dependency>
+
+        <!--
+          O CONECTOR IN-MEMORY, EM ESCOPO DE COMPILAÇÃO E NÃO DE TESTE.
+          ============================================================
+          Ele tem dois papéis, e os dois são de produção aqui:
+
+          1. NAS FUNÇÕES MOVIDAS POR FILA ele é o que deixa os `@Incoming` que já existem nas
+             aplicações continuarem sendo a porta de entrada: o handler do Lambda empurra o registro
+             para dentro do canal e o listener roda sem uma linha alterada. Ver SqsChannelIngress.
+
+          2. NA FUNÇÃO DE API GATEWAY ele é o objeto nulo daquele canal. O
+             `mp.messaging.incoming.post-completed-in` está declarado no application.properties sem
+             perfil, e um arquivo de perfil pode SOBRESCREVER uma propriedade mas não REMOVER um
+             canal. Deixá-lo em `smallrye-rabbitmq` faria a função tentar abrir conexão com um broker
+             que não existe, na partida. Apontá-lo para cá o deixa ligado e ocioso — ninguém publica
+             nele, e o listener espera para sempre por uma mensagem que não vem.
+
+             Medido ao esquecer esta dependência:
+               WiringException: The channel 'post-completed-in' is configured with an unknown
+               connector (smallrye-in-memory)
+        -->
+        <dependency>
+            <groupId>io.smallrye.reactive</groupId>
+            <artifactId>smallrye-reactive-messaging-in-memory</artifactId>
+        </dependency>
+
+        <!--
+          O CLIENTE HTTP DO SDK, e ele NÃO é opcional nem transitivo.
+          =========================================================
+          As extensões do Quarkiverse produzem os beans `SnsAsyncClient`/`SqsAsyncClient` mas não
+          escolhem por onde eles falam: o AWS SDK v2 separa o cliente do serviço do cliente HTTP, e
+          declarar só o primeiro faz a aplicação subir e morrer na primeira publicação com
+          `Unable to load an HTTP implementation from any provider in the chain`.
+
+          Netty e não `aws-crt`: é o default dos `*.async-client.type` das extensões, então esta linha
+          concorda com a configuração em vez de exigir outra. Para um Lambda o CRT tende a dar cold
+          start menor — trocar é esta dependência mais `quarkus.sns.async-client.type=aws-crt`.
+        -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>netty-nio-client</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!--
+          MOCKITO nas libs — e ele NÃO entra no domínio.
+
+          Os testes de `Post`, `Tag` e `Authenticatable` continuam sem mock nenhum: o domínio decide
+          sozinho, e o único colaborador dele é uma porta que um lambda de três linhas dubla melhor
+          que qualquer framework. Mock ali seria acoplar o teste à FORMA da chamada em vez de ao
+          resultado dela.
+
+          Onde ele ganha é na INFRAESTRUTURA: `ChannelEventIngestion`, `OutboxRouting` e companhia
+          falam com `EventStore`, `Emitter` e `ChannelRegistry` — tipos de biblioteca, com dezenas de
+          métodos, que ninguém quer implementar à mão para afirmar uma chamada.
+        -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Sem o índice, os `ChannelAddressing` daqui não existem para o
+                 augmentation da aplicação: é um JAR externo, e o Quarkus só indexa o que lhe pedem.
+                 Mesma configuração das outras libs. -->
+            <plugin>
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <id>make-index</id>
+                        <goals>
+                            <goal>jandex</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

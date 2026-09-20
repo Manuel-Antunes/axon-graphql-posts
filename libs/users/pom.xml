@@ -46,6 +46,25 @@
             <artifactId>axon-eventsourcing</artifactId>
         </dependency>
 
+        <!--
+          O TESTE DE DOMÍNIO MORA NA LIB QUE ELE TESTA — e é só JUnit e AssertJ.
+
+          Nada de `quarkus-junit`: estes testes não sobem aplicação, não têm CDI e não tocam em JPA.
+          Dar-lhes Quarkus seria convidá-los a deixar de ser o que são — a prova de que o domínio
+          decide sozinho. Foi o que permitiu a eles atravessarem a conversão de Spring para Quarkus
+          sem uma linha alterada.
+        -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

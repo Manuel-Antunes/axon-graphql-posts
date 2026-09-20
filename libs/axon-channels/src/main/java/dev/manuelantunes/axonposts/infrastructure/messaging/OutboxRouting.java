@@ -11,7 +11,6 @@ import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
 import org.eclipse.microprofile.config.Config;
-import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Emitter;
 import org.eclipse.microprofile.reactive.messaging.Message;
 import org.eclipse.microprofile.reactive.messaging.Metadata;
@@ -22,7 +21,6 @@ import io.smallrye.reactive.messaging.ChannelRegistry;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.spi.Bean;
-import jakarta.enterprise.inject.spi.InjectionPoint;
 
 /**
  * <b>Qual outbox recebe qual evento.</b> É a tabela de roteamento da saída — e o que substituiu o canal

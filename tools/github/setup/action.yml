@@ -1,0 +1,56 @@
+name: 'setup'
+description: 'O ambiente que todo job deste monorepo precisa: Node, pnpm, JDK e os dois caches'
+inputs:
+  java-version:
+    description: >
+      O JDK. O default é 21 e NÃO é arbitrário: o `release` do projeto é 21, e o CLAUDE.md registra o
+      augmentation do Quarkus 3.39 falhando de forma INTERMITENTE sob a JVM 25 — que ele não suporta.
+      Fixar 21 aqui é o que mantém a esteira determinística.
+    default: '21'
+    required: false
+  install:
+    description: 'Rodar `pnpm install`. Desligue só num job que não toca em nada de JavaScript.'
+    default: 'true'
+    required: false
+runs:
+  using: composite
+  steps:
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: ${{ inputs.java-version }}
+
+    - name: Set up pnpm
+      # Sem versão: o `packageManager` do package.json manda, e é o mesmo número que a máquina usa.
+      uses: pnpm/action-setup@v4
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: pnpm
+
+    - name: Install dependencies
+      if: ${{ inputs.install == 'true' }}
+      # `--frozen-lockfile` é o gate: um lockfile desatualizado falha aqui e não três passos depois.
+      run: pnpm install --frozen-lockfile
+      shell: bash
+
+    - name: Cache Maven repository
+      # A chave é o conjunto dos POMs: mudou dependência, baixa de novo; não mudou, reaproveita. Sem
+      # isto cada job repuxa o BOM do Quarkus e o do Axon inteiros.
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2/repository
+        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-maven-
+
+    - name: Cache Nx
+      # O cache do Nx é por CONTEÚDO, então a chave carrega o SHA só para desempatar a restauração:
+      # o que decide acerto ou erro é o hash que o próprio Nx calcula, não esta linha.
+      uses: actions/cache@v4
+      with:
+        path: .nx/cache
+        key: ${{ runner.os }}-nx-${{ github.sha }}
+        restore-keys: ${{ runner.os }}-nx-

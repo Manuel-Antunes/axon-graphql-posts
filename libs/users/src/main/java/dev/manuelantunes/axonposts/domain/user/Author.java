@@ -1,7 +1,6 @@
 package dev.manuelantunes.axonposts.domain.user;
 
 import dev.manuelantunes.axonposts.domain.user.event.UserRegisteredEvent;
-import dev.manuelantunes.axonposts.domain.user.vo.DisplayName;
 import dev.manuelantunes.axonposts.domain.user.vo.UserId;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
