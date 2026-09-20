@@ -1,4 +1,4 @@
-import { graphql } from "@/gql";
+import { graphql } from '@/gql';
 
 /**
  * A query desta página. `me` EXIGE token — é o contraste com `/feed`, que é pública.
@@ -9,9 +9,9 @@ import { graphql } from "@/gql";
  * resultado.
  */
 export const MeQuery = graphql(`
-    query Me {
-        me {
-            ...IdentityPanel_user
-        }
+  query Me {
+    me {
+      ...IdentityPanel_user
     }
+  }
 `);

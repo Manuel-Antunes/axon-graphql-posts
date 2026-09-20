@@ -4,9 +4,7 @@
     "publish-local": {
       "executor": "nx:run-commands",
       "cache": true,
-      "inputs": [
-        "{workspaceRoot}/pom.xml"
-      ],
+      "inputs": ["{workspaceRoot}/pom.xml"],
       "outputs": [],
       "options": {
         "forwardAllArgs": false,

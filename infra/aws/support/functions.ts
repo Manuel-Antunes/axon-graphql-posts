@@ -1,8 +1,8 @@
 /// <reference path="../../../.sst/platform/config.d.ts" />
 
-import { createHash } from "crypto";
-import { readFileSync, readdirSync, statSync } from "fs";
-import { join } from "path";
+import { createHash } from 'crypto';
+import { readdirSync, readFileSync, statSync } from 'fs';
+import { join } from 'path';
 
 /**
  * O código das funções: do zip no disco até um objeto no S3 que o Lambda consegue ler.
@@ -159,7 +159,7 @@ export interface QuarkusFunctionArgs {
  * A configuração dela é `infra/lambda/collector.yaml`, que o alvo do Nx põe na raiz de cada zip.
  */
 export const OTEL_COLLECTOR_ARM64 =
-  "arn:aws:lambda:us-east-1:184161586896:layer:opentelemetry-collector-arm64-0_23_0:1";
+  'arn:aws:lambda:us-east-1:184161586896:layer:opentelemetry-collector-arm64-0_23_0:1';
 
 /**
  * O handler é o do Quarkus em TODOS os zips, e sempre o mesmo: a extensão instala o dela e escolhe o
@@ -167,7 +167,7 @@ export const OTEL_COLLECTOR_ARM64 =
  * permite ao mesmo artefato servir a fila e rodar as migrations.
  */
 const HANDLER =
-  "io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest";
+  'io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest';
 
 /**
  * Lê do ambiente e FALHA se não houver. Sem isto, um `.env` ausente viraria uma função implantada com
@@ -178,7 +178,7 @@ function requiredEnv(name: string): string {
   if (!value) {
     throw new Error(
       `${name} não está definida. Ela vem do \`.env\` da raiz (ver \`.env.example\`), que o ` +
-        "SST carrega sozinho. É o destino da telemetria de TODA função.",
+        'SST carrega sozinho. É o destino da telemetria de TODA função.',
     );
   }
   return value;
@@ -190,12 +190,12 @@ export class QuarkusFunction extends $util.ComponentResource {
   readonly code: Artifact;
 
   private IGNORED = new Set([
-    "target",
-    "node_modules",
-    ".git",
-    ".sst",
-    "dist",
-    ".DS_Store",
+    'target',
+    'node_modules',
+    '.git',
+    '.sst',
+    'dist',
+    '.DS_Store',
   ]);
 
   private walk(path: string): string[] {
@@ -221,7 +221,7 @@ export class QuarkusFunction extends $util.ComponentResource {
   }
 
   private fingerprintOf(paths: string[]): { base64: string; short: string } {
-    const digest = createHash("sha256");
+    const digest = createHash('sha256');
     for (const path of [...paths].sort()) {
       for (const file of this.walk(path)) {
         digest.update(file);
@@ -231,8 +231,8 @@ export class QuarkusFunction extends $util.ComponentResource {
       }
     }
     return {
-      base64: digest.copy().digest("base64"),
-      short: digest.digest("hex").slice(0, 16),
+      base64: digest.copy().digest('base64'),
+      short: digest.digest('hex').slice(0, 16),
     };
   }
   private isBuild(code: QuarkusCode): code is QuarkusBuild {
@@ -244,7 +244,7 @@ export class QuarkusFunction extends $util.ComponentResource {
     args: QuarkusFunctionArgs,
     opts?: $util.ComponentResourceOptions,
   ) {
-    super("axonposts:aws:QuarkusFunction", name, {}, opts);
+    super('axonposts:aws:QuarkusFunction', name, {}, opts);
 
     this.code = this.isBuild(args.code) ? this.buildCode(args.code) : args.code;
 
@@ -252,10 +252,10 @@ export class QuarkusFunction extends $util.ComponentResource {
       name,
       {
         role: args.platform.role,
-        runtime: args.runtime ?? "provided.al2023",
+        runtime: args.runtime ?? 'provided.al2023',
         // arm64 deixou de ser só preço: o binário nativo É aarch64, compilado no builder do
         // Mandrel. Trocar a arquitetura aqui agora exige recompilar, não só redeployar.
-        architectures: ["arm64"],
+        architectures: ['arm64'],
         handler: args.handler ?? HANDLER,
         layers: [...(args.layers ?? []), OTEL_COLLECTOR_ARM64],
         s3Bucket: this.code.bucket,
@@ -277,12 +277,12 @@ export class QuarkusFunction extends $util.ComponentResource {
             // Onde a layer acha a configuração dela. O arquivo é posto na raiz do zip
             // pelo alvo do Nx; sem esta linha o coletor sobe com o default dele, que
             // exporta para backends da AWS.
-            OPENTELEMETRY_COLLECTOR_CONFIG_URI: "/var/task/collector.yaml",
+            OPENTELEMETRY_COLLECTOR_CONFIG_URI: '/var/task/collector.yaml',
             // O destino, resolvido pelo COLETOR (`${env:...}` no yaml). Vem do `.env` da
             // raiz, que o SST carrega no processo da config — por isso não há segredo
             // no repositório nem no IaC.
-            BETTER_STACK_URL: requiredEnv("BETTER_STACK_URL"),
-            BETTER_STACK_API_KEY: requiredEnv("BETTER_STACK_API_KEY"),
+            BETTER_STACK_URL: requiredEnv('BETTER_STACK_URL'),
+            BETTER_STACK_API_KEY: requiredEnv('BETTER_STACK_API_KEY'),
           },
         },
       },
@@ -412,7 +412,7 @@ export class QueueWorker extends QuarkusFunction {
         // tudo-ou-nada — e não há aviso: uma mensagem-veneno entre dez faz as nove boas
         // voltarem, o `axon_message_inbox` as descarta, e o sistema parece funcionar enquanto
         // paga dez invocações para processar uma.
-        functionResponseTypes: ["ReportBatchItemFailures"],
+        functionResponseTypes: ['ReportBatchItemFailures'],
       },
       { parent: this },
     );
@@ -421,7 +421,7 @@ export class QueueWorker extends QuarkusFunction {
 
 export interface MigratorArgs extends Omit<
   QuarkusFunctionArgs,
-  "timeout" | "memory"
+  'timeout' | 'memory'
 > {}
 
 /**
@@ -463,8 +463,8 @@ export class Migrator extends QuarkusFunction {
         ...args,
         environment: {
           ...args.environment,
-          QUARKUS_LAMBDA_HANDLER: "flyway-migrate",
-          QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY: "none",
+          QUARKUS_LAMBDA_HANDLER: 'flyway-migrate',
+          QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY: 'none',
         },
         // Generoso: é cold start de JVM mais o tempo do Flyway, e roda uma vez por deploy.
         timeout: 300,
@@ -495,11 +495,11 @@ export class Migrator extends QuarkusFunction {
  * depender do dia.
  */
 const WEB_ADAPTER_ARM64 =
-  "arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerArm64:30";
+  'arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerArm64:30';
 
 export interface StreamingFunctionArgs extends Omit<
   QuarkusFunctionArgs,
-  "handler" | "layers"
+  'handler' | 'layers'
 > {}
 
 /**
@@ -545,26 +545,26 @@ export class StreamingFunction extends QuarkusFunction {
         ...args,
         // O handler é o NOME DE UM ARQUIVO, não de uma classe: quem o executa é o
         // `/opt/bootstrap` da layer. Ver `apps/posts-api/src/main/lambda/run.sh`.
-        handler: "run.sh",
+        handler: 'run.sh',
         layers: [WEB_ADAPTER_ARM64],
         // `java21` e não `provided.al2023`: aqui quem executa é a layer do Web Adapter, pelo
         // `AWS_LAMBDA_EXEC_WRAPPER`, e esse gancho é do runtime GERENCIADO. O sandbox traz
         // uma JVM que nunca é usada — o `run.sh` executa o binário nativo — e isso custa
         // zero. Trocar por `provided.*` exigiria o binário se chamar `bootstrap` e abrir mão
         // do wrapper, que é o que faz o adapter funcionar.
-        runtime: "java21",
+        runtime: 'java21',
         environment: {
           ...args.environment,
           // Sem isto a layer é só um arquivo parado: é o gancho padrão do Lambda para
           // alguém assumir a partida do processo.
-          AWS_LAMBDA_EXEC_WRAPPER: "/opt/bootstrap",
+          AWS_LAMBDA_EXEC_WRAPPER: '/opt/bootstrap',
           // O modo TEM de casar com o `invokeMode` da Function URL abaixo. Divergir não dá
           // erro: dá um corpo que o cliente não sabe ler.
-          AWS_LWA_INVOKE_MODE: "response_stream",
-          AWS_LWA_PORT: "8080",
+          AWS_LWA_INVOKE_MODE: 'response_stream',
+          AWS_LWA_PORT: '8080',
           // O adapter segura a primeira invocação até este caminho responder — o que
           // transforma o cold start da JVM em latência, e não em 502.
-          AWS_LWA_READINESS_CHECK_PATH: "/q/health/ready",
+          AWS_LWA_READINESS_CHECK_PATH: '/q/health/ready',
         },
       },
       opts,
@@ -576,8 +576,8 @@ export class StreamingFunction extends QuarkusFunction {
         functionName: this.fn.name,
         // A autorização é da APLICAÇÃO: o `posts-api` é resource server e confere o bearer do
         // Cognito. `AWS_IAM` aqui exigiria SigV4 de todo cliente — inclusive do navegador.
-        authorizationType: "NONE",
-        invokeMode: "RESPONSE_STREAM",
+        authorizationType: 'NONE',
+        invokeMode: 'RESPONSE_STREAM',
       },
       { parent: this },
     );

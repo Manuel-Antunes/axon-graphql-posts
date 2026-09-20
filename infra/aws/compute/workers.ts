@@ -1,9 +1,9 @@
 /// <reference path="../../../.sst/platform/config.d.ts" />
 
-import { QueueWorker } from "../support";
-import { precreated, changes, completed } from "../messaging";
-import { platform, codeBucket, sources, projects } from "./platform";
-import { postsEnvironment, taggingEnvironment } from "./environment";
+import { changes, completed, precreated } from '../messaging';
+import { QueueWorker } from '../support';
+import { postsEnvironment, taggingEnvironment } from './environment';
+import { codeBucket, platform, projects, sources } from './platform';
 
 /**
  * As funções movidas por fila. Uma por FILA, e não uma com várias.
@@ -20,19 +20,19 @@ const timeout = 120;
  * empacotamento — porque uma função do Lambda tem UM handler, e esta aplicação tem duas portas de
  * entrada de naturezas diferentes. Com um processo longo elas conviviam.
  */
-export const postsInbox = new QueueWorker("PostsApiInbox", {
-    platform,
-    code: {
-        artifact: "posts-api-sqs",
-        buildCommand: `npx -y nx run "${projects.postsApi}:lambda-sqs:native-container"`,
-        output: "infra/dist/posts-api-sqs.zip",
-        bucket: codeBucket,
-        sources: sources.postsApi,
-    },
-    environment: postsEnvironment,
-    timeout,
-    queue: completed,
-    channel: "post-completed-in",
+export const postsInbox = new QueueWorker('PostsApiInbox', {
+  platform,
+  code: {
+    artifact: 'posts-api-sqs',
+    buildCommand: `npx -y nx run "${projects.postsApi}:lambda-sqs:native-container"`,
+    output: 'infra/dist/posts-api-sqs.zip',
+    bucket: codeBucket,
+    sources: sources.postsApi,
+  },
+  environment: postsEnvironment,
+  timeout,
+  queue: completed,
+  channel: 'post-completed-in',
 });
 
 /**
@@ -41,31 +41,31 @@ export const postsInbox = new QueueWorker("PostsApiInbox", {
  * Esta e a de baixo saem do MESMO zip. O que as distingue é a fila que as aciona e o canal — não há
  * código diferente entre elas.
  */
-export const taggingDecide = new QueueWorker("TaggingDecide", {
-    platform,
-    code: {
-        artifact: "tagging",
-        buildCommand: `npx -y nx run "${projects.tagging}:lambda:native-container"`,
-        output: "infra/dist/tagging.zip",
-        bucket: codeBucket,
-        sources: sources.tagging,
-    },
-    environment: taggingEnvironment,
-    timeout,
-    queue: precreated,
-    channel: "post-precreated-in",
+export const taggingDecide = new QueueWorker('TaggingDecide', {
+  platform,
+  code: {
+    artifact: 'tagging',
+    buildCommand: `npx -y nx run "${projects.tagging}:lambda:native-container"`,
+    output: 'infra/dist/tagging.zip',
+    bucket: codeBucket,
+    sources: sources.tagging,
+  },
+  environment: taggingEnvironment,
+  timeout,
+  queue: precreated,
+  channel: 'post-precreated-in',
 });
 
 /**
  * Onde ele só REPLICA. Nenhum handler reage: estes eventos existem para o stream do Post ficar
  * completo naquele store, porque é dele que a posição do próximo append depende.
  */
-export const taggingReplicate = new QueueWorker("TaggingReplicate", {
-    platform,
-    // O MESMO zip do `taggingDecide`: outra fila, outro `@Incoming`, o mesmo artefato.
-    code: taggingDecide.code,
-    environment: taggingEnvironment,
-    timeout,
-    queue: changes,
-    channel: "post-changes-in",
+export const taggingReplicate = new QueueWorker('TaggingReplicate', {
+  platform,
+  // O MESMO zip do `taggingDecide`: outra fila, outro `@Incoming`, o mesmo artefato.
+  code: taggingDecide.code,
+  environment: taggingEnvironment,
+  timeout,
+  queue: changes,
+  channel: 'post-changes-in',
 });

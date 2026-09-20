@@ -18,4 +18,4 @@
  * acesso aos dois RDS sem uma regra a mais — e o que torna `vpc.securityGroups` a resposta certa para
  * `securityGroupIds` das funções.
  */
-export const vpc = new sst.aws.Vpc("Vpc", { nat: "managed" });
+export const vpc = new sst.aws.Vpc('Vpc', { nat: 'managed' });

@@ -1,6 +1,6 @@
 /// <reference path="../../../.sst/platform/config.d.ts" />
 
-import { seed } from "./seed";
+import { seed } from './seed';
 
 /**
  * O provedor de identidade: <b>Cognito</b>, e não mais um Keycloak numa task Fargate.
@@ -49,45 +49,55 @@ import { seed } from "./seed";
  * emitido para outro client não passa. Se um dia houver mais de um client, ou M2M, o item 2 deixa de
  * ser opcional.
  */
-export const users = new sst.aws.CognitoUserPool("Users", {
-    // Login por e-mail, que é o que o realm do Keycloak faz e o que o `UserProvisioning` assume ao
-    // ligar contas (`findByEmail`).
-    usernames: ["email"],
+export const users = new sst.aws.CognitoUserPool('Users', {
+  // Login por e-mail, que é o que o realm do Keycloak faz e o que o `UserProvisioning` assume ao
+  // ligar contas (`findByEmail`).
+  usernames: ['email'],
 
-    /*
-     * O trigger que põe `identity_provider: "cognito"` no ID token.
-     *
-     * Sem ele a claim chega nula, `AuthProvider.fromAlias(null)` responde KEYCLOAK — o que é o certo
-     * em dev e teste — e toda identidade do Cognito é gravada com o provedor errado. A consequência
-     * foi medida: `uk_accounts_provider_subject` é (provider, subject), então a mesma pessoa vinda dos
-     * dois emissores colide e `Authenticatable.link` recusa com "já tem conta em KEYCLOAK".
-     *
-     * `v1` e não `v2`: V1_0 customiza o ID token, que é o bearer desta aplicação, e é o que o tier
-     * Lite oferece. V2_0 customizaria o access token e exige o plano Essentials.
-     */
-    triggers: {
-        preTokenGeneration: "infra/aws/identity/identity-provider.handler",
-        preTokenGenerationVersion: "v1",
-    },
-    transform: {
-        userPool: {
-            autoVerifiedAttributes: ["email"],
-            // A política default do Cognito exige maiúscula, número e símbolo, e as senhas semeadas
-            // são `segredo123` — as MESMAS do realm. Afrouxar aqui é o que mantém o roteiro de teste
-            // idêntico nos dois ambientes; num sistema de verdade esta é a primeira linha a apagar.
-            passwordPolicy: {
-                minimumLength: 8,
-                requireLowercase: false,
-                requireNumbers: false,
-                requireSymbols: false,
-                requireUppercase: false,
-            },
-            schemas: [
-                { name: "email", attributeDataType: "String", required: true, mutable: true },
-                { name: "name", attributeDataType: "String", required: false, mutable: true },
-            ],
+  /*
+   * O trigger que põe `identity_provider: "cognito"` no ID token.
+   *
+   * Sem ele a claim chega nula, `AuthProvider.fromAlias(null)` responde KEYCLOAK — o que é o certo
+   * em dev e teste — e toda identidade do Cognito é gravada com o provedor errado. A consequência
+   * foi medida: `uk_accounts_provider_subject` é (provider, subject), então a mesma pessoa vinda dos
+   * dois emissores colide e `Authenticatable.link` recusa com "já tem conta em KEYCLOAK".
+   *
+   * `v1` e não `v2`: V1_0 customiza o ID token, que é o bearer desta aplicação, e é o que o tier
+   * Lite oferece. V2_0 customizaria o access token e exige o plano Essentials.
+   */
+  triggers: {
+    preTokenGeneration: 'infra/aws/identity/identity-provider.handler',
+    preTokenGenerationVersion: 'v1',
+  },
+  transform: {
+    userPool: {
+      autoVerifiedAttributes: ['email'],
+      // A política default do Cognito exige maiúscula, número e símbolo, e as senhas semeadas
+      // são `segredo123` — as MESMAS do realm. Afrouxar aqui é o que mantém o roteiro de teste
+      // idêntico nos dois ambientes; num sistema de verdade esta é a primeira linha a apagar.
+      passwordPolicy: {
+        minimumLength: 8,
+        requireLowercase: false,
+        requireNumbers: false,
+        requireSymbols: false,
+        requireUppercase: false,
+      },
+      schemas: [
+        {
+          name: 'email',
+          attributeDataType: 'String',
+          required: true,
+          mutable: true,
         },
+        {
+          name: 'name',
+          attributeDataType: 'String',
+          required: false,
+          mutable: true,
+        },
+      ],
     },
+  },
 });
 
 /**
@@ -98,18 +108,21 @@ export const users = new sst.aws.CognitoUserPool("Users", {
  * `authorization_code`, `client_credentials` e `refresh_token`. Senha vai pela API própria dele
  * (`cognito-idp initiate-auth`), e é por isso que o roteiro de teste passou a usar a AWS CLI.
  */
-export const client = users.addClient("Api", {
-    transform: {
-        client: {
-            explicitAuthFlows: ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
-            generateSecret: false,
-            // SEM mexer na validade dos tokens. Houve aqui um `idTokenValidity: 60` com
-            // `tokenValidityUnits`, e o Cognito recusou a criação com
-            // `InvalidParameterException: Invalid range for token validity` — declarar a UNIDADE de um
-            // token sem declarar o VALOR dele deixa os dois em desacordo. Os defaults (1 h para id e
-            // access, 30 dias para refresh) são exatamente o que este ambiente quer.
-        },
+export const client = users.addClient('Api', {
+  transform: {
+    client: {
+      explicitAuthFlows: [
+        'ALLOW_USER_PASSWORD_AUTH',
+        'ALLOW_REFRESH_TOKEN_AUTH',
+      ],
+      generateSecret: false,
+      // SEM mexer na validade dos tokens. Houve aqui um `idTokenValidity: 60` com
+      // `tokenValidityUnits`, e o Cognito recusou a criação com
+      // `InvalidParameterException: Invalid range for token validity` — declarar a UNIDADE de um
+      // token sem declarar o VALOR dele deixa os dois em desacordo. Os defaults (1 h para id e
+      // access, 30 dias para refresh) são exatamente o que este ambiente quer.
     },
+  },
 });
 
 /**
@@ -123,21 +136,21 @@ export const client = users.addClient("Api", {
  */
 export const pool = { userPoolId: users.id };
 
-export const authorGroup = new aws.cognito.UserGroup("AuthorGroup", {
-    ...pool,
-    name: "author",
-    description: "Pode escrever posts",
+export const authorGroup = new aws.cognito.UserGroup('AuthorGroup', {
+  ...pool,
+  name: 'author',
+  description: 'Pode escrever posts',
 });
 
-const userGroup = new aws.cognito.UserGroup("UserGroup", {
-    ...pool,
-    name: "user",
-    description: "Leitor autenticado",
+const userGroup = new aws.cognito.UserGroup('UserGroup', {
+  ...pool,
+  name: 'user',
+  description: 'Leitor autenticado',
 });
 
-seed("Manuel", "manuel@example.com", "Manuel Antunes", ["user", "author"]);
-seed("Leitor", "leitor@example.com", "Leitor Anonimo", ["user"]);
-seed("Promovido", "promovido@example.com", "Autor Recente", ["user", "author"]);
+seed('Manuel', 'manuel@example.com', 'Manuel Antunes', ['user', 'author']);
+seed('Leitor', 'leitor@example.com', 'Leitor Anonimo', ['user']);
+seed('Promovido', 'promovido@example.com', 'Autor Recente', ['user', 'author']);
 
 /**
  * O issuer. O Cognito o publica como

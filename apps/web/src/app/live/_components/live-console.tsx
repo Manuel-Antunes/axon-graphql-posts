@@ -1,33 +1,33 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import Link from "next/link";
-import { InfoIcon, RadioIcon, TrashIcon } from "lucide-react";
+import { useState } from 'react';
+import Link from 'next/link';
+import { InfoIcon, RadioIcon, TrashIcon } from 'lucide-react';
 
-import { ErrorNotice } from "@/app/_components/error-notice";
-import { RelativeTime } from "@/app/_components/relative-time";
-import { StatusDot } from "@/app/_components/status-dot";
-import { VersionBadge } from "@/app/_components/version-badge";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { ErrorNotice } from '@/app/_components/error-notice';
+import { RelativeTime } from '@/app/_components/relative-time';
+import { StatusDot } from '@/app/_components/status-dot';
+import { VersionBadge } from '@/app/_components/version-badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { upstreamHost } from "@/lib/env";
+} from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { upstreamHost } from '@/lib/env';
 
-import { useRecentPosts } from "../_hooks/use-recent-posts";
-import { usePostStream } from "../_hooks/use-post-stream";
+import { usePostStream } from '../_hooks/use-post-stream';
+import { useRecentPosts } from '../_hooks/use-recent-posts';
 
-const time = new Intl.DateTimeFormat("pt-BR", {
-  timeStyle: "medium",
-  timeZone: "America/Sao_Paulo",
+const time = new Intl.DateTimeFormat('pt-BR', {
+  timeStyle: 'medium',
+  timeZone: 'America/Sao_Paulo',
 });
 
 export function LiveConsole() {
@@ -39,19 +39,21 @@ export function LiveConsole() {
     <div className="space-y-5">
       <Alert>
         <InfoIcon />
-        <AlertTitle>Isto é a subscription do Axon, sem intermediário</AlertTitle>
+        <AlertTitle>
+          Isto é a subscription do Axon, sem intermediário
+        </AlertTitle>
         <AlertDescription className="space-y-1">
           <p>
             O navegador fala com <span className="font-mono">/api/graphql</span>
-            , o proxy desta aplicação, e tudo o que ele faz é um{" "}
-            <span className="font-mono">fetch</span> para{" "}
+            , o proxy desta aplicação, e tudo o que ele faz é um{' '}
+            <span className="font-mono">fetch</span> para{' '}
             <span className="font-mono">{upstreamHost()}</span> devolvendo o
-            corpo da resposta. Os bytes que chegam aqui são os que o{" "}
+            corpo da resposta. Os bytes que chegam aqui são os que o{' '}
             <span className="font-mono">posts-api</span> escreveu.
           </p>
           <p>
-            O proxy existe por uma razão só: é ele que põe o{" "}
-            <span className="font-mono">Authorization</span>, lendo um cookie{" "}
+            O proxy existe por uma razão só: é ele que põe o{' '}
+            <span className="font-mono">Authorization</span>, lendo um cookie{' '}
             <span className="font-mono">httpOnly</span> — o token nunca chega ao
             JavaScript desta página.
           </p>
@@ -95,7 +97,7 @@ export function LiveConsole() {
           <EventList
             empty="Conectado. Nenhum evento ainda."
             onClear={stream.clear}
-            rows={stream.events.map(event => ({
+            rows={stream.events.map((event) => ({
               key: `${event.postId}-${event.receivedAt}`,
               at: event.receivedAt,
               badge: event.source,
@@ -111,7 +113,7 @@ export function LiveConsole() {
         <CardHeader>
           <CardTitle className="text-base">Estado atual</CardTitle>
           <CardDescription>
-            Buscado no servidor pelo{" "}
+            Buscado no servidor pelo{' '}
             <span className="font-mono">PreloadQuery</span>. É a referência
             contra a qual os eventos acima são lidos.
           </CardDescription>
@@ -124,7 +126,7 @@ export function LiveConsole() {
             />
           ) : (
             <ul className="space-y-2">
-              {recent.posts.map(post => (
+              {recent.posts.map((post) => (
                 <li
                   key={post.id}
                   className="flex flex-wrap items-center justify-between gap-2 border-b pb-2 text-sm last:border-0"
@@ -146,12 +148,12 @@ export function LiveConsole() {
       </Card>
 
       <p className="text-xs text-muted-foreground">
-        Para ver funcionando: deixe esta página aberta e crie um post em{" "}
+        Para ver funcionando: deixe esta página aberta e crie um post em{' '}
         <Link href="/posts/new" className="underline">
           Escrever
-        </Link>{" "}
-        noutra aba. Chega um <span className="font-mono">onPostCreated</span>{" "}
-        quando o outro serviço fecha a saga (versão 2), e um{" "}
+        </Link>{' '}
+        noutra aba. Chega um <span className="font-mono">onPostCreated</span>{' '}
+        quando o outro serviço fecha a saga (versão 2), e um{' '}
         <span className="font-mono">onPostUpdated</span> a cada edição depois
         disso.
       </p>
@@ -194,7 +196,7 @@ function EventList({
         </Button>
       </div>
       <ul className="max-h-80 space-y-2 overflow-auto">
-        {rows.map(row => (
+        {rows.map((row) => (
           <li key={row.key} className="rounded-md border p-2 text-xs">
             <div className="flex items-center justify-between gap-2">
               <Badge variant="secondary" className="font-mono text-[10px]">

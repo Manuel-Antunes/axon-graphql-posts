@@ -1,6 +1,6 @@
 /// <reference path="../../../.sst/platform/config.d.ts" />
 
-import { streaming } from "../compute";
+import { streaming } from '../compute';
 
 /**
  * A BORDA: uma distribuição do CloudFront na frente de tudo.
@@ -31,7 +31,7 @@ import { streaming } from "../compute";
  * Está medido neste projeto: uma tentativa com 360 s derrubou o site. O que torna o teto invisível
  * para quem assina é a reconexão do cliente, não um número maior.
  */
-export const router = new sst.aws.Router("Edge");
+export const router = new sst.aws.Router('Edge');
 
 /**
  * O subgraph, no mesmo endereço do site.
@@ -53,8 +53,12 @@ export const router = new sst.aws.Router("Edge");
  * de fora é `/q/*` (health, GraphiQL, dev UI), e fica de propósito: são endpoints de operação, não
  * contrato. Com o domínio, `api.<domínio>/` passa a cobrir tudo de uma vez.
  */
-router.route("/graphql", streaming.functionUrl.apply((url) => url.replace(/\/$/, "")), {
+router.route(
+  '/graphql',
+  streaming.functionUrl.apply((url) => url.replace(/\/$/, '')),
+  {
     // O mesmo teto da rota do site, e pela mesma razão: uma subscription que atravesse esta rota
     // precisa sobreviver ao cold start da JVM do outro lado.
-    readTimeout: "60 seconds",
-});
+    readTimeout: '60 seconds',
+  },
+);

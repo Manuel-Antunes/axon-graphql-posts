@@ -9,10 +9,18 @@ docker/federation/supergraph.graphql
 # IDEs
 .idea/
 *.iml
-.vscode/
 .settings/
 .project
 .classpath
+
+# Do VSCode, DUAS exceções e só elas: `settings.json` e `extensions.json` são configuração do
+# PROJETO, não da máquina de ninguém — e sem elas o `.editorconfig` simplesmente não vale aqui (o
+# VSCode não o lê sem a extensão, e o `detectIndentation` adivinha a indentação pelo conteúdo do
+# arquivo). Versioná-las é o que faz a convenção existir para quem clona; o resto de `.vscode/`
+# continua sendo de cada um.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 
 # OS
 .DS_Store
@@ -27,3 +35,7 @@ infra/dist/
 .sst
 sst-env.d.ts
 .env
+
+# O Vite compila o config antes de lê-lo e deixa o resultado ao lado dele.
+vite.config.*.timestamp*
+vitest.config.*.timestamp*

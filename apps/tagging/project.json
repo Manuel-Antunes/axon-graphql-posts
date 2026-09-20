@@ -2,13 +2,8 @@
   "name": "dev.manuelantunes:axonposts-tagging",
   "targets": {
     "test": {
-      "dependsOn": [
-        "^publish-local"
-      ],
-      "inputs": [
-        "default",
-        "^default"
-      ],
+      "dependsOn": ["^publish-local"],
+      "inputs": ["default", "^default"],
       "outputs": [
         "{projectRoot}/target/surefire-reports",
         "{projectRoot}/target/jacoco-report"
@@ -19,13 +14,8 @@
       }
     },
     "test:e2e": {
-      "dependsOn": [
-        "^publish-local"
-      ],
-      "inputs": [
-        "default",
-        "^default"
-      ],
+      "dependsOn": ["^publish-local"],
+      "inputs": ["default", "^default"],
       "outputs": [
         "{projectRoot}/target/surefire-reports",
         "{projectRoot}/target/jacoco-report"
@@ -38,13 +28,8 @@
     "publish-local": {
       "executor": "nx:run-commands",
       "cache": true,
-      "dependsOn": [
-        "^publish-local"
-      ],
-      "inputs": [
-        "default",
-        "^default"
-      ],
+      "dependsOn": ["^publish-local"],
+      "inputs": ["default", "^default"],
       "outputs": [],
       "options": {
         "forwardAllArgs": false,
@@ -62,12 +47,8 @@
     "lambda": {
       "executor": "nx:run-commands",
       "cache": true,
-      "inputs": [
-        "quarkusLambda"
-      ],
-      "outputs": [
-        "{workspaceRoot}/infra/dist/tagging.zip"
-      ],
+      "inputs": ["quarkusLambda"],
+      "outputs": ["{workspaceRoot}/infra/dist/tagging.zip"],
       "defaultConfiguration": "native",
       "options": {
         "parallel": false,

@@ -1,4 +1,4 @@
-import { graphql } from "@/gql";
+import { graphql } from '@/gql';
 
 /**
  * A query DESTA página, num arquivo só — e é daqui que os dois lados a leem.
@@ -20,11 +20,11 @@ import { graphql } from "@/gql";
  * aqui. Acrescentar um campo a um card é editar um arquivo — o do card —, e não dois.
  */
 export const FeedPostsQuery = graphql(`
-    query FeedPosts($first: Int!, $after: String) {
-        posts(first: $first, after: $after) {
-            ...PostList_connection
-        }
+  query FeedPosts($first: Int!, $after: String) {
+    posts(first: $first, after: $after) {
+      ...PostList_connection
     }
+  }
 `);
 
 /**

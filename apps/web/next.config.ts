@@ -1,11 +1,11 @@
-import path, { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { composePlugins, withNx } from "@nx/next";
-import type { NextConfig } from "next";
+import path, { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { NextConfig } from 'next';
+import { composePlugins, withNx } from '@nx/next';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const monorepoRoot = path.resolve(__dirname, "..", "..");
+const monorepoRoot = path.resolve(__dirname, '..', '..');
 
 /**
  * As DUAS linhas que existem por causa do monorepo e do deploy — e nenhuma delas é afinamento.
@@ -32,8 +32,8 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: monorepoRoot,
 };
 
-if (process.env.INFRA_PROVIDER === "aws") {
-  nextConfig.output = "standalone";
+if (process.env.INFRA_PROVIDER === 'aws') {
+  nextConfig.output = 'standalone';
 }
 
 const plugins = [

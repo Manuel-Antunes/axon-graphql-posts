@@ -3,8 +3,10 @@
 # permitem a quem chega depois.
 
 extend schema
-  @link(url: "https://specs.apollo.dev/federation/v2.7",
-        import: ["@key", "@interfaceObject"])
+  @link(
+    url: "https://specs.apollo.dev/federation/v2.7"
+    import: ["@key", "@interfaceObject"]
+  )
 
 # Entidade própria deste subgraph. `post: Post!` é uma REFERÊNCIA: no fio trafega
 # `{__typename: "Post", id: "..."}`, e quem resolve os campos do post é o subgraph de posts,

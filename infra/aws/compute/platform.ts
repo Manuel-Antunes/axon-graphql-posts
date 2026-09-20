@@ -1,8 +1,8 @@
 /// <reference path="../../../.sst/platform/config.d.ts" />
 
-import { vpc } from "../network";
-import { ExecutionRole } from "./role";
-import type { LambdaPlatform } from "../support";
+import type { LambdaPlatform } from '../support';
+import { vpc } from '../network';
+import { ExecutionRole } from './role';
 
 /**
  * O que é comum às seis funções, reunido nos dois objetos que elas recebem por injeção.
@@ -12,7 +12,7 @@ import type { LambdaPlatform } from "../support";
  * `support/functions.ts` teria de importar `network` e `role`, e um helper que importa infraestrutura
  * deixa de ser helper.
  */
-const role = new ExecutionRole("LambdaRole");
+const role = new ExecutionRole('LambdaRole');
 
 /** Onde as funções correm e com que identidade. */
 export const platform: LambdaPlatform = {
@@ -33,7 +33,7 @@ export const platform: LambdaPlatform = {
  * Antes disso era `./infra/scripts/package.sh` rodado à mão antes do deploy, com o modo de falhar
  * conhecido: esquecer o passo e ver o deploy publicar o artefato anterior dizendo `✓ Complete`.
  */
-const bucket = new sst.aws.Bucket("CodeBucket");
+const bucket = new sst.aws.Bucket('CodeBucket');
 
 /** Onde os zips moram. É o que uma função precisa saber para publicar o próprio código. */
 export const codeBucket = bucket.name;
@@ -47,8 +47,8 @@ export const codeBucket = bucket.name;
  * de verdade, e só depois lê alvo e configuração.
  */
 export const projects = {
-  postsApi: "dev.manuelantunes:quarkus-axon-graphql-posts",
-  tagging: "dev.manuelantunes:axonposts-tagging",
+  postsApi: 'dev.manuelantunes:quarkus-axon-graphql-posts',
+  tagging: 'dev.manuelantunes:axonposts-tagging',
 };
 
 /**
@@ -65,13 +65,13 @@ export const projects = {
  * comando que roda e devolve o cache.
  */
 const COMUM = [
-  "pom.xml",
-  "mvnw",
-  ".mvn",
-  "libs",
-  "infra/lambda/collector.yaml",
+  'pom.xml',
+  'mvnw',
+  '.mvn',
+  'libs',
+  'infra/lambda/collector.yaml',
 ];
 export const sources = {
-  postsApi: [...COMUM, "apps/posts-api/pom.xml", "apps/posts-api/src"],
-  tagging: [...COMUM, "apps/tagging/pom.xml", "apps/tagging/src"],
+  postsApi: [...COMUM, 'apps/posts-api/pom.xml', 'apps/posts-api/src'],
+  tagging: [...COMUM, 'apps/tagging/pom.xml', 'apps/tagging/src'],
 };

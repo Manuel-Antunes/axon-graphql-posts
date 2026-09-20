@@ -1,14 +1,17 @@
-import "server-only";
+import 'server-only';
 
-import { ApolloClient, registerApolloClient } from "@apollo/client-integration-nextjs";
-import { HttpLink } from "@apollo/client";
+import { HttpLink } from '@apollo/client';
+import {
+  ApolloClient,
+  registerApolloClient,
+} from '@apollo/client-integration-nextjs';
 
-import { readSession } from "@/lib/auth/cookies";
-import { GRAPHQL_UPSTREAM } from "@/lib/env";
+import { readSession } from '@/lib/auth/cookies';
+import { GRAPHQL_UPSTREAM } from '@/lib/env';
 
-import "./fragment-warnings";
+import './fragment-warnings';
 
-import { createCache } from "./cache";
+import { createCache } from './cache';
 
 /**
  * O cliente do SERVIDOR, e o `PreloadQuery` que as páginas usam.
@@ -34,18 +37,20 @@ import { createCache } from "./cache";
  * dos dois lados. O resultado atravessa pelo stream do React: o HTML já chega preenchido e a
  * hidratação não refaz a requisição.
  */
-export const { getClient, query, PreloadQuery } = registerApolloClient(async () => {
+export const { getClient, query, PreloadQuery } = registerApolloClient(
+  async () => {
     const session = await readSession();
 
     return new ApolloClient({
-        cache: createCache(),
-        link: new HttpLink({
-            uri: GRAPHQL_UPSTREAM,
-            headers: session ? { authorization: `Bearer ${session.idToken}` } : {},
-            // Um render de servidor não deve ser servido do cache de `fetch` do Next: o feed mudaria
-            // de conteúdo sem que ninguém invalidasse nada. O que vale aqui é o que a API responde
-            // agora.
-            fetchOptions: { cache: "no-store" },
-        }),
+      cache: createCache(),
+      link: new HttpLink({
+        uri: GRAPHQL_UPSTREAM,
+        headers: session ? { authorization: `Bearer ${session.idToken}` } : {},
+        // Um render de servidor não deve ser servido do cache de `fetch` do Next: o feed mudaria
+        // de conteúdo sem que ninguém invalidasse nada. O que vale aqui é o que a API responde
+        // agora.
+        fetchOptions: { cache: 'no-store' },
+      }),
     });
-});
+  },
+);

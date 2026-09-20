@@ -1,7 +1,8 @@
-import { ApolloLink } from "@apollo/client/link";
-import { print } from "graphql";
-import { createClient, type Client } from "graphql-sse";
-import { Observable } from "rxjs";
+import type { Client } from 'graphql-sse';
+import { ApolloLink } from '@apollo/client/link';
+import { print } from 'graphql';
+import { createClient } from 'graphql-sse';
+import { Observable } from 'rxjs';
 
 /**
  * Quanto se espera pelo primeiro byte da resposta antes de desistir.
@@ -47,85 +48,90 @@ const connections = new EventTarget();
  * O nome da operação é a chave porque em modo <i>distinct connections</i> cada `subscribe` é uma
  * requisição própria, e a página tem duas ao mesmo tempo.
  */
-export function onSseConnected(operationName: string, listener: () => void): () => void {
-    const handler = (event: Event) => {
-        if ((event as CustomEvent<string>).detail === operationName) listener();
-    };
-    connections.addEventListener("connected", handler);
-    return () => connections.removeEventListener("connected", handler);
+export function onSseConnected(
+  operationName: string,
+  listener: () => void,
+): () => void {
+  const handler = (event: Event) => {
+    if ((event as CustomEvent<string>).detail === operationName) listener();
+  };
+  connections.addEventListener('connected', handler);
+  return () => connections.removeEventListener('connected', handler);
 }
 
 export class GraphQLSSELink extends ApolloLink {
-    private readonly client: Client;
+  private readonly client: Client;
 
-    constructor(url: string) {
-        super();
-        this.client = createClient({
-            url,
-            /*
-             * RECONECTA — e isto mudou de 0 para 5 por uma razão medida.
-             *
-             * Zero existia quando o upstream era o API Gateway, que nunca abria o stream: ali cada
-             * tentativa custava o prazo inteiro e a interface ficava minutos em "conectando".
-             *
-             * Com o repasse funcionando o caso é o oposto: a conexão tem FIM — a função do `posts-api`
-             * tem timeout, e quando ela chega ao dele o stream acaba. Sem reconexão, isso chega ao
-             * usuário como `Connection closed while having active streams` e a subscription morre ali.
-             * Reconectar é o que transforma um teto de invocação numa emenda que ninguém vê.
-             */
-            retryAttempts: 5,
-        });
-    }
+  constructor(url: string) {
+    super();
+    this.client = createClient({
+      url,
+      /*
+       * RECONECTA — e isto mudou de 0 para 5 por uma razão medida.
+       *
+       * Zero existia quando o upstream era o API Gateway, que nunca abria o stream: ali cada
+       * tentativa custava o prazo inteiro e a interface ficava minutos em "conectando".
+       *
+       * Com o repasse funcionando o caso é o oposto: a conexão tem FIM — a função do `posts-api`
+       * tem timeout, e quando ela chega ao dele o stream acaba. Sem reconexão, isso chega ao
+       * usuário como `Connection closed while having active streams` e a subscription morre ali.
+       * Reconectar é o que transforma um teto de invocação numa emenda que ninguém vê.
+       */
+      retryAttempts: 5,
+    });
+  }
 
-    override request(operation: ApolloLink.Operation): Observable<ApolloLink.Result> {
-        return new Observable<ApolloLink.Result>((subscriber) => {
-            let connected = false;
+  override request(
+    operation: ApolloLink.Operation,
+  ): Observable<ApolloLink.Result> {
+    return new Observable<ApolloLink.Result>((subscriber) => {
+      let connected = false;
 
-            const deadline = setTimeout(() => {
-                if (connected) return;
-                subscriber.error(
-                    new Error(
-                        `O proxy não abriu o stream em ${CONNECT_DEADLINE_MS / 1000}s. ` +
-                            "Veja os logs da função do Next e do posts-api.",
-                    ),
-                );
-            }, CONNECT_DEADLINE_MS);
+      const deadline = setTimeout(() => {
+        if (connected) return;
+        subscriber.error(
+          new Error(
+            `O proxy não abriu o stream em ${CONNECT_DEADLINE_MS / 1000}s. ` +
+              'Veja os logs da função do Next e do posts-api.',
+          ),
+        );
+      }, CONNECT_DEADLINE_MS);
 
-            const dispose = this.client.subscribe(
-                {
-                    query: print(operation.query),
-                    variables: operation.variables,
-                    operationName: operation.operationName,
-                    extensions: operation.extensions,
-                },
-                {
-                    next: (value) => subscriber.next(value as ApolloLink.Result),
-                    error: (error) => {
-                        clearTimeout(deadline);
-                        subscriber.error(error);
-                    },
-                    complete: () => {
-                        clearTimeout(deadline);
-                        subscriber.complete();
-                    },
-                },
-                {
-                    connected: () => {
-                        connected = true;
-                        clearTimeout(deadline);
-                        connections.dispatchEvent(
-                            new CustomEvent("connected", {
-                                detail: operation.operationName ?? "",
-                            }),
-                        );
-                    },
-                },
+      const dispose = this.client.subscribe(
+        {
+          query: print(operation.query),
+          variables: operation.variables,
+          operationName: operation.operationName,
+          extensions: operation.extensions,
+        },
+        {
+          next: (value) => subscriber.next(value as ApolloLink.Result),
+          error: (error) => {
+            clearTimeout(deadline);
+            subscriber.error(error);
+          },
+          complete: () => {
+            clearTimeout(deadline);
+            subscriber.complete();
+          },
+        },
+        {
+          connected: () => {
+            connected = true;
+            clearTimeout(deadline);
+            connections.dispatchEvent(
+              new CustomEvent('connected', {
+                detail: operation.operationName ?? '',
+              }),
             );
+          },
+        },
+      );
 
-            return () => {
-                clearTimeout(deadline);
-                dispose();
-            };
-        });
-    }
+      return () => {
+        clearTimeout(deadline);
+        dispose();
+      };
+    });
+  }
 }

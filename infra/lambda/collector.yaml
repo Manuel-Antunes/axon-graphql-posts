@@ -24,9 +24,9 @@ receivers:
   otlp:
     protocols:
       grpc:
-        endpoint: "localhost:4317"
+        endpoint: 'localhost:4317'
       http:
-        endpoint: "localhost:4318"
+        endpoint: 'localhost:4318'
 
 processors:
   # ESTE PROCESSADOR ENTROU PORQUE A MEDIÇÃO DERRUBOU O ARGUMENTO QUE O EXCLUÍA.
@@ -59,7 +59,7 @@ exporters:
   otlp_http/betterstack:
     endpoint: ${env:BETTER_STACK_URL}
     headers:
-      Authorization: "Bearer ${env:BETTER_STACK_API_KEY}"
+      Authorization: 'Bearer ${env:BETTER_STACK_API_KEY}'
     # 30 s, e o número saiu de `net/http: TLS handshake timeout` no log.
     #
     # O primeiro export de um container novo paga DNS mais handshake TLS SAINDO DE UM VPC, por NAT. O

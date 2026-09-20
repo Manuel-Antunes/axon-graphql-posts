@@ -1,9 +1,9 @@
 /// <reference path="../../../.sst/platform/config.d.ts" />
 
-import { Migrator } from "../support";
-import { platform } from "./platform";
-import { postsInbox, taggingDecide } from "./workers";
-import { postsEnvironment, taggingEnvironment } from "./environment";
+import { Migrator } from '../support';
+import { postsEnvironment, taggingEnvironment } from './environment';
+import { platform } from './platform';
+import { postsInbox, taggingDecide } from './workers';
 
 /**
  * As migrations, e elas rodam SOZINHAS no deploy.
@@ -16,11 +16,11 @@ import { postsEnvironment, taggingEnvironment } from "./environment";
  * menos para construir, e nenhuma chance de as migrations empacotadas divergirem das que a aplicação
  * valida com `schema-management.strategy=validate`.
  */
-export const postsMigrate = new Migrator("PostsMigrate", {
-    platform,
-    // O MESMO zip da função de fila: o que muda é `QUARKUS_LAMBDA_HANDLER`.
-    code: postsInbox.code,
-    environment: postsEnvironment,
+export const postsMigrate = new Migrator('PostsMigrate', {
+  platform,
+  // O MESMO zip da função de fila: o que muda é `QUARKUS_LAMBDA_HANDLER`.
+  code: postsInbox.code,
+  environment: postsEnvironment,
 });
 
 /**
@@ -31,9 +31,12 @@ export const postsMigrate = new Migrator("PostsMigrate", {
  * (No `posts-api` isso não é preciso: lá o canal é constante e já está no
  * `application-lambda.properties`, porque aquela aplicação tem uma fila de entrada só.)
  */
-export const taggingMigrate = new Migrator("TaggingMigrate", {
-    platform,
-    // Idem: o artefato do `tagging`, com o handler de migração.
-    code: taggingDecide.code,
-    environment: { ...taggingEnvironment, AXONPOSTS_LAMBDA_SQS_CHANNEL: "post-precreated-in" },
+export const taggingMigrate = new Migrator('TaggingMigrate', {
+  platform,
+  // Idem: o artefato do `tagging`, com o handler de migração.
+  code: taggingDecide.code,
+  environment: {
+    ...taggingEnvironment,
+    AXONPOSTS_LAMBDA_SQS_CHANNEL: 'post-precreated-in',
+  },
 });

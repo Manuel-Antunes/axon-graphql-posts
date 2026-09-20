@@ -55,11 +55,12 @@ o Maven percorreria os oito módulos em série para subir duas aplicações. É 
 ```bash
 pnpm dev                       # os DOIS backends E o cliente web, em paralelo — ver a seção abaixo
 pnpm --filter @axonposts/web dev   # só o cliente, em http://localhost:3000
+pnpm --filter @axonposts/web exec vitest   # as unidades do cliente, em modo OBSERVADOR
 ./infra/scripts/package.sh     # os QUATRO zips de Lambda (alvos do Nx) — ver *AWS Lambda*
 ./mvnw install -DskipTests -pl '!apps/posts-api,!apps/tagging'   # as libs no ~/.m2 (ver abaixo)
 ./mvnw quarkus:dev -pl apps/posts-api   # uma aplicação só
 ./mvnw test                    # suíte inteira — EXIGE Docker
-pnpm test                      # o NÍVEL DE BAIXO, pelo Nx: 94 testes, ~26s (ver *Testes*)
+pnpm test                      # o NÍVEL DE BAIXO, pelo Nx: Java + as unidades do `web` (ver *Testes*)
 pnpm test:e2e                  # os DOIS níveis pesados, em série — ver *Testes*
 pnpm lint                      # ESLint nos pacotes JS + Spotless nos 8 módulos Java
 pnpm lint:fix                  # conserta os DOIS lados de uma vez (ver *O LINT*)
@@ -1825,6 +1826,7 @@ Era tudo em `apps/posts-api/src/test`, inclusive o que prova o domínio que vive
 | `libs/test-support` | 7 | a ordem das migrations, no formato de versão do Flyway |
 | `apps/posts-api` | 117 | aplicação, GraphQL, fiação e os 8 `*E2ETest` |
 | `apps/tagging` | 10 | a decisão, a fiação e o caminho inteiro sem broker |
+| `apps/web` | 26 | as claims do ID token e a semântica de versão da saga na interface |
 
 **O argumento é `apps/tagging`:** ele importa `libs/posts` para ganhar as regras do `Post`. Enquanto
 essas regras eram provadas na pasta de teste de OUTRO app, a lib não se sustentava sozinha.
@@ -1921,13 +1923,51 @@ Quarkus (2 de 2), e volta a passar com `clean`. Custa ~9s no cache MISS; no hit 
 ### DOIS COMANDOS, UM ALVO POR MÓDULO — o Nx orquestra, o Maven executa
 
 ```
-pnpm test       nx run-many -t test         → 7 projetos
+pnpm test       nx run-many -t test         → 10 projetos (9 Maven + o `web`)
 pnpm test:e2e   nx run-many -t test:e2e --parallel=1   → 3 projetos
 ```
 
 **Nenhum dos dois lista ninguém.** Cada módulo com teste declara o próprio alvo, e o `run-many`
 resolve. Antes era UM alvo em `apps/posts-api` que rodava `./mvnw test` da raiz: os 190 testes rodavam,
 mas o Nx enxergava um projeto só — sem cache por módulo e sem `affected`.
+
+#### O LADO JAVASCRIPT NÃO DECLARA ALVO NENHUM: quem o infere é o `@nx/vitest`
+
+Do lado Maven o alvo é escrito à mão em cada `project.json`, porque o `@nx/maven` não sabe o que é
+"o nível de baixo". Do lado JavaScript não é: o `@nx/vitest` cria o alvo a partir do
+`vitest.config`, com comando, `cwd`, cache, `outputs` de cobertura e — o que mais importa — os
+`inputs` certos, incluindo `{ "externalDependencies": ["vitest"] }` e `{ "env": "CI" }`. Esse
+segundo não é detalhe: os dois configs escolhem o reporter por `process.env.CI`, e sem ele um
+resultado cacheado na máquina seria REPLAYADO na esteira, sem nunca escrever o XML do junit.
+
+**É `@nx/vitest` e não `@nx/vite`.** Desde o Nx 23.2 o Vitest tem pacote próprio, e é o que serve a
+um projeto que só TESTA com Vite. Nenhum dos dois apps JS constrói com Vite — o `web` constrói com o
+Next e o `posts-api-e2e` não constrói nada.
+
+**São DUAS registrações no `nx.json`, e a divisão é a mesma que separa os dois comandos:**
+
+| registração | escopo | alvo |
+|---|---|---|
+| `testTargetName: "test"` | `exclude: ["apps/posts-api-e2e/**"]` | o nível de baixo — hoje só o `web` |
+| `testTargetName: "test:e2e"` | `include: ["apps/posts-api-e2e/**"]` | a saga entre processos |
+
+Sem a segunda, o app da saga ganharia um alvo chamado `test` e `pnpm test` passaria a subir dois
+JVMs e um broker — calado, porque o comando continuaria verde, só que dez vezes mais lento. A
+primeira é a que faz um `vitest.config` novo em qualquer outro projeto nascer JÁ no nível certo,
+sem ninguém editar o `nx.json`.
+
+**`testMode: "run"` nas duas, e não o default `watch`.** Com o default o comando inferido é
+`vitest` puro, que só roda uma vez quando `CI` está setada — na máquina, `pnpm test` entraria em
+modo observador e NUNCA terminaria. Quem quiser observar roda
+`pnpm --filter @axonposts/web exec vitest`.
+
+**O que sobra no `project.json` é só o que o plugin não tem como saber**: o `dependsOn` (`codegen`
+no `web`, `build` no `posts-api-e2e`) e o `outputs` do XML do junit — o plugin deduz o diretório de
+COBERTURA a partir do config, e o `outputFile` dos reporters ele não lê.
+
+**Cuidado ao declarar `inputs` ali: eles SUBSTITUEM os inferidos, não somam.** É por isso que o
+`test:e2e` repete `externalDependencies` e `CI` ao lado do `quarkusStack` que só ele precisa. O
+`web` não declara `inputs` nenhum, e é o caso normal.
 
 | | antes | agora |
 |---|---|---|
@@ -2251,7 +2291,7 @@ config.
 
 | projeto | config | o que acrescenta |
 |---|---|---|
-| `web` | `apps/web/eslint.config.mjs` | o preset do Next |
+| `web` | `apps/web/eslint.config.mjs` | o preset do Next, o Vitest, o Tailwind e o GraphQL |
 | `posts-api-e2e` | `apps/posts-api-e2e/eslint.config.mjs` | as regras do Vitest |
 | `infra` | `infra/eslint.config.mjs` | as duas exceções do SST |
 | `dev.manuelantunes:quarkus-axon-graphql-posts` | — | Spotless, nos OITO módulos Maven |
@@ -2328,6 +2368,75 @@ A regra `no-standalone-expect` pegou uma de verdade na primeira execução: havi
 regra — foi `PostsApi.subscribe` passar a RECUSAR um status diferente de 200, porque uma subscription
 que não abriu não é uma subscription.
 
+**As mesmas seis regras valem no `apps/web`**, sobre `src/**/*.spec.{ts,tsx}`. Um spec de unidade
+mente do mesmo jeito que um de saga.
+
+#### TAILWIND e GRAPHQL no `web`: o que ENTROU foi MEDIDO, como o `importOrder` foi
+
+As duas famílias novas seguem a regra que este documento já aplica ao Spotless e ao Error Prone —
+**o que aponta defeito entra; o que só impõe uma convenção que o código nunca teve, fica de fora** —
+e em nenhum dos dois casos a linha foi escolhida por gosto: as 15 regras do Tailwind e as 37 do
+GraphQL foram rodadas contra os 71 fontes do app antes de qualquer decisão.
+
+**Tailwind: `eslint-plugin-better-tailwindcss`, e não o `eslint-plugin-tailwindcss`.** Os dois têm
+versão estável para a v4 hoje, e a escolha é pelo modelo de configuração: na v4 a config é o PRÓPRIO
+CSS (`@theme` dentro do `globals.css`) e não existe `tailwind.config.ts` neste projeto. Esse plugin
+recebe `entryPoint: "src/app/globals.css"` e lê o tema de lá; o outro nasceu em volta do arquivo JS.
+
+```
+172  enforce-logical-properties        `mt-1` → `mbs-1`, `size-7` → `block-7 inline-7`    FORA
+101  enforce-consistent-line-wrapping  um FORMATTER de className                          FORA
+ 12  enforce-canonical-classes         `text-sm leading-relaxed` → `text-sm/relaxed`      FORA
+  2  enforce-shorthand-classes         `-translate-x-1/2 -translate-y-1/2`                FORA
+  1  enforce-consistent-class-order                                                       ENTRA
+  1  no-deprecated-classes             achou `backdrop-blur` no site-header               ENTRA
+  1  no-unknown-classes                achou `toaster`, que é do sonner                   ENTRA
+```
+
+As quatro de cima são o caso do `importOrder` outra vez: não existindo convenção a preservar, a
+regra não arruma nada — ela ESCOLHE uma e reescreve quase tudo para impô-la.
+`enforce-logical-properties` é o extremo: troca o vocabulário do Tailwind por um que ninguém aqui lê,
+para resolver um problema (RTL) que esta aplicação não tem.
+
+O que entrou é o `correctness` do próprio plugin — classe inexistente, classe que briga com outra,
+classe montada por CONCATENAÇÃO (que o Tailwind não extrai e portanto poda do CSS) — mais as três
+que custaram uma ocorrência cada. E elas pagaram a entrada: **`backdrop-blur` está DEPRECIADA na v4**
+(a escala do blur foi renomeada, o `blur` da v3 virou `blur-sm`), e estava no cabeçalho de todas as
+páginas. O `toaster` é a única exceção, nominal de propósito: é classe do sonner, aplicada pela
+biblioteca no CSS dela — um `ignore` largo ali desligaria a proteção contra erro de digitação, que é
+o que a regra existe para dar.
+
+**GraphQL: `@graphql-eslint/eslint-plugin`, em dois blocos.** O primeiro põe o `processor` sobre os
+`.ts`/`.tsx` — ele roda o `graphql-tag-pluck` e entrega o que achar como arquivos `.graphql`
+VIRTUAIS. Isso funciona com o `client-preset` porque o pluck reconhece `graphql(\`...\`)` como
+CHAMADA, e não só ``gql`...` `` como tag. O segundo bloco linta esses documentos contra o
+`schema.graphql` — o MESMO arquivo que o codegen lê, então lint e tipos gerados não divergem.
+
+`operations-recommended` e não `operations-all`, e de novo por medição: as cinco regras que só
+existem em `all` deram 45 das 57 ocorrências, e as três maiores BRIGAM com o desenho que
+`apps/web/README.md` documenta — `require-import-fragment` (18) quer comentários `#import`, que são
+do fluxo de arquivos `.graphql` e não do `client-preset`; `no-one-place-fragments` (2) quer inlinar
+um fragmento usado uma vez, quando a promessa do fragment masking é justamente que o COMPONENTE seja
+dono do que pede; e `alphabetize` (25) reordena seleção, que aqui é lida na ordem em que a tela mostra.
+
+**E ele também pagou a entrada: `require-selections` achou o `TagList_post` lendo um `Post` sem pedir
+o `id`.** O cache do Apollo normaliza `Post` por `keyFields: ["id"]` — um fragmento assim não é
+auto-suficiente, e o sintoma seria o mesmo post virando dois objetos no cache, em silêncio.
+
+**Duas regras do preset foram CONFIGURADAS em vez de desligadas**, e as duas pelo mesmo motivo — elas
+estavam certas sobre o código errado:
+
+- **`naming-convention` reprovava os nove fragmentos** (`PostCard_post`, `TagList_post`…) por não
+  serem `PascalCase`. Mas esse nome é a convenção do `client-preset`, `<Componente>_<prop>`, e é ela
+  que liga o fragmento ao componente que o declara. Trocar `style` por um `requiredPattern` faz a
+  regra parar de brigar com a convenção e passar a EXIGI-LA;
+- **`allowLeadingUnderscore`**, porque `_entities` e `_Entity` são nomes reservados da especificação
+  da Apollo Federation. Proibir o underscore seria proibir falar com um subgraph.
+
+E o `schema.graphql` entra em `ignores`: ele é SCHEMA, as regras são de OPERAÇÃO, e sem essa linha o
+`executable-definitions` acusa cada `type` dele — 50 erros dizendo que uma definição de tipo não é
+executável, o que é verdade e não é defeito. Ele nem é escrito aqui: sai da API por `pnpm schema:pull`.
+
 #### `consistent-type-definitions` é AUTO-CORRIGÍVEL e o auto-conserto QUEBROU o build
 
 A regra da base exige `interface` no lugar de `type` para tipo de objeto, e o `--fix` converteu 11
@@ -2362,15 +2471,59 @@ também foi medido: `forwardAllArgs: false` bloqueia `args` junto, então a conf
 `--fix` e **dizia que tinha passado**. Travado por um teste manual com violação plantada dos dois
 lados — `let` que devia ser `const` no TypeScript e espaço no fim da linha no Java.
 
-#### A indentação do TypeScript é 2, e quem manda é o `.editorconfig`
+#### O PRETTIER, e o `.editorconfig` como fonte única da indentação
 
-Ele está na raiz, diz `indent_size = 2` para todos os arquivos, e `apps/web` o segue. Os arquivos de
-`apps/posts-api-e2e` nasceram com 4 e foram reindentados. **Não há Prettier**, aqui nem em `apps/web`:
-o `.editorconfig` já declara a convenção, e acrescentar um formatter só para o app de teste deixaria
-um pacote JS formatado e o outro não.
+**Esta seção dizia "não há Prettier", e a decisão MUDOU.** O argumento antigo era que o
+`.editorconfig` já declarava a convenção — e o problema é que ele a declarava e ninguém a aplicava:
+dos 51 arquivos TS/TSX, **43 estavam em 4 espaços** contra um arquivo que pedia 2.
 
-A régua do Java continua sendo 4 — o `[*]` do `.editorconfig` não descreve o que os 227 arquivos Java
-fazem, e não é ele que decide lá. Ver logo abaixo por que não há formatter do lado Java.
+**O `.editorconfig` não estava funcionando, e eram TRÊS causas independentes:**
+
+1. **Ele descrevia o que não existe.** O bloco `[*]` com `indent_size = 2` valia também para os 153
+   arquivos Java e os 12 `pom.xml`, que são de 4. Um editor diante de uma configuração que contradiz
+   o conteúdo resolve sozinho — e resolve ADIVINHANDO. Hoje há blocos `[*.{java,xml}]` e `[*.sql]`
+   com 4, e o `[*]` passou a descrever o que sobra;
+2. **O VSCode não lê `.editorconfig` nativamente.** Isso é a extensão `EditorConfig.EditorConfig`, e
+   ela agora está em `.vscode/extensions.json`;
+3. **`editor.detectIndentation` vem LIGADO por padrão**, e ele adivinha a indentação pelo começo do
+   arquivo, por cima de qualquer configuração. Era esta a origem direta do sintoma. Está desligado
+   em `.vscode/settings.json`.
+
+Os dois arquivos de `.vscode/` são versionados por exceção explícita no `.gitignore` — são
+configuração de PROJETO, e sem elas a convenção simplesmente não vale para quem clona. O resto de
+`.vscode/` continua ignorado, como `.idea/`.
+
+**O Prettier lê o `.editorconfig` por padrão, e isso é o que amarra os dois.** Medido: com
+`indent_size = 8` lá, o Prettier indenta 8. Por isso o `.prettierrc.mjs` **não declara `tabWidth`** —
+a indentação é dita uma vez só, no arquivo que o editor também lê.
+
+O que o `.prettierrc.mjs` declara é o que o `.editorconfig` não sabe dizer: aspas simples,
+`@ianvs/prettier-plugin-sort-imports` com os grupos deste monorepo (React/Next → terceiros → `@/` →
+relativos) e `prettier-plugin-tailwindcss` apontando o `tailwindStylesheet` para o **mesmo**
+`globals.css` que o ESLint do Tailwind usa como `entryPoint`.
+
+**Dois plugins do config original foram removidos por medição, não por gosto**: o
+`prettier-plugin-embed` (com `embeddedGraphqlIdentifiers`) produziu saída **byte a byte idêntica** à
+do Prettier sozinho — ele já formata o GraphQL dentro de `graphql(\`...\`)` —, e o
+`prettier-plugin-sql` veio só como dependência dele, para um SQL embarcado que não existe neste
+repositório.
+
+**O que ficou de FORA do Prettier, e por quê:**
+
+| | por quê |
+|---|---|
+| `**/db/migration/**` | o Flyway grava o CHECKSUM do conteúdo; reformatar uma migration aplicada derruba a aplicação na partida, em todo ambiente onde ela já rodou |
+| `*.md` | o próprio `.editorconfig` desliga `max_line_length` e `trim_trailing_whitespace` ali. Medido: 144 linhas só no README da raiz, quase todas tabelas expandidas até 150 colunas — e o CLAUDE.md entraria na mesma conta |
+| Java e `pom.xml` | o Prettier não fala nenhuma das duas. Ver *O LADO JAVA*, logo abaixo: lá a ausência de formatter continua sendo decisão medida |
+
+A primeira passada reformatou **148 arquivos**. Ela invalida o cache do Nx de quase tudo, inclusive
+dos quatro artefatos Lambda — `infra/lambda/collector.yaml` entrou na conta, e ele é input do
+`quarkusLambda`. É uma vez só.
+
+`pnpm lint` passou a conferir a formatação junto (`prettier --check .` depois do `run-many`), e
+`pnpm lint:fix` a consertá-la. `pnpm format` e `pnpm format:check` existem para rodar só essa
+metade. Na esteira quem confere é o job do cliente, no primeiro passo — `--check` e nunca `--write`,
+porque numa esteira formatar é esconder.
 
 ### O LADO JAVA: Spotless para o arrumável, Error Prone para o defeito
 
@@ -2386,9 +2539,15 @@ Continua sendo — só que agora o compilador sabe mais.
 
 O que é arrumável por máquina não precisa derrubar um build; o que exige alguém ler, precisa.
 
-**NÃO HÁ FORMATTER, e a ausência foi medida.** 227 arquivos, indentação de 4 espaços, **dez** linhas
-acima de 120 colunas: o código já está formatado. Um `google-java-format` ou um `palantir` reescreveria
-os 227 para impor a régua dele, requebrando o Javadoc longo em português e levando o `git blame` junto.
+**NÃO HÁ FORMATTER DO LADO JAVA, e a ausência foi medida.** 227 arquivos, indentação de 4 espaços,
+**dez** linhas acima de 120 colunas: o código já está formatado. Um `google-java-format` ou um
+`palantir` reescreveria os 227 para impor a régua dele, requebrando o Javadoc longo em português e
+levando o `git blame` junto.
+
+**Isto NÃO é contradito pelo Prettier do lado JavaScript**, e a diferença é o estado de partida: lá
+43 dos 51 arquivos TS contradiziam a convenção declarada, então havia o que arrumar; aqui os 227 já
+a seguem. O Prettier tampouco fala Java — é por isso que quem descreve a régua de 4 espaços desse
+lado é o bloco `[*.{java,xml}]` do `.editorconfig`, e mais ninguém.
 
 **Também não há `importOrder`, pela razão oposta.** Ela foi ligada, medida e desligada: a ordem dos
 grupos de import **não é consistente** neste código — uns arquivos começam por `dev`, outros por

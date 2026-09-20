@@ -1,4 +1,4 @@
-import { graphql } from "@/gql";
+import { graphql } from '@/gql';
 
 /**
  * A query desta página. Lida por dois lugares, como manda a regra:
@@ -14,12 +14,12 @@ import { graphql } from "@/gql";
  * prefetch. Elas moram no hook que as dispara.
  */
 export const PostByIdQuery = graphql(`
-    query PostById($id: ID!) {
-        post(id: $id) {
-            id
-            version
-            ...PostArticle_post
-            ...PostEditor_post
-        }
+  query PostById($id: ID!) {
+    post(id: $id) {
+      id
+      version
+      ...PostArticle_post
+      ...PostEditor_post
     }
+  }
 `);

@@ -11,7 +11,7 @@ onlyBuiltDependencies:
   - nx
   # O Next e o Tailwind 4 trazem binários nativos por plataforma, e sem esta lista o pnpm 10 pede
   # aprovação interativa para cada um — o que pendura a instalação em CI e no deploy.
-  - "@tailwindcss/oxide"
+  - '@tailwindcss/oxide'
   - sharp
   - esbuild
   - unrs-resolver

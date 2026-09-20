@@ -1,5 +1,5 @@
 // @ts-check
-import baseConfig from "./eslint.base.config.mjs";
+import baseConfig from './eslint.base.config.mjs';
 
 /**
  * O ESLint da RAIZ — e ele NÃO é o lint de um projeto.
@@ -20,9 +20,9 @@ export default [
   ...baseConfig,
 
   {
-    files: ["**/*.json"],
+    files: ['**/*.json'],
     languageOptions: {
-      parser: await import("jsonc-eslint-parser"),
+      parser: await import('jsonc-eslint-parser'),
     },
   },
 
@@ -40,10 +40,10 @@ export default [
      * ser, porque o SST exige que a raiz da configuração esteja neste arquivo e os módulos de
      * `infra/` criam recursos no topo. Importá-los estaticamente os avaliaria antes de `app()`.
      */
-    files: ["sst.config.ts"],
+    files: ['sst.config.ts'],
     rules: {
-      "@typescript-eslint/triple-slash-reference": "off",
-      "@nx/enforce-module-boundaries": "off",
+      '@typescript-eslint/triple-slash-reference': 'off',
+      '@nx/enforce-module-boundaries': 'off',
     },
   },
 
@@ -51,6 +51,6 @@ export default [
     /*
      * Um `npx eslint .` daqui não repete o que cada projeto já diz uma vez.
      */
-    ignores: ["apps/**", "libs/**", "infra/**", "docker/**", "tools/**"],
+    ignores: ['apps/**', 'libs/**', 'infra/**', 'docker/**', 'tools/**'],
   },
 ];

@@ -1,3 +1,11 @@
+import { spawn } from 'node:child_process';
+import { createWriteStream, existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { ChildProcess } from 'node:child_process';
+
+import { WORKSPACE_ROOT } from './docker';
+import { sleep } from './posts-api';
+
 /**
  * Um dos DOIS processos da saga, e a pergunta que os separa: como se sabe que ele subiu?
  *
@@ -7,11 +15,6 @@
  *
  * Duas respostas para a mesma pergunta é o que faz da prontidão uma ESTRATÉGIA, e não um `if`.
  */
-import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { WORKSPACE_ROOT } from "./docker";
-import { sleep } from "./posts-api";
 
 /**
  * O `java` que roda os artefatos.
@@ -26,7 +29,9 @@ import { sleep } from "./posts-api";
  * aplicação morreu na partida", e é por isso que `waitUntilReady` delata a morte precoce em vez de
  * esperar o prazo inteiro.
  */
-const JAVA = process.env.JAVA_HOME ? join(process.env.JAVA_HOME, "bin", "java") : "java";
+const JAVA = process.env.JAVA_HOME
+  ? join(process.env.JAVA_HOME, 'bin', 'java')
+  : 'java';
 
 export interface Readiness {
   /** Verdadeiro quando o serviço está no ar. Recebe o log para quem não tem outra coisa a olhar. */
@@ -78,29 +83,32 @@ export class Service {
   ) {}
 
   start(): void {
-    const log = createWriteStream(this.logFile, { flags: "w" });
+    const log = createWriteStream(this.logFile, { flags: 'w' });
     this.death = undefined;
-    const child = spawn(JAVA, ["-jar", join(WORKSPACE_ROOT, this.jar)], {
+    const child = spawn(JAVA, ['-jar', join(WORKSPACE_ROOT, this.jar)], {
       cwd: WORKSPACE_ROOT,
       env: { ...process.env, ...this.env },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     child.stdout.pipe(log);
     child.stderr.pipe(log);
 
     // Sem este ouvinte, um `spawn` que falha (ENOENT no `java`) vira exceção NÃO TRATADA e o
     // Vitest a reporta sem dizer qual serviço era.
-    child.on("error", (error) => {
+    child.on('error', (error) => {
       this.death = `não foi possível executar ${JAVA}: ${error.message}`;
     });
     // A morte precoce é o caso que custou caro: o processo sai, o log fica vazio, e sem isto a
     // espera segue até o prazo para então dizer só que ele "não subiu".
-    child.on("exit", (code, signal) => {
-      if (signal === "SIGTERM") return;
-      this.death = `o processo saiu com código ${code ?? "?"}${signal ? ` (${signal})` : ""}`
-        + (this.log.trim() === "" ? " e NÃO ESCREVEU UMA LINHA — quase sempre é o JDK:"
-          + ` um artefato \`release 21\` sob um JDK mais velho sai exatamente assim.`
-          + ` JAVA_HOME=${process.env.JAVA_HOME ?? "<não definido>"}` : "");
+    child.on('exit', (code, signal) => {
+      if (signal === 'SIGTERM') return;
+      this.death =
+        `o processo saiu com código ${code ?? '?'}${signal ? ` (${signal})` : ''}` +
+        (this.log.trim() === ''
+          ? ' e NÃO ESCREVEU UMA LINHA — quase sempre é o JDK:' +
+            ` um artefato \`release 21\` sob um JDK mais velho sai exatamente assim.` +
+            ` JAVA_HOME=${process.env.JAVA_HOME ?? '<não definido>'}`
+          : '');
     });
     this.process = child;
   }
@@ -111,7 +119,9 @@ export class Service {
       // Antes do `sleep`, e não depois: um processo que já morreu não vai ficar pronto, e
       // esperar o prazo inteiro só atrasa a resposta.
       if (this.death) {
-        throw new Error(`${this.name} morreu na partida — ${this.death}\n${this.tail()}`);
+        throw new Error(
+          `${this.name} morreu na partida — ${this.death}\n${this.tail()}`,
+        );
       }
       await sleep(1000);
     }
@@ -121,25 +131,27 @@ export class Service {
   }
 
   stop(): void {
-    this.process?.kill("SIGTERM");
+    this.process?.kill('SIGTERM');
     this.process = undefined;
   }
 
   get startupTime(): string {
-    return /started in [0-9.]+s/.exec(this.log)?.[0] ?? "(sem a linha de partida)";
+    return (
+      /started in [0-9.]+s/.exec(this.log)?.[0] ?? '(sem a linha de partida)'
+    );
   }
 
   get log(): string {
-    return existsSync(this.logFile) ? readFileSync(this.logFile, "utf8") : "";
+    return existsSync(this.logFile) ? readFileSync(this.logFile, 'utf8') : '';
   }
 
   /** As últimas linhas RELEVANTES: a pilha de uma exceção Java empurra a causa para fora da tela. */
   tail(lines = 25): string {
     return this.log
-      .split("\n")
+      .split('\n')
       .filter((line) => !/^\s+at /.test(line))
       .slice(-lines)
-      .join("\n");
+      .join('\n');
   }
 
   private get logFile(): string {

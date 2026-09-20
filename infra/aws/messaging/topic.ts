@@ -29,4 +29,4 @@
  * terceiro segmento da routing key e lá não ordenava nada. Numa fila standard esta saga não funciona
  * pior — ela quebra, de forma intermitente e proporcional à carga.
  */
-export const postEvents = new sst.aws.SnsTopic("PostEvents", { fifo: true });
+export const postEvents = new sst.aws.SnsTopic('PostEvents', { fifo: true });

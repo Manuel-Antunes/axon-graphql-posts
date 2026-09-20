@@ -17,7 +17,7 @@
  * A ordem dos imports é a de dependência: `platform` cria o papel e publica os artefatos, e tudo o
  * mais os consome.
  */
-export { platform, codeBucket, sources } from "./platform";
-export { api, gateway, streaming } from "./api";
-export { postsInbox, taggingDecide, taggingReplicate } from "./workers";
-export { postsMigrate, taggingMigrate } from "./migrations";
+export { platform, codeBucket, sources } from './platform';
+export { api, gateway, streaming } from './api';
+export { postsInbox, taggingDecide, taggingReplicate } from './workers';
+export { postsMigrate, taggingMigrate } from './migrations';

@@ -9,16 +9,17 @@ export interface GraphQlResponse<T> {
   errors?: Array<{ message: string; extensions?: Record<string, unknown> }>;
 }
 
-export const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+export const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 /** O autor semeado no realm — a senha é a do `docker/keycloak/realm-axon-posts.json`. */
-const AUTHOR = { username: "manuel@example.com", password: "segredo123" };
+const AUTHOR = { username: 'manuel@example.com', password: 'segredo123' };
 
 export class PostsApi {
   constructor(
-    readonly graphqlUrl = "http://localhost:8080/graphql",
-    readonly issuerUrl = "http://localhost:8081/realms/axon-posts",
-    readonly healthUrl = "http://localhost:8080/q/health",
+    readonly graphqlUrl = 'http://localhost:8080/graphql',
+    readonly issuerUrl = 'http://localhost:8081/realms/axon-posts',
+    readonly healthUrl = 'http://localhost:8080/q/health',
   ) {}
 
   async isHealthy(): Promise<boolean> {
@@ -32,14 +33,17 @@ export class PostsApi {
   /** Autentica o autor semeado e devolve um cliente que já assina toda requisição. */
   async asAuthor(): Promise<AuthenticatedApi> {
     const body = new URLSearchParams({
-      grant_type: "password",
-      client_id: "axon-posts-api",
+      grant_type: 'password',
+      client_id: 'axon-posts-api',
       ...AUTHOR,
     });
-    const response = await fetch(`${this.issuerUrl}/protocol/openid-connect/token`, {
-      method: "POST",
-      body,
-    });
+    const response = await fetch(
+      `${this.issuerUrl}/protocol/openid-connect/token`,
+      {
+        method: 'POST',
+        body,
+      },
+    );
     const json = (await response.json()) as { access_token?: string };
     if (!json.access_token) {
       throw new Error(`o Keycloak não devolveu token: ${JSON.stringify(json)}`);
@@ -51,12 +55,14 @@ export class PostsApi {
     query: string,
     options: { token?: string; variables?: Record<string, unknown> } = {},
   ): Promise<GraphQlResponse<T>> {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
     if (options.token) {
       headers.Authorization = `Bearer ${options.token}`;
     }
     const response = await fetch(this.graphqlUrl, {
-      method: "POST",
+      method: 'POST',
       headers,
       body: JSON.stringify({ query, variables: options.variables }),
     });
@@ -74,14 +80,19 @@ export class PostsApi {
   async subscribe<T>(query: string): Promise<SseSubscription<T>> {
     const controller = new AbortController();
     const response = await fetch(this.graphqlUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+      },
       body: JSON.stringify({ query }),
       signal: controller.signal,
     });
     if (response.status !== 200) {
       controller.abort();
-      throw new Error(`a subscription por SSE não abriu: HTTP ${response.status}`);
+      throw new Error(
+        `a subscription por SSE não abriu: HTTP ${response.status}`,
+      );
     }
     return new SseSubscription<T>(response, controller);
   }
@@ -94,7 +105,10 @@ export class AuthenticatedApi {
     readonly token: string,
   ) {}
 
-  query<T>(query: string, variables?: Record<string, unknown>): Promise<GraphQlResponse<T>> {
+  query<T>(
+    query: string,
+    variables?: Record<string, unknown>,
+  ): Promise<GraphQlResponse<T>> {
     return this.api.query<T>(query, { token: this.token, variables });
   }
 
@@ -105,10 +119,15 @@ export class AuthenticatedApi {
    * o que veio dentro dele). Quem sabe o que é uma resposta malformada é a borda, não o teste — e
    * a mensagem que ela levanta é melhor que a de um `expect` genérico, porque ela tem os `errors`.
    */
-  async mutate<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+  async mutate<T>(
+    query: string,
+    variables?: Record<string, unknown>,
+  ): Promise<T> {
     const response = await this.query<T>(query, variables);
     if (!response.data) {
-      throw new Error(`a mutation não devolveu data: ${JSON.stringify(response)}`);
+      throw new Error(
+        `a mutation não devolveu data: ${JSON.stringify(response)}`,
+      );
     }
     return response.data;
   }
@@ -141,7 +160,10 @@ export class SseSubscription<T> {
    * lazy de propósito (resolver o `Emitter` na partida dá `SRMSG00019`). Medido — a primeira
    * mensagem foi nacked e só a reentrega fechou a saga, ~20s depois.
    */
-  async waitFor(predicate: (event: T) => boolean, timeoutMs = 60_000): Promise<T | null> {
+  async waitFor(
+    predicate: (event: T) => boolean,
+    timeoutMs = 60_000,
+  ): Promise<T | null> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const match = this.events
@@ -162,7 +184,10 @@ export class SseSubscription<T> {
    */
   async awaitMatching(
     predicate: (event: T) => boolean,
-    { timeoutMs = 60_000, describeFailure }: {
+    {
+      timeoutMs = 60_000,
+      describeFailure,
+    }: {
       timeoutMs?: number;
       describeFailure?: () => string;
     } = {},
@@ -170,8 +195,8 @@ export class SseSubscription<T> {
     const match = await this.waitFor(predicate, timeoutMs);
     if (match === null) {
       throw new Error(
-        `nenhum evento casou em ${timeoutMs}ms; ${this.events.length} evento(s) no fio\n`
-        + (describeFailure?.() ?? ""),
+        `nenhum evento casou em ${timeoutMs}ms; ${this.events.length} evento(s) no fio\n` +
+          (describeFailure?.() ?? ''),
       );
     }
     return match;
@@ -185,16 +210,16 @@ export class SseSubscription<T> {
     const reader = this.response.body?.getReader();
     if (!reader) return;
     const decoder = new TextDecoder();
-    let buffer = "";
+    let buffer = '';
     try {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
         for (const line of lines) {
-          if (!line.startsWith("data:")) continue;
+          if (!line.startsWith('data:')) continue;
           const payload = line.slice(5).trim();
           if (!payload) continue;
           try {

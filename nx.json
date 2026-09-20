@@ -6,7 +6,9 @@
     "production": [
       "default",
       "!{projectRoot}/src/test/**/*",
-      "!{projectRoot}/**/*.md"
+      "!{projectRoot}/**/*.md",
+      "!{projectRoot}/**/?(*.)+(spec|test).[jt]s?(x)?(.snap)",
+      "!{projectRoot}/tsconfig.spec.json"
     ],
     "javaSources": [
       "{workspaceRoot}/pom.xml",
@@ -61,11 +63,23 @@
       "options": {
         "targetName": "lint"
       },
-      "exclude": [
-        "apps/posts-api/**",
-        "apps/tagging/**",
-        "libs/**"
-      ]
+      "exclude": ["apps/posts-api/**", "apps/tagging/**", "libs/**"]
+    },
+    {
+      "plugin": "@nx/vitest",
+      "options": {
+        "testTargetName": "test",
+        "testMode": "run"
+      },
+      "exclude": ["apps/posts-api-e2e/**"]
+    },
+    {
+      "plugin": "@nx/vitest",
+      "options": {
+        "testTargetName": "test:e2e",
+        "testMode": "run"
+      },
+      "include": ["apps/posts-api-e2e/**"]
     }
   ],
   "analytics": false

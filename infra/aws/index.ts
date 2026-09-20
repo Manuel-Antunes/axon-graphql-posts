@@ -1,11 +1,11 @@
 /// <reference path="../../.sst/platform/config.d.ts" />
 
-import { gateway, streaming, postsMigrate, taggingMigrate } from "./compute";
-import { postEvents, precreated, changes, completed } from "./messaging";
-import { users, client, issuer } from "./identity";
-import { postsDb, taggingDb } from "./data";
-import { router } from "./edge";
-import { web } from "./web";
+import { gateway, postsMigrate, streaming, taggingMigrate } from './compute';
+import { postsDb, taggingDb } from './data';
+import { router } from './edge';
+import { client, issuer, users } from './identity';
+import { changes, completed, postEvents, precreated } from './messaging';
+import { web } from './web';
 
 /**
  * A fachada da stack: a ordem de carga e os outputs. Nada é criado aqui.
@@ -35,57 +35,57 @@ import { web } from "./web";
  * rodado. Daqui para baixo não há essa restrição: `run()` já começou.
  */
 export const outputs = {
-    /**
-     * O cliente de teste. É por aqui que se entra.
-     *
-     * Desde que o site ficou atrás do router, esta URL É a do router — site e API dividem uma
-     * distribuição, e com isso dividirão um domínio e um certificado. Ver `edge/index.ts`.
-     */
-    web: web.url,
+  /**
+   * O cliente de teste. É por aqui que se entra.
+   *
+   * Desde que o site ficou atrás do router, esta URL É a do router — site e API dividem uma
+   * distribuição, e com isso dividirão um domínio e um certificado. Ver `edge/index.ts`.
+   */
+  web: web.url,
 
-    /** O subgraph pelo ROUTER: o mesmo endereço do site, em `/graphql`. É a porta pública dele. */
-    subgraph: $interpolate`${router.url}/graphql`,
+  /** O subgraph pelo ROUTER: o mesmo endereço do site, em `/graphql`. É a porta pública dele. */
+  subgraph: $interpolate`${router.url}/graphql`,
 
-    /** O subgraph pelo API Gateway — o empacotamento que NÃO faz streaming. Fica para comparação. */
-    api: gateway.url,
+  /** O subgraph pelo API Gateway — o empacotamento que NÃO faz streaming. Fica para comparação. */
+  api: gateway.url,
 
-    /**
-     * A MESMA aplicação atrás do Lambda Web Adapter, com Function URL em `RESPONSE_STREAM`. É por
-     * aqui que um `Accept: text/event-stream` recebe bytes conforme eles são escritos — o API
-     * Gateway não faz streaming em modo nenhum.
-     */
-    stream: streaming.functionUrl,
+  /**
+   * A MESMA aplicação atrás do Lambda Web Adapter, com Function URL em `RESPONSE_STREAM`. É por
+   * aqui que um `Accept: text/event-stream` recebe bytes conforme eles são escritos — o API
+   * Gateway não faz streaming em modo nenhum.
+   */
+  stream: streaming.functionUrl,
 
-    /**
-     * O emissor. O token de teste NÃO sai de um endpoint OAuth2 — o Cognito só aceita senha pela API
-     * própria dele:
-     *
-     * ```
-     * aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH \
-     *   --client-id <clientId> --auth-parameters USERNAME=...,PASSWORD=...
-     * ```
-     */
-    issuer,
-    userPool: users.id,
-    clientId: client.id,
+  /**
+   * O emissor. O token de teste NÃO sai de um endpoint OAuth2 — o Cognito só aceita senha pela API
+   * própria dele:
+   *
+   * ```
+   * aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH \
+   *   --client-id <clientId> --auth-parameters USERNAME=...,PASSWORD=...
+   * ```
+   */
+  issuer,
+  userPool: users.id,
+  clientId: client.id,
 
-    /**
-     * As migrations RODAM SOZINHAS no deploy (ver `compute/migrations.ts`). Os nomes ficam aqui para
-     * quem precisar reexecutar à mão — `infra/scripts/migrate.sh`.
-     */
-    migrate: {
-        posts: postsMigrate.functionName,
-        tagging: taggingMigrate.functionName,
-    },
+  /**
+   * As migrations RODAM SOZINHAS no deploy (ver `compute/migrations.ts`). Os nomes ficam aqui para
+   * quem precisar reexecutar à mão — `infra/scripts/migrate.sh`.
+   */
+  migrate: {
+    posts: postsMigrate.functionName,
+    tagging: taggingMigrate.functionName,
+  },
 
-    topic: postEvents.arn,
-    queues: {
-        precreated: precreated.url,
-        changes: changes.url,
-        completed: completed.url,
-    },
-    databases: {
-        posts: postsDb.host,
-        tagging: taggingDb.host,
-    },
+  topic: postEvents.arn,
+  queues: {
+    precreated: precreated.url,
+    changes: changes.url,
+    completed: completed.url,
+  },
+  databases: {
+    posts: postsDb.host,
+    tagging: taggingDb.host,
+  },
 };
