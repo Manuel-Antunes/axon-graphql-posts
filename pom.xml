@@ -53,6 +53,8 @@
         <module>libs/users</module>
         <module>libs/posts</module>
         <module>libs/axon-channels</module>
+        <module>libs/axon-aws</module>
+        <module>libs/axon-lambda</module>
         <module>libs/axon-native-support/runtime</module>
         <module>libs/axon-native-support/deployment</module>
         <module>apps/posts-api</module>
@@ -69,6 +71,14 @@
         <quarkus.platform.version>3.39.2</quarkus.platform.version>
         <quarkus-axon.version>2.0.0-alpha6</quarkus-axon.version>
         <axon.version>5.3.1</axon.version>
+
+        <!-- Quarkus Amazon Services (Quarkiverse). A 3.22.1 declara <quarkus.version>3.39.2</quarkus.version>
+             — a MESMA linha de cima, e foi o que se conferiu antes de adotá-la: o versionamento deste
+             conjunto é próprio e NÃO acompanha o número do Quarkus, então "3.22 < 3.39" não diz nada.
+             Dela vêm o conector SQS (smallrye-sqs) e o cliente do SNS. O conector do SNS não vem: não
+             existe `quarkus-messaging-amazon-sns`, e ele é adicionado como JAR do SmallRye em
+             libs/axon-aws. -->
+        <quarkus-amazon.version>3.22.1</quarkus-amazon.version>
 
         <mapstruct.version>1.6.3</mapstruct.version>
         <assertj.version>3.27.6</assertj.version>
@@ -93,6 +103,22 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+            <!--
+              DEPOIS do quarkus-bom, e a ordem é o que torna isto seguro: em `dependencyManagement` a
+              PRIMEIRA declaração vence, então nada que o Quarkus já gerencia é alterado por este
+              import. O que ele acrescenta é o que ninguém gerenciava — os artefatos do
+              `software.amazon.awssdk` e as extensões do Quarkiverse —, e é o que mantém o cliente HTTP
+              do SDK na mesma versão dos clientes de SNS e SQS. Sem isso cada uma das três teria de
+              trazer um número escrito à mão, e a divergência apareceria como NoSuchMethodError em
+              runtime.
+            -->
+            <dependency>
+                <groupId>io.quarkiverse.amazonservices</groupId>
+                <artifactId>quarkus-amazon-services-bom</artifactId>
+                <version>${quarkus-amazon.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -105,4 +131,42 @@
             </plugin>
         </plugins>
     </build>
+
+    <!--
+      ================================================================================
+      OS PERFIS DE BUILD NATIVO — na RAIZ porque valem para os DOIS apps
+      ================================================================================
+      Eles viviam só em `apps/posts-api/pom.xml`, e isso bastava enquanto só aquele app era
+      compilado. Quando `apps/tagging` entrou no mesmo caminho, `-Dnative -Pnative-container`
+      simplesmente NÃO TINHA EFEITO nele: sem o perfil declarado, o Maven ignora a flag e o módulo
+      sai em JVM. O zip fica com um `quarkus-run.jar` e a função, declarada `provided.al2023`, não
+      acha o `bootstrap` — falha na primeira invocação, não no build.
+
+      SÓ o `native-container` está aqui, e a ausência do `native` é deliberada. `-pl` não funciona
+      para goals de build neste reator (a validação da extensão `axon-native-support` exige o
+      artefato de deployment presente), então TODA invocação do Maven percorre os dois apps. Com um
+      perfil `native` global, um build nativo compilaria OITO binários em vez de quatro — meia
+      hora a mais para jogar fora sete deles.
+
+      Por isso cada app tem o SEU gatilho: `-Dnative` liga o do `posts-api`, `-Dnative.tagging` liga
+      o do `apps/tagging`. O que é comum — construir dentro do builder image — fica aqui.
+    -->
+    <profiles>
+        <!--
+          O build DENTRO do builder image do Mandrel. Num Mac isto não é conveniência: o
+          `native-image` produz um executável do sistema onde roda, e o Lambda precisa de ELF/Linux.
+          GraalVM instalada localmente não resolve.
+
+          MEDIDO: com 7,75 GiB de Docker o build morre com `exit 137` no `[1/8] Initializing`, sem
+          mencionar memória. Precisa de ~12 GiB. Com 13,6 GiB, um binário leva ~7 min e o pico de uso
+          fica em 7,1 GB no `[5/8] Inlining methods`.
+        -->
+        <profile>
+            <id>native-container</id>
+            <properties>
+                <quarkus.native.container-build>true</quarkus.native.container-build>
+                <quarkus.native.native-image-xmx>10g</quarkus.native.native-image-xmx>
+            </properties>
+        </profile>
+    </profiles>
 </project>
