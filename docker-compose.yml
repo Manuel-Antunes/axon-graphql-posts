@@ -36,7 +36,7 @@ services:
       # ATENÇÃO, e isto morde: num volume que JÁ EXISTE o script novo nunca roda. Quem tinha o compose
       # de pé antes de `02-tagging-database.sql` existir fica sem o banco `axonposts_tagging`, e o
       # sintoma é o Flyway girando em `connectRetries` contra um banco inexistente, sem dizer por quê.
-      # O `docker/e2e/run.sh` garante o banco por conta própria; à mão, é `docker compose down -v`.
+      # O `apps/posts-api-e2e` garante o banco por conta própria; à mão, é `docker compose down -v`.
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
       - postgres-data:/var/lib/postgresql/data
     healthcheck:

@@ -3,6 +3,7 @@
 # um `pnpm install` na raiz instale as duas coisas e o `pnpm --filter` alcance os scripts dele.
 packages:
   - apps/web
+  - apps/posts-api-e2e
 
 # Sem isto o pnpm 10 pede aprovação interativa para os scripts de build do nx (que compila binários
 # nativos por plataforma), e a instalação fica pendurada em CI.

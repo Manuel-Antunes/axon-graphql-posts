@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# A saga inteira, contra a stack de verdade — o irmão do `docker/e2e/run.sh`.
+# A saga inteira, contra a stack de verdade — o irmão do `apps/posts-api-e2e`.
 #
 # O que ele afirma é a MESMA coisa que aquele afirma, porque é a mesma propriedade do sistema: um post
 # nasce na versão 1 SEM tag, atravessa dois processos por mensageria, e volta na versão 2 COM a tag que

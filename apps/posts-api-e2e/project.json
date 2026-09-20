@@ -1,0 +1,73 @@
+{
+  "name": "posts-api-e2e",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/posts-api-e2e/src",
+  "implicitDependencies": [
+    "dev.manuelantunes:quarkus-axon-graphql-posts",
+    "dev.manuelantunes:axonposts-tagging"
+  ],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["quarkusStack"],
+      "outputs": [
+        "{workspaceRoot}/apps/posts-api/target/quarkus-app",
+        "{workspaceRoot}/apps/tagging/target/quarkus-app"
+      ],
+      "metadata": {
+        "description": "Os quarkus-app RUNNABLE dos DOIS serviços, que é o que este teste sobe. UM alvo e não dois porque um `./mvnw package` produz os dois: `-pl` não funciona neste reator (a validação do quarkus-extension-maven-plugin em axon-native-support exige o artefato de deployment dentro dele), então dois alvos rodariam o reator inteiro duas vezes e disputariam target/."
+      },
+      "options": {
+        "parallel": false,
+        "commands": [
+          {
+            "command": "infra/scripts/build-env.sh ./mvnw package -DskipTests",
+            "description": "SEM `clean`, e é a troca que justifica o alvo: o script antigo limpava para garantir que media um build do zero, e aqui quem garante isso é o hash do CONTEÚDO das fontes que o Nx calcula. O build-env.sh está no meio porque o shell desta máquina traz um JDK 17, que não compila `release 21`."
+          }
+        ]
+      }
+    },
+    "test-e2e": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["build"],
+      "cache": true,
+      "inputs": ["default", "quarkusStack", { "env": "E2E_LOGS" }],
+      "outputs": ["{projectRoot}/target/test-results"],
+      "metadata": {
+        "description": "A saga coreografada entre DOIS PROCESSOS, com broker de verdade. O alvo tem o MESMO NOME do que roda os *E2ETest em apps/posts-api: é assim que `nx run-many -t test-e2e` executa os dois níveis pesados numa esteira só."
+      },
+      "options": {
+        "parallel": false,
+        "commands": [
+          {
+            "command": "infra/scripts/build-env.sh npx vitest run --root apps/posts-api-e2e",
+            "description": "O build-env.sh na frente NÃO é para construir nada — é o que garante um JDK >= 21 e exporta JAVA_HOME, que `support/service.ts` honra ao subir os dois jars. MEDIDO: com o JDK 17 do shell, um quarkus-run.jar de `release 21` sai com CÓDIGO 1 E LOG VAZIO, sem uma linha de erro. Como o script faz `cd` para a raiz, o vitest recebe `--root` em vez de `cwd`."
+          }
+        ]
+      }
+    },
+    "lint": {
+      "metadata": {
+        "description": "O alvo é INFERIDO pelo @nx/eslint/plugin; o que está declarado aqui só se funde com ele. `forwardAllArgs: false` é o que impede `pnpm lint --fix` de funcionar PELA METADE: o default repassa a flag, então o ESLint consertava enquanto o Spotless do lado Java apenas conferia — meia correção, sem aviso. Quem conserta é `pnpm lint:fix`, que roda a configuração `fix` nos TRÊS projetos. Ela repete o comando (`eslint . --fix`) em vez de usar a opção `args`, e isso foi MEDIDO: `forwardAllArgs: false` bloqueia `args` junto, então a configuração rodava sem o `--fix` e dizia que tinha passado."
+      },
+      "options": {
+        "forwardAllArgs": false
+      },
+      "configurations": {
+        "fix": {
+          "command": "eslint . --fix"
+        }
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "cwd": "apps/posts-api-e2e",
+        "command": "tsc --noEmit"
+      }
+    }
+  }
+}
