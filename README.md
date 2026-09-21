@@ -185,6 +185,12 @@ This project started without a starter. `axon-spring-boot-starter` builds the co
 | `ApplicationClock` | — | 25 lines |
 | **total in `infrastructure/axon`** | **539** | **78** |
 
+Those two rows are the measurement taken at the swap. `EventSourcedEntities` has since become 14 lines
+plus a 138-line `EntityIdType`, and that is the one place where the count went **up**: the id type used to
+be declared entity by entity, and it is now derived from `@EventTag` and `tagKey`. What was bought is the
+declaration itself — a new entity states nothing anywhere, and an entity nobody remembered to declare can
+no longer become `String` in silence. `CLAUDE.md` has the rule and what it refuses.
+
 The GraphQL schema came out byte for byte identical and the 131 tests pass. The domain and the
 application never found out: the whole swap stayed inside `infrastructure`.
 

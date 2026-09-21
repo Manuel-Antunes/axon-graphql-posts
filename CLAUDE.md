@@ -92,6 +92,8 @@ pnpm --filter @axonposts/web exec vitest   # the client's unit tests, in WATCH m
 ./mvnw test                    # the whole suite — REQUIRES Docker
 pnpm test                      # the LOWER LEVEL, through Nx: Java + the `web` unit tests (see *Tests*)
 pnpm test:e2e                  # the TWO heavy levels, serially — see *Tests*
+./mvnw clean verify -Dnative.it -Pnative-clt-toolchain   # the NATIVE binary + the *NativeIT classes
+npx nx run "dev.manuelantunes:quarkus-axon-graphql-posts:test:native"   # the same thing, cached
 pnpm lint                      # ESLint on the JS packages + Spotless on the 8 Java modules
 pnpm lint:fix                  # fixes BOTH sides at once (see *THE LINT*)
 ./mvnw package                 # build + tests
@@ -586,11 +588,11 @@ records that validate in the canonical constructor. Consequences that matter whe
   only exists in here. While the event store was in memory nothing was serialized and nobody noticed;
   in the first service that deserialized the payload, the saga died with
   `MismatchedInputException: Cannot deserialize value of type String from Object value`.
-- The entity's id type is **not** in an annotation: it is the first argument of
-  `EventSourcedEntityModule.autodetected(PostId.class, Post.class)`, and what provides it is the map in
-  `libs/platform`, in `infrastructure/axon/EventSourcedEntities` — in the PLATFORM and not in an app,
-  because both services need it. In the Spring starter it was `@EventSourced`'s `idType`, which only
-  existed so the scan had somewhere to read it from.
+- The entity's id type is **not** in an annotation of its own, and it is **not declared by hand either**:
+  it is the first argument of `EventSourcedEntityModule.autodetected(PostId.class, Post.class)`, and what
+  provides it is `infrastructure/axon/EntityIdType`, in `libs/platform` — in the PLATFORM and not in an
+  app, because both services need it. **A new entity declares nothing**; see *The id type is DERIVED, not
+  declared* below for the rule and for what it refuses.
 
 ### Identity and authorization
 
@@ -932,18 +934,65 @@ not reachable anonymously, now is. Do not publish this application straight to t
 ### Infrastructure configuration
 
 **What configures Axon is the Quarkus extension** `at.meks.quarkiverse.axonframework-extension`
-(`quarkus-axon` + `quarkus-axon-transaction`, version in the pom's `${quarkus-axon.version}`). It
+(`quarkus-axon` + `quarkus-axon-transaction`, **whose versions come from `quarkus-axon-bom`**, imported
+in the root pom — `${quarkus-axon.version}` is written once, there, and no module repeats it. It used to
+be a `<version>` on each of the nine declarations plus the property declared a SECOND time in
+`apps/posts-api/pom.xml`, which is the shape where bumping the root moves everything except that one
+app). It
 discovers entities and command/query/event handlers at **build time** and publishes gateways and buses
 as beans. The hand-written `AxonProducer`, `AxonHandlerLookup` and `JtaTransactionManager` **no longer
 exist** — 539 lines became 78. The README has the assessment of that trade, including what got worse.
 
 What remains in `infrastructure/axon` is what the extension cannot guess, one file per decision:
 
-- **`EventSourcedEntities`** — each entity's id type, implementing `EventSourcedEntityConfigurer`. **A
-  new entity = one line in the map.** The alternative the extension offers is `@IdType(PostId.class)`
-  on the entity, and it is **deliberately rejected**: it would be the domain's first dependency on a
-  platform library.
+- **`EventSourcedEntities`** — each entity's id type, implementing `EventSourcedEntityConfigurer`. It
+  delegates the answer to `EntityIdType`; see *The id type is DERIVED, not declared*, just below. **A new
+  entity = nothing.**
 - **`ApplicationClock`** — the `Clock` as a bean, so it can be fixed in tests.
+
+#### The id type is DERIVED, not declared
+
+**What the extension resolves on its own is `String`**, and that is the whole problem:
+`EventSourcedEntityBeanBuildItem.determineIdClass` reads `@IdType` off the entity and, in its absence,
+returns `String.class` — checked in the bytecode. The id type is what registers the `Repository<ID, E>`,
+and `SimpleStateManager.loadManagedEntity` picks the repository with
+`repository.idType().isAssignableFrom(id.getClass())`. With `String` registered and a `PostId` arriving
+from `@TargetEntityId`, **nothing matches and `@InjectEntity Post` never loads** — with no compilation
+error and no line in the log.
+
+`@IdType(PostId.class)` on the entity stays **deliberately rejected**: it would be the domain's first
+dependency on a platform library. What replaced it is not a map either — the map was the same fact stated
+twice, and forgetting an entry was the silent `String` all over again.
+
+**`EntityIdType` derives it from the annotations that are already there**, in this order:
+
+1. a parameter annotated `@InjectEntityId` on an `@EntityCreator` — Axon's own way of saying "this is the
+   id";
+2. otherwise, the `@EventTag` member whose key matches the entity's `tagKey`, read off the events the
+   entity is sourced from (the parameter types of its `@EntityCreator` and `@EventSourcingHandler`
+   members, plus those of its `concreteTypes`). **Its declared type is the id type.**
+
+Rule (2) is the framework's own contract, and the reference states it: *"every emitted event must carry an
+`@EventTag` annotation whose key matches that `tagKey`"*, with the key derived from the member name when
+`key()` is empty. `EntityIdType` mirrors Axon's derivation exactly, including
+`tagKey().isEmpty() ? entityType.getSimpleName() : tagKey()` and the getter convention
+(`get` + uppercase, stripped and decapitalized) — both read from
+`AnnotationBasedEventCriteriaResolver` and `AnnotationBasedTagResolver`.
+
+**Two events that tag the same key with different Java types make startup FAIL**, naming both. That is not
+pedantry: Axon registers one repository per id type, so there is no answer, and the alternative is picking
+one silently. **An entity nothing tags falls back to whatever the extension resolved**, which is the escape
+hatch for a `@EventCriteriaBuilder` entity and for `@IdType` when somebody really wants it.
+
+Locked down by `EntityIdTypeTest` in `libs/platform` — nine cases, no Quarkus, 0.07s — and by
+`AxonWiringTest.everyEntityIsRegisteredUnderItsOwnIdType`, which is the one that proves it in a running
+application. **Proven in both directions**: with `EntityIdType.of` taken out of
+`EventSourcedEntities.createConfigurer`, that test fails on `repository(Post.class, PostId.class)`.
+
+It works in native because the classes it reflects over are already registered with fields and methods:
+`AxonNativeImageProcessor` registers every class carrying `@EventSourcedEntity` and every class declaring
+an `@EventTag`, `@EntityCreator` or `@EventSourcingHandler` member — which is exactly the set this rule
+walks.
 
 Two lines of `application.properties` are worth as much as code, and both fail silently:
 
@@ -981,6 +1030,24 @@ Inherited from the extension, with visible effects:
   `GraphQlErrors` and `PostCommandFixtures.hasCause` walk the **chain**;
 - `/q/health` carries `Axon eventprocessors` (hence `quarkus-smallrye-health` in the pom);
 - `quarkus.axon.update-check.disabled=true` switches off AxonIQ's network call at startup.
+
+#### What the extension offers and this project does NOT use
+
+Surveyed against `2.0.0-alpha6`, which is the LATEST published (`<release>` in Maven Central's metadata).
+Every property below was checked against the `@ConfigMapping` bytecode, because the published docs are
+not reliable — see the first row.
+
+| capability | verdict |
+|---|---|
+| `quarkus.axon.discovery.<kind>.{enabled,included-packages}` | BUILD_TIME, per component kind. The docs say to disable it *"when you reference a module containing annotated classes but don't want them registered"* — which is `apps/tagging` importing `libs/posts`. Not used because the isolation here is **structural**: the libs contain no handler at all. ⚠️ **The published doc prints `event-sourced-entity`; the method is `eventSourcedEntities()` with no `@WithName`, so the real key is `event-sourced-entities`** — the singular is a key Quarkus reports as unrecognized and that does nothing |
+| Event upcasting | the extension's `DefaultAxonFrameworkConfigurer.registerEventUpcasters` is an **EMPTY method** in alpha6 (`Code: 0: return`). There is a doc page for it and no implementation behind it. It is still the capability this project will need FIRST, since the events are a contract between two services and are stored: the day a field changes, upcasting is the mechanism, and it will have to be wired against Axon directly |
+| `pooledprocessor.<name>.initial-segments` | default 16, and the Lambda log says `Initializing (16) segments`. On `post-subscriptions` — fan-out with an in-memory token, where every container reads everything — that is 16 coordinator claims doing the work of one. Worth measuring at `1`; not changed here because the measurement belongs on the stack |
+| Snapshots (`@Snapshotting`, `SnapshotStoreConfigurer`) | not used; the `Post` and `User` streams are short |
+| `serialization.blackbird.enabled` | default `false` |
+| `exception-handling.log-{event,query,command}-handling-errors` | all default `true`; nothing to do |
+| `command-gateway.retry.scheduling`, `CommandBusConfigurer` | not used |
+| Health checks, `Configuration` injection, CDI beans as handler parameters | **already used** |
+| Sagas (`sagastore-*`), `jdbc-eventstore`, processors as separate modules | **do not exist on the 2.x line** — published only under `0.1.x`, which is Axon 4 |
 
 **Live reload is the weak point.** It has been observed, once and without reproduction afterwards, that
 the projection silently stopped after a reload: a post is born at version 1, with no tag, and the log
@@ -1037,16 +1104,50 @@ collector every test pays for an export attempt and fills the log with connectio
 scope does not remove it from the test classpath — which is why those lines, and not the absence of the
 dependency, are what turn it off.
 
-**The blind spot in SPANS, and why it does not close today:** what Axon does inside the command/event
-bus produces no span — the Quarkus extension does not publish them, and Axon 5 has no tracing. Axon's
-tracing documentation is explicit: *"The Distributed Tracing feature is not yet available in Axon
-Framework 5.0. It will be reintroduced in Axon Framework soon."* `SpanFactory`,
-`OpenTelemetrySpanFactory` and the `axon-tracing-opentelemetry` artifact are from Axon 4, and
-`axon-framework-bom` 5.3.1 — the one this project imports — **has no tracing artifact at all**. The
-Quarkus extension even declares the hook (`AxonTracingConfigurer`), and there is nothing to plug into
-it. So the event store append, the `@EventSourcingHandler` and the domain decision stay INSIDE the
-`receive` span, as an opaque block. Closing that today means writing the spans by hand, in a message
-interceptor; it was not done.
+**The blind spot in SPANS, and the ONE thing that is missing.** What Axon does inside the command/event
+bus produces no span, so the event store append, the `@EventSourcingHandler` and the domain decision stay
+INSIDE the `receive` span, as an opaque block. **This section used to say Axon 5 has no tracing, and that
+is WRONG** — it was true of 5.0 and the quoted release note ("not yet available in Axon Framework 5.0")
+is what made it look permanent.
+
+Measured in 5.3.1's bytecode, everything is already there and already wired:
+
+- `org.axonframework.messaging.tracing` has `SpanFactory`, `Span`, `SpanScope`, `LoggingSpanFactory` and
+  the attribute providers;
+- `MessagingTracingConfigurationEnhancer` is registered by **ServiceLoader** (it is in
+  `META-INF/services/…ConfigurationEnhancer`) and **decorates** `CommandBus`, `QueryBus`, `EventBus`,
+  `EventSink` and `EventHandlingComponent` with the `Tracing*` versions;
+- the extension's `DefaultAxonFrameworkConfigurer.configureTracing` calls an `AxonTracingConfigurer` bean
+  when one is resolvable, and otherwise logs `Tracing configuration is not available` — which is the line
+  in this project's startup log today.
+
+**The only missing component is a `SpanFactory`**: `MessagingTracingConfigurationEnhancer` resolves it
+with `getOptionalComponent(SpanFactory.class).orElse(null)`, and nobody registers one. Register one and
+every bus above starts emitting spans, with no other change.
+
+**And the ready-made implementation does NOT fit, which is the whole reason this is still open.**
+`org.axonframework.extensions.tracing:axon-tracing-opentelemetry` does have a 5.x line, up to
+**5.2.0-RC1** — but its `OpenTelemetrySpanFactory` implements the OLD interface
+(`createHandlerSpan(Supplier<String>, Message, boolean, Message...)`), while 5.3.1 asks for
+`createHandlerSpan(String, Message, ProcessingContext)` plus six others. Dropping that jar in gives an
+`AbstractMethodError` at runtime, not a compile error. `axon-framework-bom` 5.3.1 does not manage it
+either — it manages `axon-metrics-micrometer`, and no tracing artifact.
+
+**Writing the `SpanFactory` by hand was considered and REFUSED.** `Span` has five abstract methods plus
+defaults whose semantics tie a scope to the `ProcessingContext` lifecycle, and `SpanScope` four more:
+200–300 lines of context and concurrency code, in the exact area where this repository has already paid
+twice (the hand-written JTA synchronization and the 280-line `QueryBus` decorator, both deleted). It
+would also be dead the day the extension ships 5.3.x.
+
+**THE TRIGGER IS EXPLICIT: when `axon-tracing-opentelemetry` is published for 5.3.x**, add the jar to
+`libs/platform` and one `AxonTracingConfigurer` bean next to `AxonMetrics` that registers
+`OpenTelemetrySpanFactory` as the `SpanFactory` component. Check the interface first — compare
+`SpanFactory`'s methods against the implementation's, which is what caught this.
+
+**Do NOT add the extension's own `quarkus-axon-tracing` module.** Read from the jar: it has ONE class,
+and `configureTracing` logs `configure OpenTelemetry tracing` and **returns without touching the
+configurer**. It produces no span and makes the log say tracing is on. It is also pinned at
+`2.0.0-alpha3` while the rest of the extension is at `alpha6`.
 
 **That is why Axon's METRICS are not decoration** — they are the only signal of what happens in there,
 and they come from `libs/platform`, in `infrastructure/axon/AxonMetrics`. It is in the PLATFORM for the
@@ -2320,8 +2421,50 @@ next to the test.
 **Skipping and not failing, because there is nothing to assert.** A test with no subject is not failing,
 it is out of context. And this does NOT hide a regression: in the flow that matters the artifact always
 exists — the ones running the `*IT` classes are failsafe, in the `integration-test` phase, after
-`package`, and only with the `native` profile, which is what flips `skipITs` to `false`. There the
+`package`, and only with the `native-it` profile, which is what flips `skipITs` to `false`. There the
 condition never skips.
+
+#### `-Dnative` BUILDS the binary; `-Dnative.it` also RUNS the ITs
+
+These are two different jobs and used to be one profile, which made the ITs impossible to run. The
+separation is forced by a fact that is easy to miss: **the `lambda-*` Nx targets pass `-Dnative`**, so
+anything the `native` profile adds goes into the three PRODUCTION artifacts.
+
+| | `-Dnative` | `-Dnative.it` |
+|---|---|---|
+| native binary | yes | yes |
+| `skipITs` | stays `true` | `false`, plus the failsafe execution |
+| the `%test` scaffolding | **never** | yes — see below |
+| who uses it | `lambda-http`, `lambda-sqs`, `lambda-stream` | `./mvnw verify`, the `test:native` target |
+
+**A native binary is built in `prod`, and that is what broke the ITs**: two things live only under
+`%test`, and without them `AxonNativeIT` and `SubscriptionNativeIT` cannot pass, because they assert the
+saga's outcome and there is no `apps/tagging` in a failsafe run.
+
+1. `axonposts.saga.tagging-in-process=true` — it gates `InProcessTagAssignment` through
+   `@IfBuildProperty`, so it has to reach **augmentation**. It travels in the
+   `quarkus-maven-plugin`'s `<systemProperties>`, which is the supported way (checked in the plugin
+   descriptor: the `build` mojo takes `systemProperties`);
+2. `quarkus.axon.subscribingprocessor.namespaces` with `…post.saga` added. Enabling the double alone is
+   NOT enough: that package would belong to no processor, fall into an anonymous pooled one with a JPA
+   token store, and **startup dies** in `JpaTokenStore.retrieveStorageIdentifier`. It is the silent trap
+   from *A handler's package chooses its DELIVERY*, arriving loudly.
+
+**And the test port is `0`, on purpose.** Quarkus's default test port is **8081**, which is also this
+project's `KEYCLOAK_PORT` in `docker-compose.yml` — and the local `test:e2e` deliberately leaves compose
+up. The binary then dies with `Port 8081 seems to be in use`, which names no container. A random port
+removes the whole class of collision instead of trading one number for another.
+
+**Careful when re-running only the ITs**: that configuration lives in an `<execution>`, so a direct
+`./mvnw failsafe:integration-test` from the CLI does **not** pick it up (the CLI runs `default-cli`) and
+the binary goes back to 8081. Either run `verify`, or pass `native.image.path`,
+`quarkus.http.test-port` and the namespaces by hand.
+
+**`onPostCreated` announces v2; `onPostUpdated` starts at v3.** `SubscriptionNativeIT` used to assert
+`onPostUpdated` at version 2 and could never pass: `PostUpdatedEventHandler` only handles
+`PostUpdatedEvent`, and the completion at v2 is a `PostCreatedEvent`. The JVM sibling
+(`NewsletterSubscriptionE2ETest.onPostUpdatedFiresOnARealEdit`) always had it right. The test now opens
+both subscriptions and is named after the rule.
 
 ### The statement MEASUREMENT is the SMALLEST of three runs, and that is FIRST
 

@@ -24,17 +24,14 @@
         <dependency>
             <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
             <artifactId>quarkus-axon</artifactId>
-            <version>${quarkus-axon.version}</version>
         </dependency>
         <dependency>
             <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
             <artifactId>quarkus-axon-transaction</artifactId>
-            <version>${quarkus-axon.version}</version>
         </dependency>
         <dependency>
             <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
             <artifactId>quarkus-axon-jpa-eventstore</artifactId>
-            <version>${quarkus-axon.version}</version>
         </dependency>
         <dependency>
             <groupId>org.axonframework</groupId>

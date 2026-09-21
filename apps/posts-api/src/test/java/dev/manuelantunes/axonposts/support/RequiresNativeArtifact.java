@@ -21,8 +21,10 @@ public @interface RequiresNativeArtifact {
 
         private static final String HOW_TO_BUILD_IT =
                 "este teste roda contra o BINÁRIO NATIVO e não há um: construa com "
-                        + "`./mvnw verify -Dnative -Pnative-clt-toolchain -pl apps/posts-api -am`, "
-                        + "que empacota e roda os *IT pelo failsafe. Procurado em " + ARTIFACT.toAbsolutePath();
+                        + "`./mvnw verify -Dnative.it -Pnative-clt-toolchain` a partir da RAIZ, "
+                        + "que empacota e roda os *IT pelo failsafe. -Dnative sozinho produz o binário "
+                        + "sem o arcabouço dos ITs, que é o que os alvos lambda-* precisam. "
+                        + "Procurado em " + ARTIFACT.toAbsolutePath();
 
         @Override
         public ConditionEvaluationResult evaluateExecutionCondition(ExtensionContext context) {

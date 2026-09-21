@@ -29,6 +29,28 @@
       },
       "dependsOn": ["^publish-local", "docker:build"]
     },
+    "test:native": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["quarkusStack"],
+      "outputs": ["{projectRoot}/target/failsafe-reports"],
+      "options": {
+        "parallel": false,
+        "forwardAllArgs": false,
+        "mvnFlags": "-Pnative-clt-toolchain",
+        "command": "./mvnw clean verify -Dnative.it {args.mvnFlags} -Dtest='!*E2ETest,!*IT' -Dsurefire.failIfNoSpecifiedTests=false"
+      },
+      "defaultConfiguration": "native",
+      "configurations": {
+        "native": {
+          "mvnFlags": "-Pnative-clt-toolchain"
+        },
+        "native-container": {
+          "mvnFlags": "-Pnative-container"
+        }
+      },
+      "dependsOn": ["^publish-local"]
+    },
     "publish-local": {
       "executor": "nx:run-commands",
       "cache": true,

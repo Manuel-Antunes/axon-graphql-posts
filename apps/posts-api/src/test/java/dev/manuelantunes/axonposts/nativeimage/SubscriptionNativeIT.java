@@ -54,17 +54,25 @@ class SubscriptionNativeIT {
     }
 
     @Test
-    void onPostUpdatedEmitsBothTheDefaultTagAndTheExplicitEdit() {
+    void theDefaultTagArrivesOnCreatedAndTheEditOnUpdated() {
         GraphQl author = GraphQl.asAuthor();
 
-        try (WebSocketSubscriptions subscription =
-                WebSocketSubscriptions.subscribe(RestAssured.port, ON_UPDATED, Map.of())) {
+        try (WebSocketSubscriptions completed =
+                        WebSocketSubscriptions.subscribe(RestAssured.port, ON_CREATED, Map.of());
+                WebSocketSubscriptions edited =
+                        WebSocketSubscriptions.subscribe(RestAssured.port, ON_UPDATED, Map.of())) {
             String id = author.createPost("upd-nativo", "c");
-            assertThat(subscription.next("onPostUpdated.version", Integer.class, WAIT)).isEqualTo(2);
+
+            assertThat(completed.next("onPostCreated.version", Integer.class, WAIT))
+                    .as("a tag padrão completa o post, e é onPostCreated que anuncia a v2")
+                    .isEqualTo(2);
 
             author.execute("mutation E($id: ID!) { updatePost(input: {id: $id, title: \"v3\"}) { version } }",
                     "id", id);
-            assertThat(subscription.next("onPostUpdated.version", Integer.class, WAIT)).isEqualTo(3);
+
+            assertThat(edited.next("onPostUpdated.version", Integer.class, WAIT))
+                    .as("onPostUpdated só reage a PostUpdatedEvent: leva o post completo da v2 para a v3")
+                    .isEqualTo(3);
         }
     }
 }

@@ -64,6 +64,13 @@
         <scope>import</scope>
       </dependency>
       <dependency>
+        <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
+        <artifactId>quarkus-axon-bom</artifactId>
+        <version>${quarkus-axon.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
         <groupId>io.quarkiverse.amazonservices</groupId>
         <artifactId>quarkus-amazon-services-bom</artifactId>
         <version>${quarkus-amazon.version}</version>

@@ -23,7 +23,6 @@
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.version>3.39.2</quarkus.platform.version>
-        <quarkus-axon.version>2.0.0-alpha6</quarkus-axon.version>
 
         <axon.version>5.3.1</axon.version>
         <reactor.version>3.7.10</reactor.version>
@@ -106,22 +105,18 @@
         <dependency>
             <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
             <artifactId>quarkus-axon</artifactId>
-            <version>${quarkus-axon.version}</version>
         </dependency>
         <dependency>
             <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
             <artifactId>quarkus-axon-transaction</artifactId>
-            <version>${quarkus-axon.version}</version>
         </dependency>
         <dependency>
             <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
             <artifactId>quarkus-axon-jpa-eventstore</artifactId>
-            <version>${quarkus-axon.version}</version>
         </dependency>
         <dependency>
             <groupId>at.meks.quarkiverse.axonframework-extension</groupId>
             <artifactId>quarkus-axon-tokenstore-jpa</artifactId>
-            <version>${quarkus-axon.version}</version>
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
@@ -287,11 +282,33 @@
                 </property>
             </activation>
             <properties>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>native-it</id>
+            <activation>
+                <property>
+                    <name>native.it</name>
+                </property>
+            </activation>
+            <properties>
                 <skipITs>false</skipITs>
                 <quarkus.native.enabled>true</quarkus.native.enabled>
             </properties>
             <build>
                 <plugins>
+                    <plugin>
+                        <groupId>${quarkus.platform.group-id}</groupId>
+                        <artifactId>quarkus-maven-plugin</artifactId>
+                        <version>${quarkus.platform.version}</version>
+                        <configuration>
+                            <systemProperties>
+                                <axonposts.saga.tagging-in-process>true</axonposts.saga.tagging-in-process>
+                            </systemProperties>
+                        </configuration>
+                    </plugin>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-failsafe-plugin</artifactId>
@@ -306,6 +323,8 @@
                                     <systemPropertyVariables>
                                         <native.image.path>${project.build.directory}/${project.build.finalName}-runner</native.image.path>
                                         <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                                        <quarkus.http.test-port>0</quarkus.http.test-port>
+                                        <quarkus.axon.subscribingprocessor.namespaces>dev.manuelantunes.axonposts.application.post.projection,dev.manuelantunes.axonposts.application.post.saga</quarkus.axon.subscribingprocessor.namespaces>
                                     </systemPropertyVariables>
                                 </configuration>
                             </execution>
