@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21-jre AS runtime
+FROM eclipse-temurin:25-jre AS runtime
 WORKDIR /app
 COPY target/quarkus-app/lib/ lib/
 COPY target/quarkus-app/app/ app/

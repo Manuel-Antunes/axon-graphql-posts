@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
@@ -16,7 +16,7 @@
     <description>Axon Framework 5 (entidades anotadas, DCB) + SmallRye GraphQL com Mutiny, em Quarkus</description>
 
     <properties>
-        <maven.compiler.release>21</maven.compiler.release>
+        <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
@@ -43,12 +43,12 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-junit5-mockito</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
+            <dependency>
+                <groupId>io.quarkus</groupId>
+                <artifactId>quarkus-junit5-mockito</artifactId>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
     </dependencyManagement>
 
     <dependencies>
@@ -220,7 +220,7 @@
             </resource>
         </resources>
         <plugins>
-<plugin>
+            <plugin>
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>quarkus-maven-plugin</artifactId>
                 <version>${quarkus.platform.version}</version>
@@ -321,10 +321,12 @@
                                 </goals>
                                 <configuration>
                                     <systemPropertyVariables>
-                                        <native.image.path>${project.build.directory}/${project.build.finalName}-runner</native.image.path>
+                                        <native.image.path>
+                                            ${project.build.directory}/${project.build.finalName}-runner</native.image.path>
                                         <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
                                         <quarkus.http.test-port>0</quarkus.http.test-port>
-                                        <quarkus.axon.subscribingprocessor.namespaces>dev.manuelantunes.axonposts.application.post.projection,dev.manuelantunes.axonposts.application.post.saga</quarkus.axon.subscribingprocessor.namespaces>
+                                        <quarkus.axon.subscribingprocessor.namespaces>
+                                            dev.manuelantunes.axonposts.application.post.projection,dev.manuelantunes.axonposts.application.post.saga</quarkus.axon.subscribingprocessor.namespaces>
                                     </systemPropertyVariables>
                                 </configuration>
                             </execution>
@@ -338,7 +340,8 @@
             <id>native-clt-toolchain</id>
             <properties>
                 <quarkus.native.container-build>false</quarkus.native.container-build>
-                <quarkus.native.additional-build-args>-H:CCompilerOption=-isysroot,-H:CCompilerOption=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk</quarkus.native.additional-build-args>
+                <quarkus.native.additional-build-args>
+                    -H:CCompilerOption=-isysroot,-H:CCompilerOption=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk</quarkus.native.additional-build-args>
             </properties>
         </profile>
 

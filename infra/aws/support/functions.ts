@@ -295,7 +295,7 @@ export class StreamingFunction extends QuarkusFunction {
         ...args,
         handler: 'run.sh',
         layers: [WEB_ADAPTER_ARM64],
-        runtime: 'java21',
+        runtime: 'java25',
         environment: {
           ...args.environment,
           AWS_LAMBDA_EXEC_WRAPPER: '/opt/bootstrap',

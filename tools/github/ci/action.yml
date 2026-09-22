@@ -11,8 +11,8 @@ inputs:
     default: 'all'
     required: true
   java-version:
-    description: 'Repassado ao `setup`. Ver a justificativa do default 21 lá.'
-    default: '21'
+    description: 'Repassado ao `setup`. Ver a justificativa do default 25 lá.'
+    default: '25'
     required: false
 runs:
   using: composite

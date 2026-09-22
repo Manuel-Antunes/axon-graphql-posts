@@ -1518,7 +1518,7 @@ at RUNTIME:
 
 **ALL SIX FUNCTIONS ARE NATIVE.** The three packaged by the `quarkus-amazon-lambda*` extensions produce
 a `function.zip` with a native `bootstrap` in place of the Java handler — hence
-`runtime: provided.al2023`. The streaming one is the only `java21`: there what executes is `run.sh`
+`runtime: provided.al2023`. The streaming one is the only `java25`: there what executes is `run.sh`
 through the Web Adapter layer, and that hook belongs to the MANAGED runtime; the sandbox ships a JVM
 that never runs.
 
@@ -2717,9 +2717,9 @@ one place. `checks: all` also works, and it is what makes sense in a local hook.
 The match uses commas on both ends (`,${checks},`) and not a raw `contains`: without them, `test` would
 match inside `test-e2e` and the lower level would run along with the upper one, silently.
 
-**CI's JDK is 21, and not 25.** The project's `release` is 21, and this document records Quarkus 3.39's
-augmentation failing INTERMITTENTLY under JVM 25 — which it does not support. In a pipeline,
-intermittency is worse than slowness.
+**CI's JDK is 25.** The project's `release` and CI setup target the current Java LTS. The historical
+Quarkus 3.39/JDK 25 augmentation measurements above were made before this upgrade and must be
+revalidated as part of it.
 
 **`test-e2e` tears compose down at the end (`down -v`), and the local one does not.** On the machine the
 containers stay up on purpose, so the next run does not pay for the startup; on an ephemeral runner that

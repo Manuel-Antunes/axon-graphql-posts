@@ -3,10 +3,8 @@ description: 'O ambiente que todo job deste monorepo precisa: Node, pnpm, JDK e 
 inputs:
   java-version:
     description: >
-      O JDK. O default é 21 e NÃO é arbitrário: o `release` do projeto é 21, e o CLAUDE.md registra o
-      augmentation do Quarkus 3.39 falhando de forma INTERMITENTE sob a JVM 25 — que ele não suporta.
-      Fixar 21 aqui é o que mantém a esteira determinística.
-    default: '21'
+      O JDK. O default é 25, alinhado com o `release` do projeto e com a versão LTS suportada pelo runtime.
+    default: '25'
     required: false
   install:
     description: 'Rodar `pnpm install`. Desligue só num job que não toca em nada de JavaScript.'
