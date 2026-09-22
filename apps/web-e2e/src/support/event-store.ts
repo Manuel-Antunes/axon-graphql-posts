@@ -13,7 +13,7 @@ export class EventStore {
 
   streamOf(aggregateId: string): string {
     return this.query(
-      `select string_agg(type, ',' order by globalindex) from aggregateevententry ` +
+      `select coalesce(string_agg(type, ',' order by globalindex), '') from aggregateevententry ` +
         `where aggregateidentifier = '${aggregateId}'`,
     );
   }
@@ -29,7 +29,7 @@ export class EventStore {
 
   inbox(): string {
     return this.query(
-      `select string_agg(message_type || '<-' || origin, ',') from axon_message_inbox`,
+      `select coalesce(string_agg(message_type || '<-' || origin, ','), '') from axon_message_inbox`,
     );
   }
 
@@ -48,6 +48,20 @@ export class EventStore {
           `from aggregateevententry where aggregateidentifier = '${aggregateId}' and type = '${type}'`,
       ),
     ) as MessageIdentity;
+  }
+
+  tagsOf(postId: string): string[] {
+    const names = this.query(
+      `select coalesce(string_agg(t.name, ',' order by t.name), '') from post_tags pt ` +
+        `join tags t on t.id = pt.tag_id where pt.post_id = '${postId}'`,
+    );
+    return names === '' ? [] : names.split(',');
+  }
+
+  versionOf(postId: string): number {
+    return Number(
+      this.query(`select version from posts where id = '${postId}'`),
+    );
   }
 
   truncate(...readModelTables: string[]): void {

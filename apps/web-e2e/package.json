@@ -1,5 +1,5 @@
 {
-  "name": "@axonposts/posts-api-e2e",
+  "name": "@axonposts/web-e2e",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,9 +7,8 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^24.10.1",
-    "@vitest/eslint-plugin": "^1.6.27",
-    "typescript": "^5.9.3",
-    "vitest": "^3.2.4"
+    "typescript": "^5.9.3"
   }
 }

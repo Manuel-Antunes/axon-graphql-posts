@@ -25,16 +25,25 @@ importers:
         version: 23.2.1(nx@23.2.1)
       '@nx/next':
         specifier: 23.2.1
-        version: 23.2.1(@babel/core@7.29.7)(@babel/traverse@7.29.8)(@nx/vite@23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(nx@23.2.1)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0)))(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(next@15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@types/node@24.13.6)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(nx@23.2.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(webpack@5.111.1(lightningcss@1.33.0))
+        version: 23.2.1(afce8bf8495cca45729164c9c04d38fd)
+      '@nx/playwright':
+        specifier: ^23.2.1
+        version: 23.2.1(@babel/traverse@7.29.8)(@playwright/test@1.63.0)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1)
       '@nx/vitest':
         specifier: 23.2.1
         version: 23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(nx@23.2.1)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))
+      '@playwright/test':
+        specifier: ^1.63.0
+        version: 1.63.0
       eslint:
         specifier: ^9.39.5
         version: 9.39.5(jiti@2.7.0)
       eslint-config-prettier:
         specifier: ^10.1.8
         version: 10.1.8(eslint@9.39.5(jiti@2.7.0))
+      eslint-plugin-playwright:
+        specifier: ^2.12.0
+        version: 2.12.0(eslint@9.39.5(jiti@2.7.0))
       jsonc-eslint-parser:
         specifier: ^3.3.0
         version: 3.3.0
@@ -60,21 +69,6 @@ importers:
         specifier: ^7.3.6
         version: 7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0)
 
-  apps/posts-api-e2e:
-    devDependencies:
-      '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.6
-      '@vitest/eslint-plugin':
-        specifier: ^1.6.27
-        version: 1.6.27(@typescript-eslint/eslint-plugin@8.70.0(@typescript-eslint/parser@8.70.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.4
-        version: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0)
-
   apps/web:
     dependencies:
       '@apollo/client':
@@ -82,7 +76,7 @@ importers:
         version: 4.3.1(graphql-ws@6.2.2(graphql@16.14.2)(ws@8.21.3))(graphql@16.14.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)
       '@apollo/client-integration-nextjs':
         specifier: ^0.14.5
-        version: 0.14.5(@apollo/client@4.3.1(graphql-ws@6.2.2(graphql@16.14.2)(ws@8.21.3))(graphql@16.14.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2))(@types/react@19.3.0)(graphql@16.14.2)(next@15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)
+        version: 0.14.5(@apollo/client@4.3.1(graphql-ws@6.2.2(graphql@16.14.2)(ws@8.21.3))(graphql@16.14.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2))(@types/react@19.3.0)(graphql@16.14.2)(next@15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.63.0)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)
       '@base-ui/react':
         specifier: ^1.8.0
         version: 1.8.0(@types/react@19.3.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
@@ -118,7 +112,7 @@ importers:
         version: 0.545.0(react@19.1.0)
       next:
         specifier: 15.5.25
-        version: 15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+        version: 15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.63.0)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       next-themes:
         specifier: ^0.4.6
         version: 0.4.6(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
@@ -164,7 +158,7 @@ importers:
         version: 4.4.1(@types/node@20.19.43)(eslint@9.39.5(jiti@2.7.0))(graphql@16.14.2)(typescript@5.9.3)
       '@opennextjs/aws':
         specifier: 3.9.14
-        version: 3.9.14(next@15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))
+        version: 3.9.14(next@15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.63.0)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))
       '@tailwindcss/postcss':
         specifier: ^4
         version: 4.3.3
@@ -213,6 +207,18 @@ importers:
       vitest:
         specifier: ^3.2.7
         version: 3.2.7(@types/node@20.19.43)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0)
+
+  apps/web-e2e:
+    devDependencies:
+      '@playwright/test':
+        specifier: ^1.63.0
+        version: 1.63.0
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.13.6
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
 packages:
 
@@ -2471,6 +2477,14 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@nx/playwright@23.2.1':
+    resolution: {integrity: sha512-lfUqS8gGXWvvPAlUs9DhE4y50jowh+xqdnpWbfcp2RrWRH7eXjAYmm1kHPX6d8ZNtS8wvq7PVkWlIarJxr31IA==}
+    peerDependencies:
+      '@playwright/test': ^1.36.0
+    peerDependenciesMeta:
+      '@playwright/test':
+        optional: true
+
   '@nx/react@23.2.1':
     resolution: {integrity: sha512-4HaDbqJCEjY6gFeEjlpDm89I93cPSGdz/+PnfnoyUktkyKlOkoDKE+iFlPEdF4+MLFprlHm/lVC1IQGaHEN0IA==}
     peerDependencies:
@@ -2609,6 +2623,11 @@ packages:
   '@pkgr/core@0.3.6':
     resolution: {integrity: sha512-SEeaJLb3qBNF/OaXnaR1NmmBbFYk1zC0ZH/52fATcRPLFg/p791YrcyFFy44Bo9sLaGuSuLp5Q6axbb/O+v/RA==}
     engines: {node: ^14.18.0 || >=16.0.0}
+
+  '@playwright/test@1.63.0':
+    resolution: {integrity: sha512-oxMK4vllB9RK5NQ2l1pq1IfOf2AvnEuj/vYGDj0H2nMtmtZpKtCwt/l00GEO6xjGfpBNAvjovvYdCm50dRQkpQ==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   '@repeaterjs/repeater@3.1.0':
     resolution: {integrity: sha512-TaoVksZRSx2KWYYpyLQtMQXXeS98VsgZImzW65xmiVgbYhXLk+aEsmzPLirqVuE4/XuUapH2iMtxUzaBNDzdSQ==}
@@ -3487,6 +3506,10 @@ packages:
   agent-base@6.0.2:
     resolution: {integrity: sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==}
     engines: {node: '>= 6.0.0'}
+
+  agent-base@7.1.4:
+    resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
+    engines: {node: '>= 14'}
 
   ajv-formats@2.1.1:
     resolution: {integrity: sha512-Wx0Kx52hxE7C18hkMEggYlEifqWZtYaRgouJor+WMdPnQyEK13vgEWyVNup7SoeeoLMsr4kf5h6dOW11I15MUA==}
@@ -4367,6 +4390,12 @@ packages:
     peerDependencies:
       eslint: ^3 || ^4 || ^5 || ^6 || ^7 || ^8 || ^9
 
+  eslint-plugin-playwright@2.12.0:
+    resolution: {integrity: sha512-7HpSKR/D2oCH4RKRauFskcrnDrHvLQKopW7Nen8lqrFZtx/SB+FgqVaH+zyQd32noZSZy9Lrsa+DsYrVUpn6hg==}
+    engines: {node: '>=16.9.0'}
+    peerDependencies:
+      eslint: '>=8.40.0'
+
   eslint-plugin-react-hooks@5.2.0:
     resolution: {integrity: sha512-+f15FfK64YQwZdJNELETdn5ibXEUQmW1DZL6KXhNnc2heoy/sg9VJJeT7n8TlMWouzWqSWavFkIhHyIbIAEapg==}
     engines: {node: '>=10'}
@@ -4817,6 +4846,10 @@ packages:
   https-proxy-agent@5.0.1:
     resolution: {integrity: sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==}
     engines: {node: '>= 6'}
+
+  https-proxy-agent@7.0.6:
+    resolution: {integrity: sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==}
+    engines: {node: '>= 14'}
 
   human-signals@2.1.0:
     resolution: {integrity: sha512-B4FFZ6q/T2jhhksgkbEW3HBvWIfDW85snkQgawt07S7J5QXTk6BkNV+0yAeZrM5QpMAdYlocGoljn0sJ/WQkFw==}
@@ -5944,6 +5977,16 @@ packages:
   pkg-up@3.1.0:
     resolution: {integrity: sha512-nDywThFk1i4BQK4twPQ6TA4RT8bDY96yeuCVBWL3ePARCiEKDRSrNGbFIgUJpLp+XeIR65v8ra7WuJOFUBtkMA==}
     engines: {node: '>=8'}
+
+  playwright-core@1.63.0:
+    resolution: {integrity: sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  playwright@1.63.0:
+    resolution: {integrity: sha512-+7ziBLidS4NaNCdt57SUDT+wYmmd5fmiQejUic/kb+YsYSCPyOOE9sebzMjNmQrsnNpDJqd4WHvV/8lfKfUDUg==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   portfinder@1.0.38:
     resolution: {integrity: sha512-rEwq/ZHlJIKw++XtLAO8PPuOQA/zaPJOZJ37BVuN97nLpMJeuDVLVGRwbFoBgLudgdTMP2hdRJP++H+8QOA3vg==}
@@ -7138,11 +7181,11 @@ snapshots:
 
   '@alloc/quick-lru@5.3.0': {}
 
-  '@apollo/client-integration-nextjs@0.14.5(@apollo/client@4.3.1(graphql-ws@6.2.2(graphql@16.14.2)(ws@8.21.3))(graphql@16.14.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2))(@types/react@19.3.0)(graphql@16.14.2)(next@15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)':
+  '@apollo/client-integration-nextjs@0.14.5(@apollo/client@4.3.1(graphql-ws@6.2.2(graphql@16.14.2)(ws@8.21.3))(graphql@16.14.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2))(@types/react@19.3.0)(graphql@16.14.2)(next@15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.63.0)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)':
     dependencies:
       '@apollo/client': 4.3.1(graphql-ws@6.2.2(graphql@16.14.2)(ws@8.21.3))(graphql@16.14.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)
       '@apollo/client-react-streaming': 0.14.5(@apollo/client@4.3.1(graphql-ws@6.2.2(graphql@16.14.2)(ws@8.21.3))(graphql@16.14.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2))(@types/react@19.3.0)(graphql@16.14.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(rxjs@7.8.2)
-      next: 15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      next: 15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.63.0)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       react: 19.1.0
       rxjs: 7.8.2
     transitivePeerDependencies:
@@ -9868,18 +9911,18 @@ snapshots:
     transitivePeerDependencies:
       - nx
 
-  '@nx/next@23.2.1(@babel/core@7.29.7)(@babel/traverse@7.29.8)(@nx/vite@23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(nx@23.2.1)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0)))(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(next@15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@types/node@24.13.6)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(nx@23.2.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(webpack@5.111.1(lightningcss@1.33.0))':
+  '@nx/next@23.2.1(afce8bf8495cca45729164c9c04d38fd)':
     dependencies:
       '@babel/plugin-proposal-decorators': 7.29.7(@babel/core@7.29.7)
       '@nx/devkit': 23.2.1(nx@23.2.1)
       '@nx/eslint': 23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1)
       '@nx/js': 23.2.1(@babel/traverse@7.29.8)(nx@23.2.1)
-      '@nx/react': 23.2.1(@babel/core@7.29.7)(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))
-      '@nx/web': 23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(@nx/vite@23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(nx@23.2.1)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0)))(nx@23.2.1)
+      '@nx/react': 23.2.1(@babel/core@7.29.7)(@babel/traverse@7.29.8)(@nx/playwright@23.2.1(@babel/traverse@7.29.8)(@playwright/test@1.63.0)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))
+      '@nx/web': 23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(@nx/playwright@23.2.1(@babel/traverse@7.29.8)(@playwright/test@1.63.0)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(@nx/vite@23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(nx@23.2.1)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0)))(nx@23.2.1)
       '@phenomnomnominal/tsquery': 6.2.0(typescript@5.9.3)
       copy-webpack-plugin: 14.0.0(webpack@5.111.1(lightningcss@1.33.0))
       ignore: 7.0.5
-      next: 15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@types/node@24.13.6)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      next: 15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.63.0)(@types/node@24.13.6)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       semver: 7.8.5
       tslib: 2.8.1
       webpack-merge: 5.10.0
@@ -9940,13 +9983,36 @@ snapshots:
   '@nx/nx-win32-x64-msvc@23.2.1':
     optional: true
 
-  '@nx/react@23.2.1(@babel/core@7.29.7)(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))':
+  '@nx/playwright@23.2.1(@babel/traverse@7.29.8)(@playwright/test@1.63.0)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1)':
+    dependencies:
+      '@nx/devkit': 23.2.1(nx@23.2.1)
+      '@nx/eslint': 23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1)
+      '@nx/js': 23.2.1(@babel/traverse@7.29.8)(nx@23.2.1)
+      https-proxy-agent: 7.0.6
+      minimatch: 10.2.5
+      semver: 7.8.5
+      tslib: 2.8.1
+    optionalDependencies:
+      '@playwright/test': 1.63.0
+    transitivePeerDependencies:
+      - '@babel/traverse'
+      - '@nx/jest'
+      - '@swc-node/register'
+      - '@swc/cli'
+      - '@swc/core'
+      - '@zkochan/js-yaml'
+      - eslint
+      - nx
+      - supports-color
+      - verdaccio
+
+  '@nx/react@23.2.1(@babel/core@7.29.7)(@babel/traverse@7.29.8)(@nx/playwright@23.2.1(@babel/traverse@7.29.8)(@playwright/test@1.63.0)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))':
     dependencies:
       '@babel/preset-react': 7.29.7(@babel/core@7.29.7)
       '@nx/devkit': 23.2.1(nx@23.2.1)
       '@nx/eslint': 23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1)
       '@nx/js': 23.2.1(@babel/traverse@7.29.8)(nx@23.2.1)
-      '@nx/web': 23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(@nx/vite@23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(nx@23.2.1)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0)))(nx@23.2.1)
+      '@nx/web': 23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(@nx/playwright@23.2.1(@babel/traverse@7.29.8)(@playwright/test@1.63.0)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(@nx/vite@23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(nx@23.2.1)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0)))(nx@23.2.1)
       '@phenomnomnominal/tsquery': 6.2.0(typescript@5.9.3)
       minimatch: 10.2.5
       react: 19.1.0
@@ -10021,7 +10087,7 @@ snapshots:
       - typescript
       - verdaccio
 
-  '@nx/web@23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(@nx/vite@23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(nx@23.2.1)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0)))(nx@23.2.1)':
+  '@nx/web@23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(@nx/playwright@23.2.1(@babel/traverse@7.29.8)(@playwright/test@1.63.0)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(@nx/vite@23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(nx@23.2.1)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0)))(nx@23.2.1)':
     dependencies:
       '@nx/devkit': 23.2.1(nx@23.2.1)
       '@nx/js': 23.2.1(@babel/traverse@7.29.8)(nx@23.2.1)
@@ -10031,6 +10097,7 @@ snapshots:
       tslib: 2.8.1
     optionalDependencies:
       '@nx/eslint': 23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1)
+      '@nx/playwright': 23.2.1(@babel/traverse@7.29.8)(@playwright/test@1.63.0)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1)
       '@nx/vite': 23.2.1(@babel/traverse@7.29.8)(@nx/eslint@23.2.1(@babel/traverse@7.29.8)(@zkochan/js-yaml@0.0.7)(eslint@9.39.5(jiti@2.7.0))(nx@23.2.1))(nx@23.2.1)(typescript@5.9.3)(vite@7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))
     transitivePeerDependencies:
       - '@babel/traverse'
@@ -10056,7 +10123,7 @@ snapshots:
       - '@swc-node/register'
       - '@swc/core'
 
-  '@opennextjs/aws@3.9.14(next@15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))':
+  '@opennextjs/aws@3.9.14(next@15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.63.0)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))':
     dependencies:
       '@ast-grep/napi': 0.40.5
       '@aws-sdk/client-cloudfront': 3.398.0
@@ -10072,7 +10139,7 @@ snapshots:
       cookie: 1.1.1
       esbuild: 0.25.4
       express: 5.2.1
-      next: 15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      next: 15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.63.0)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       path-to-regexp: 6.3.0
       urlpattern-polyfill: 10.1.0
       yaml: 2.9.0
@@ -10151,6 +10218,10 @@ snapshots:
       typescript: 5.9.3
 
   '@pkgr/core@0.3.6': {}
+
+  '@playwright/test@1.63.0':
+    dependencies:
+      playwright: 1.63.0
 
   '@repeaterjs/repeater@3.1.0': {}
 
@@ -10689,7 +10760,7 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 20.19.43
+      '@types/node': 24.13.6
 
   '@typescript-eslint/eslint-plugin@8.70.0(@typescript-eslint/parser@8.70.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)':
     dependencies:
@@ -10890,18 +10961,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@vitest/eslint-plugin@1.6.27(@typescript-eslint/eslint-plugin@8.70.0(@typescript-eslint/parser@8.70.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)(vitest@3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0))':
-    dependencies:
-      '@typescript-eslint/scope-manager': 8.70.0
-      '@typescript-eslint/utils': 8.70.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
-      eslint: 9.39.5(jiti@2.7.0)
-    optionalDependencies:
-      '@typescript-eslint/eslint-plugin': 8.70.0(@typescript-eslint/parser@8.70.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
-      typescript: 5.9.3
-      vitest: 3.2.7(@types/node@24.13.6)(jiti@2.7.0)(jsdom@30.1.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0)
-    transitivePeerDependencies:
-      - supports-color
-
   '@vitest/expect@3.2.7':
     dependencies:
       '@types/chai': 5.2.3
@@ -10925,6 +10984,7 @@ snapshots:
       magic-string: 0.30.21
     optionalDependencies:
       vite: 7.3.6(@types/node@24.13.6)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0)
+    optional: true
 
   '@vitest/pretty-format@3.2.7':
     dependencies:
@@ -11095,6 +11155,8 @@ snapshots:
       debug: 4.4.3(supports-color@7.2.0)
     transitivePeerDependencies:
       - supports-color
+
+  agent-base@7.1.4: {}
 
   ajv-formats@2.1.1(ajv@8.20.0):
     optionalDependencies:
@@ -12103,6 +12165,11 @@ snapshots:
       safe-regex-test: 1.1.0
       string.prototype.includes: 2.0.1
 
+  eslint-plugin-playwright@2.12.0(eslint@9.39.5(jiti@2.7.0)):
+    dependencies:
+      eslint: 9.39.5(jiti@2.7.0)
+      globals: 17.12.0
+
   eslint-plugin-react-hooks@5.2.0(eslint@9.39.5(jiti@2.7.0)):
     dependencies:
       eslint: 9.39.5(jiti@2.7.0)
@@ -12650,6 +12717,13 @@ snapshots:
   https-proxy-agent@5.0.1(supports-color@7.2.0):
     dependencies:
       agent-base: 6.0.2(supports-color@7.2.0)
+      debug: 4.4.3(supports-color@7.2.0)
+    transitivePeerDependencies:
+      - supports-color
+
+  https-proxy-agent@7.0.6:
+    dependencies:
+      agent-base: 7.1.4
       debug: 4.4.3(supports-color@7.2.0)
     transitivePeerDependencies:
       - supports-color
@@ -13317,7 +13391,7 @@ snapshots:
       react: 19.1.0
       react-dom: 19.1.0(react@19.1.0)
 
-  next@15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0):
+  next@15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.63.0)(@types/node@20.19.43)(babel-plugin-macros@3.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0):
     dependencies:
       '@next/env': 15.5.25
       '@swc/helpers': 0.5.15
@@ -13336,13 +13410,14 @@ snapshots:
       '@next/swc-win32-arm64-msvc': 15.5.25
       '@next/swc-win32-x64-msvc': 15.5.25
       '@opentelemetry/api': 1.9.1
+      '@playwright/test': 1.63.0
       sharp: 0.35.4(@types/node@20.19.43)
     transitivePeerDependencies:
       - '@babel/core'
       - '@types/node'
       - babel-plugin-macros
 
-  next@15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@types/node@24.13.6)(react-dom@19.1.0(react@19.1.0))(react@19.1.0):
+  next@15.5.25(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.63.0)(@types/node@24.13.6)(react-dom@19.1.0(react@19.1.0))(react@19.1.0):
     dependencies:
       '@next/env': 15.5.25
       '@swc/helpers': 0.5.15
@@ -13361,6 +13436,7 @@ snapshots:
       '@next/swc-win32-arm64-msvc': 15.5.25
       '@next/swc-win32-x64-msvc': 15.5.25
       '@opentelemetry/api': 1.9.1
+      '@playwright/test': 1.63.0
       sharp: 0.35.4(@types/node@24.13.6)
     transitivePeerDependencies:
       - '@babel/core'
@@ -13770,6 +13846,12 @@ snapshots:
   pkg-up@3.1.0:
     dependencies:
       find-up: 3.0.0
+
+  playwright-core@1.63.0: {}
+
+  playwright@1.63.0:
+    dependencies:
+      playwright-core: 1.63.0
 
   portfinder@1.0.38:
     dependencies:
@@ -14836,6 +14918,7 @@ snapshots:
       - terser
       - tsx
       - yaml
+    optional: true
 
   vite@7.3.6(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(yaml@2.9.0):
     dependencies:
@@ -14952,6 +15035,7 @@ snapshots:
       - terser
       - tsx
       - yaml
+    optional: true
 
   w3c-xmlserializer@5.0.0:
     dependencies:

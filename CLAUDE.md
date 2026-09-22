@@ -91,7 +91,8 @@ pnpm --filter @axonposts/web exec vitest   # the client's unit tests, in WATCH m
 ./mvnw quarkus:dev -pl apps/posts-api   # a single application
 ./mvnw test                    # the whole suite — REQUIRES Docker
 pnpm test                      # the LOWER LEVEL, through Nx: Java + the `web` unit tests (see *Tests*)
-pnpm test:e2e                  # the TWO heavy levels, serially — see *Tests*
+pnpm test:e2e                  # the THREE heavy levels, serially — see *Tests*
+npx nx run web-e2e:test:e2e    # only the browser level (Playwright) — see *apps/web-e2e*
 ./mvnw clean verify -Dnative.it -Pnative-clt-toolchain   # the NATIVE binary + the *NativeIT classes
 npx nx run "dev.manuelantunes:quarkus-axon-graphql-posts:test:native"   # the same thing, cached
 pnpm lint                      # ESLint on the JS packages + Spotless on the 8 Java modules
@@ -117,7 +118,7 @@ rover supergraph compose --config docker/federation/supergraph-example.yaml   # 
 
 `docker-compose.yml` serves **three** cases: running the packaged JAR (`prod` profile), having the
 Keycloak admin console, and — behind the `apps` profile — the two application containers that
-`apps/posts-api-e2e` drives. The profile is what keeps a bare `docker compose up -d` unchanged for the
+`apps/web-e2e` drives. The profile is what keeps a bare `docker compose up -d` unchanged for the
 first two. The containers carry a `quarkus-` prefix so they do not clash
 with the original Spring project's, and the host ports are variables (`POSTGRES_PORT`,
 `KEYCLOAK_PORT`).
@@ -228,7 +229,7 @@ repeat the command.** It only appeared once the application layer moved into the
 MapStruct annotation processor with it — in `libs/` this never happened.
 
 **Where it hurts and where it does not:** `./mvnw clean test` passes (`test` does not run
-`quarkus:build`). What fails is `package` — and therefore the `build` target of `apps/posts-api-e2e`,
+`quarkus:build`). What fails is `package` — and therefore the `build` target of `apps/web-e2e`,
 which packages before bringing up the applications.
 
 Ruled out by measurement: dirty state in `target/`, snapshots installed in `~/.m2`, a stale Jandex
@@ -251,9 +252,9 @@ Two new observations from the same episode, and both are better leads than the p
   `target/classes` that already exists and does not see the impls that are there;
 - **the rate is not stable over time.** The document recorded "about half"; in a one-hour window
   there were ~15 failures in a row, including with `clean`. Whatever it is, it has state, and the
-  state is not `target/` (see the `clean` measurement in the `apps/posts-api-e2e` section).
+  state is not `target/` (see the `clean` measurement in the `apps/web-e2e` section).
 
-Whoever depends on a green packaging today — the `build` target of `apps/posts-api-e2e` and the
+Whoever depends on a green packaging today — the `build` target of `apps/web-e2e` and the
 `sst deploy` — repeats the command. **This is still open**, and the next step is no longer the JDK.
 
 **THE BYTECODE WAS CHECKED, and it is the lead that remains.** It is not the generated source that is
@@ -356,7 +357,7 @@ answers that routing key.
 
 **In test the decision is doubled in-process** (`InProcessTagAssignment`, removed from the build in
 dev/prod by `@IfBuildProperty`), because eventual consistency makes an in-flight message cross the
-`truncate` boundary between tests. The real path is covered by `apps/posts-api-e2e`, outside Surefire.
+`truncate` boundary between tests. The real path is covered by `apps/web-e2e`, outside Surefire.
 
 ### The Axon ↔ channels integration, in both directions
 
@@ -680,7 +681,7 @@ records that validate in the canonical constructor. Consequences that matter whe
   of the six applied migrations left every already-migrated database refusing to start, with
   `Migration checksum mismatch for migration version 1 … 6`. The compose stack's `flyway-posts`
   service runs `migrate`, and `migrate` validates first — so it aborted, and took the whole
-  `apps/posts-api-e2e` run down with it **before a single service came up**. The message names the
+  `apps/web-e2e` run down with it **before a single service came up**. The message names the
   migration, not the reason, and nothing points at the edit that caused it.
 
   CI never sees this (an ephemeral runner starts from an empty database), which is exactly what makes
@@ -688,7 +689,7 @@ records that validate in the canonical constructor. Consequences that matter whe
   already run — this machine's `postgres-data` volume, and the deployed stage, whose
   `PostsMigrate`/`TaggingMigrate` functions fail the next deploy the same way.
 
-  **`apps/posts-api-e2e` no longer sees it either, and by construction**: its stack now DROPS AND
+  **`apps/web-e2e` no longer sees it either, and by construction**: its stack now DROPS AND
   RECREATES both databases before migrating, so there is no history to disagree with. See *The stack
   owns its databases* in that app's section. What remains exposed is the `docker compose up -d` +
   packaged JAR workflow, whose database nothing recreates, and the deployed stage.
@@ -2157,7 +2158,8 @@ Today:
 | `libs/test-support` | 7 | migration order, in Flyway's version format |
 | `apps/posts-api` | 117 | application, GraphQL, wiring and the 8 `*E2ETest` classes |
 | `apps/tagging` | 10 | the decision, the wiring and the whole path with no broker |
-| `apps/web` | 26 | the ID token claims and the saga's version semantics in the UI |
+| `apps/web` | 28 | the ID token claims — Cognito's and the realm's — and the saga's version semantics in the UI |
+| `apps/web-e2e` | 21 | the whole system through Chromium: login, authorization, reading, the subscription and the saga |
 
 **The argument is `apps/tagging`:** it imports `libs/posts` to get the `Post` rules. While those rules
 were proven in ANOTHER app's test folder, the lib did not stand on its own.
@@ -2256,50 +2258,48 @@ even run.
 
 ```
 pnpm test       nx run-many -t test         → 10 projects (9 Maven + `web`)
-pnpm test:e2e   nx run-many -t test:e2e --parallel=1   → 3 projects
+pnpm test:e2e   nx run-many -t test:e2e --parallel=1   → 3 projects (2 Maven + `web-e2e`)
 ```
 
 **Neither one lists anybody.** Every module with tests declares its own target, and `run-many` resolves
 it. It used to be ONE target in `apps/posts-api` running `./mvnw test` from the root: the 190 tests ran,
 but Nx saw a single project — with no per-module cache and no `affected`.
 
-#### THE JAVASCRIPT SIDE DECLARES NO TARGET: `@nx/vitest` infers it
+#### THE LOWER LEVEL DECLARES NO TARGET: `@nx/vitest` infers it
 
 On the Maven side the target is hand-written in each `project.json`, because `@nx/maven` does not know
 what "the lower level" is. On the JavaScript side it is not: `@nx/vitest` creates the target from the
 `vitest.config`, with the command, `cwd`, cache, coverage `outputs` and — what matters most — the right
 `inputs`, including `{ "externalDependencies": ["vitest"] }` and `{ "env": "CI" }`. The second one is not
-a detail: both configs choose the reporter by `process.env.CI`, and without it a result cached on the
+a detail: the config chooses the reporter by `process.env.CI`, and without it a result cached on the
 machine would be REPLAYED in the pipeline, never writing the junit XML.
 
 **It is `@nx/vitest` and not `@nx/vite`.** Since Nx 23.2 Vitest has its own package, and it is the one
-that serves a project that only TESTS with Vite. Neither JS app builds with Vite — `web` builds with
-Next and `posts-api-e2e` builds nothing.
+that serves a project that only TESTS with Vite. `web` builds with Next, not with Vite.
 
-**There are TWO registrations in `nx.json`, and the split is the same one that separates the two
-commands:**
+**There is ONE registration now, and it has no `include`/`exclude`.** There used to be two, because
+`apps/posts-api-e2e` was a Vitest project as well and a plain `testTargetName: "test"` would have made
+`pnpm test` bring up two JVMs and a broker — silently, staying green and ten times slower. The upper
+level is **Playwright** today (`apps/web-e2e`), so the collision is gone: `@nx/vitest` finds one
+`vitest.config` in this workspace, `apps/web`'s, and a new one in any other project is born AT the
+right level with nobody editing `nx.json`.
 
-| registration | scope | target |
-|---|---|---|
-| `testTargetName: "test"` | `exclude: ["apps/posts-api-e2e/**"]` | the lower level — today only `web` |
-| `testTargetName: "test:e2e"` | `include: ["apps/posts-api-e2e/**"]` | the cross-process saga |
+**`test:e2e` is HAND-WRITTEN in `apps/web-e2e/project.json`, and `@nx/playwright` is NOT registered.**
+The plugin infers a target named `e2e` from `playwright.config.ts`, and this monorepo's upper level is
+called `test:e2e` on all three projects — that is what makes `nx run-many -t test:e2e` reach the two
+Java suites and the browser one in a single command. Renaming the convention to suit a plugin would be
+the tail wagging the dog, and the target is eleven lines.
 
-Without the second one, the saga app would get a target called `test` and `pnpm test` would start
-bringing up two JVMs and a broker — silently, because the command would stay green, just ten times
-slower. The first one is what makes a new `vitest.config` in any other project be born AT the right
-level, with nobody editing `nx.json`.
+**`testMode: "run"`, and not the `watch` default.** With the default the inferred command is plain
+`vitest`, which only runs once when `CI` is set — on the machine, `pnpm test` would enter watch mode and
+NEVER finish. Whoever wants to watch runs `pnpm --filter @axonposts/web exec vitest`.
 
-**`testMode: "run"` on both, and not the `watch` default.** With the default the inferred command is
-plain `vitest`, which only runs once when `CI` is set — on the machine, `pnpm test` would enter watch
-mode and NEVER finish. Whoever wants to watch runs `pnpm --filter @axonposts/web exec vitest`.
+**What is left in `project.json` is only what the plugin has no way to know**: `web`'s `dependsOn`
+on `codegen` and the junit XML `outputs` — the plugin deduces the COVERAGE directory from the config,
+and the reporters' `outputFile` it does not read.
 
-**What is left in `project.json` is only what the plugin has no way to know**: the `dependsOn`
-(`codegen` in `web`, `build` in `posts-api-e2e`) and the junit XML `outputs` — the plugin deduces the
-COVERAGE directory from the config, and the reporters' `outputFile` it does not read.
-
-**Careful when declaring `inputs` there: they REPLACE the inferred ones, they do not add.** That is why
-`test:e2e` repeats `externalDependencies` and `CI` next to the `quarkusStack` only it needs. `web`
-declares no `inputs`, and that is the normal case.
+**Careful when declaring `inputs` there: they REPLACE the inferred ones, they do not add.** `web`
+declares none, and that is the normal case.
 
 | | before | now |
 |---|---|---|
@@ -2488,31 +2488,56 @@ And the property stays intact: a real N+1 makes EVERY run more expensive, includ
 minimum goes up with it and the assertion breaks. **Three** because with one there is no minimum and with
 two an unlucky window in each ruins both; the query is read-only, repeating it changes no state.
 
-### `apps/posts-api-e2e`: the saga as an APP, not as a script
+### `apps/web-e2e`: the saga as an APP, through a BROWSER
 
-What used to be `docker/e2e/run.sh` is today an Nx test app — Vitest and TypeScript, because the saga
-test **already was** TypeScript (`saga-choreography.mjs`), and what was in shell was only the
-provisioning. Both files WERE REMOVED when the app went green: the same saga asserted in two places is
-the same rule in two places, and the first adjustment separates them silently.
+What used to be `docker/e2e/run.sh`, then `apps/posts-api-e2e` (Vitest, no browser), is today a
+**Playwright** app. The migration kept every assertion the Vitest one had and added the half nobody
+was proving: that a person can sign in, be refused, write a post in a FORM and watch the other service
+complete it. `apps/posts-api-e2e` WAS REMOVED when this went green — the same saga asserted in two
+places is the same rule in two places, and the first adjustment separates them silently.
 
-It declares `implicitDependencies` on BOTH services, and that is what puts it in the graph: touching
-`apps/tagging` invalidates its artifact, and an `nx affected` reaches it with nobody listing anything.
+It declares `implicitDependencies` on the two services **and on `web`**, and that is what puts it in
+the graph: touching `apps/tagging` invalidates it, and an `nx affected` reaches it with nobody listing
+anything.
 
 ```
-apps/posts-api-e2e/
-  src/specs/     the SPECS, with the `.e2e.spec.ts` suffix — the suffix says the LEVEL
-  src/support/   the MECHANISM: the stack, the two processes, the event store, the broker, the edge
-  src/global-setup.ts
+apps/web-e2e/
+  src/specs/      the SPECS — authentication, authorization, reading, live, saga
+  src/fixtures/   what a spec gets: the accounts, signIn, graphql, the two stores, the broker
+  src/support/    the MECHANISM: the stack, the services, the event store, the broker, the issuer
+  src/global-setup.ts / src/global-teardown.ts
 ```
 
-**The spec carries `.e2e.spec.ts` and lives in `src/specs/`**, and both say the same thing: Vitest's
-`include` is `src/specs/**/*.e2e.spec.ts`, so `src/support/` falls outside the pattern on purpose — what
-is there is mechanism, and mechanism is not a spec. A new level (`*.integration.spec.ts`, say) goes in as
-one more `include`, with nothing moved.
+**`src/support/` is outside `testDir` on purpose** — what is there is mechanism, and mechanism is not a
+spec. Playwright's `testDir` is `./src/specs`, so the split is structural and not a naming convention.
 
-**THE SERVICES ARE CONTAINERS, AND THE TEST NO LONGER RUNS A JVM.** `ChoreographyStack` brings
-`posts-api` and `tagging` up through `docker compose --profile apps`, from images the build produced.
-The test talks to `posts-api` on the published 8080 and to everything else exactly as before.
+**THE TWO JAVA SERVICES ARE CONTAINERS; THE CLIENT IS A PROCESS.** `ChoreographyStack` brings
+`posts-api` and `tagging` up through `docker compose --profile apps`, from images the build produced,
+and starts `apps/web` with `next start`. The asymmetry is not sloppiness: the Java side ships images
+and the Next side ships a `.next` directory — each is started the way it is deployed.
+
+**THE CLIENT'S ENVIRONMENT IS PASSED EXPLICITLY, AND THE STACK RUNS ITS BUILD.** `NEXT_PUBLIC_*` is
+**inlined at build time**, so the value that counts is the one the build saw. And `apps/web/.env.local`
+exists on a developer's machine pointing at the **deployed AWS stage** (`infra/scripts/discover.sh`
+writes it) — a build that inherited it would produce a client talking to API Gateway while the suite
+asserted against a container on `localhost:8080`, and the failure would look like the saga not closing.
+Real environment variables beat `.env` files in Next, so `ChoreographyStack.buildTheClient()` calls
+`npx nx run web:build` with them set, in ONE place. It is deliberately **not** an Nx `dependsOn`: a
+dependency runs with the ambient environment, which is exactly the one that is wrong here.
+
+**AND `apps/web` GREW AN IDENTITY PROVIDER BECAUSE OF THIS SUITE.** It signed in only against Cognito,
+and the local issuer is Keycloak — so the browser could not log in at all, and the UI gated every write
+on `cognito:groups`, which a Keycloak token does not carry. What that bought is a port
+(`lib/auth/identity.ts`), an OIDC password grant that DISCOVERS its token endpoint
+(`lib/auth/oidc.ts`), a selector (`lib/auth/provider.ts`: OIDC when `OIDC_ISSUER_URL` is set, Cognito
+otherwise) and a fallback in `lib/auth/claims.ts` from `cognito:groups` to `realm_access.roles`.
+Nothing about the AWS deployment changed — `OIDC_ISSUER_URL` is unset there.
+
+**The bearer the OIDC path stores is the ACCESS token, not the ID token**, and that is forced, not a
+shortcut: Keycloak puts `realm_access.roles` in the access token and `posts-api` validates the access
+token, so a session holding the ID token would sign in and be refused on the first mutation. On Cognito
+it is the opposite — its access token carries no `email`, which `UserProvisioning` needs — which is why
+that provider keeps returning the ID token. The two divergences are the two IdPs', not this code's.
 
 What that removed, and none of it was cosmetic:
 
@@ -2583,27 +2608,36 @@ carries is a hand-kept mirror of the schema and is the next thing that can rot; 
 removing it would also stop truncating the default tag that `V5` seeds, and that changes what the test
 starts from.
 
-**Readiness is a strategy, not an `if`** (`support/service.ts`). `posts-api` has `/q/health`; `tagging`
-has **no port at all** — `quarkus-opentelemetry` depends on `quarkus-vertx` and not on
-`quarkus-vertx-http`, which is what allows instrumenting it without giving it an endpoint. The only sign
-that it came up is the line in its log. Two answers to the same question is what makes `HttpHealth` and
-`LogLine` two implementations of `Readiness`.
+**Readiness is a strategy, not an `if`** (`support/service.ts`). `posts-api` has `/q/health`; `web`
+answers `/login`; `tagging` has **no port at all** — `quarkus-opentelemetry` depends on `quarkus-vertx`
+and not on `quarkus-vertx-http`, which is what allows instrumenting it without giving it an endpoint.
+The only sign that it came up is the line in its log. Three answers to the same question is what makes
+`HttpHealth`, `HttpAnswering` and `LogLine` three implementations of `Readiness`.
 
-**`fileParallelism: false` and `singleFork`**: the tests would fight over the SAME event store and the
-same broker. Parallelism here speeds up nothing — it changes what is being measured. And `retry: 0`, for
-the same reason: a test that only passes on the second attempt hides exactly what this app exists to
-measure.
+**`workers: 1` and `fullyParallel: false`**: the tests would fight over the SAME event store and the
+same broker. Parallelism here speeds up nothing — it changes what is being measured. And `retries: 0`,
+for the same reason: a test that only passes on the second attempt hides exactly what this app exists
+to measure.
 
-**`globalSetup` runs in ANOTHER PROCESS**, so the object it creates does not cross into the tests. Not a
-problem: `ChoreographyStack` is a stateless facade over Docker and HTTP, and the test file builds its own
-looking at the same stack — which keeps working precisely because the container names and the published
-port are FIXED, so nothing has to be handed across the process boundary. Removing the two app containers
-and dumping their logs is the `teardown` over there.
+**`globalSetup` and `globalTeardown` run in the MAIN process**, which is what lets a module-level
+holder (`support/running-stack.ts`) give the teardown the very child handle the setup created — a
+second `ChoreographyStack` would have no handle for the Next server and would leave it holding the
+port. The specs run in WORKER processes and never need it: they reach the durable state through their
+own fixtures, over `docker exec` and the management API, which need nothing handed across a process
+boundary — and that keeps working precisely because the container names and the published ports are
+FIXED.
 
-**`Service` still reports an early death, and it still matters** — only the question changed. It used
-to watch a child process `exit`; it now asks `docker compose ps` whether the container is still running
-and `docker inspect` for its exit code. Without it, a container that dies at startup costs the full
-180 s of the readiness wait to say nothing.
+**An early death is reported, and it still matters.** A container is asked of `docker compose ps`
+whether it is running and of `docker inspect` for its exit code; a spawned process is asked its
+`exitCode`. Without it, something that dies at startup costs the full 180 s of the readiness wait to
+say nothing.
+
+**The capture is `retain-on-failure`, and what it leaves is the point.** Video and trace on failure,
+screenshot on failure, and — under `CI` — the HTML report and the junit XML always. A green run writes
+almost nothing; a red one writes everything about the test that went red. In CI those become three
+artifacts (`playwright-report`, `playwright-artifacts`, `e2e-reports`) and the job writes a
+`$GITHUB_STEP_SUMMARY` saying which is which, so the way in from a pull request is the checks tab and
+not a guess. A trace opens at <https://trace.playwright.dev> with nothing installed.
 
 - **Pure domain** (`PostTest`, `TagTest`, `SoftDeletableTest`, `AuthenticatableTest`): no Axon, no CDI,
   no JPA. The only collaborator is `RecordingDomainEvents`, a double of the domain's own port. These
@@ -2628,12 +2662,13 @@ and `docker inspect` for its exit code. Without it, a container that dies at sta
   introspection does not show. The second calls the real `_entities`: it is the only place where a
   renamed argument, an extra `@Id` or a `@NonNull` on the list element fails. It includes the cost, by
   the same property as `BatchLoadingE2ETest`: N representations have to cost the same statements as 1.
-- **Cross-PROCESS** (`apps/posts-api-e2e`, via `pnpm test:e2e`): brings up the infrastructure, runs the
-  migrations out of process, packages, starts BOTH applications and asserts the whole saga — including
-  that each service's event store holds exactly the expected events (which is what would catch a resend
-  loop, as a growing count) and that redelivering the same message does not produce a second decision. It
-  is deliberately outside Surefire: what it proves is what a `@QuarkusTest` cannot assemble — two
-  processes, two event stores, one broker.
+- **Cross-PROCESS, through a BROWSER** (`apps/web-e2e`, via `pnpm test:e2e`): brings up the
+  infrastructure, runs the migrations out of process, builds and starts BOTH applications and the web
+  client, and asserts the whole saga from the form — including that each service's event store holds
+  exactly the expected events (which is what would catch a resend loop, as a growing count) and that
+  redelivering the same message does not produce a second decision. It is deliberately outside
+  Surefire: what it proves is what a `@QuarkusTest` cannot assemble — two processes, two event stores,
+  one broker and a real client.
 - **End-to-end** (`e2e/*`): Dev Services brings up Postgres and Keycloak; a single application is shared
   by every class. Each method starts with `truncate ... cascade` **including the Axon tables**: with a
   persistent event store, clearing only the read model leaves incoherent state — the tag's row
@@ -2663,7 +2698,7 @@ knows it changed.
 tools/github/
   setup/        Node, pnpm, JDK and the two caches (~/.m2 and .nx/cache)
   test/         `pnpm test` + the Surefire reports as an artifact
-  test-e2e/     `pnpm test:e2e` + reports AND BOTH APPLICATIONS' LOGS
+  test-e2e/     the browser, `pnpm test:e2e`, the Playwright VIDEOS/TRACES and the THREE apps' logs
   web/          lint, typecheck and build of the client, in a single `run-many`
   deploy-sst/   the `sst deploy` and the GitHub Deployment  ← the subaction that already existed
   ci/           the integration MAIN: `setup` + the requested checks
@@ -2689,6 +2724,20 @@ intermittency is worse than slowness.
 **`test-e2e` tears compose down at the end (`down -v`), and the local one does not.** On the machine the
 containers stay up on purpose, so the next run does not pay for the startup; on an ephemeral runner that
 is worth nothing, and a surviving volume between jobs would be worth less still.
+
+**It installs the browser, and only chromium.** `npx playwright install --with-deps chromium` is the
+first step: the runner has no browser and `playwright test` would die naming a download, not a defect.
+`--with-deps` is what brings the shared libraries Chromium needs on a bare `ubuntu-latest`, and the
+single browser is the whole `projects` list in `playwright.config.ts` — installing the other two would
+be ~300 MB per run for something nothing drives.
+
+**THREE ARTIFACTS, AND THE SPLIT IS WHAT MAKES THEM USABLE FROM A PULL REQUEST.**
+`playwright-report` is the HTML report and is the one to open first; `playwright-artifacts` holds the
+video, the screenshot and the trace of each test that FAILED (the config is `retain-on-failure`, so a
+green run makes it tiny or empty); `e2e-reports` holds the junit XML, the Surefire reports and the
+three applications' logs. A last step writes a `$GITHUB_STEP_SUMMARY` table naming them, because an
+artifact nobody can find is an artifact nobody reads — and from a PR the way in is the checks tab, not
+the repository. A trace opens at <https://trace.playwright.dev> with nothing installed.
 
 **There is no packaging step before `deploy`.** Each function declares the Nx target that packages it
 (`QuarkusBuild.buildCommand`, in `infra/aws/support/functions.ts`) and Pulumi's `triggers` decides
@@ -2720,7 +2769,7 @@ whoever has the config.
 | project | config | what it adds |
 |---|---|---|
 | `web` | `apps/web/eslint.config.mjs` | the Next preset, Vitest, Tailwind and GraphQL |
-| `posts-api-e2e` | `apps/posts-api-e2e/eslint.config.mjs` | the Vitest rules |
+| `web-e2e` | `apps/web-e2e/eslint.config.mjs` | the Playwright rules |
 | `infra` | `infra/eslint.config.mjs` | the two SST exceptions |
 | `dev.manuelantunes:quarkus-axon-graphql-posts` | — | Spotless, across the EIGHT Maven modules |
 
@@ -2785,12 +2834,21 @@ in this monorepo — the shared domain is Java, and what separates it is the Mav
 `scope:`/`type:` would be a boundary drawn against a dependency that does not exist, and a rule that
 never fires is a rule nobody maintains. When the first JS lib is born, that list is the place to tighten.
 
-**`apps/posts-api-e2e` has its OWN config**, and what it adds is not style. The
-`@vitest/eslint-plugin` rules turned on there catch the ways a suite can LIE that no compiler sees — `it`
-with no `expect`, a forgotten `it.only`, a repeated title, an `expect` outside a test. In an app whose
-whole job is asserting things about two processes and a broker, a lying suite is worse than no suite: it
-stays green while the saga does not close. And `src/support/` is outside those rules for the same reason
-it is outside Vitest's `include` — that is mechanism, not spec.
+**`apps/web-e2e` has its OWN config**, and what it adds is not style. The
+`eslint-plugin-playwright` rules turned on there catch the ways a suite can LIE that no compiler sees —
+a `test` with no `expect`, a forgotten `test.only`, an `expect` outside a test, an `expect` under an
+`if`. In an app whose whole job is asserting things about three processes and a broker, a lying suite
+is worse than no suite: it stays green while the saga does not close. And `src/support/` is outside
+those rules for the same reason it is outside `testDir` — that is mechanism, not spec.
+
+**`no-conditional-in-test` is the one that earns its place here.** A browser suite is full of
+temptations to branch on what the page happens to show, and a branch in a test is a test that asserts
+different things on different runs — which in a system with a broker in the middle means it asserts
+nothing on the run that matters.
+
+**`src/fixtures/` turns OFF `no-empty-pattern`**, and that is not laziness: `async ({}, use)` is
+Playwright's own signature for a fixture that depends on no other fixture. The destructuring has to be
+there and has to be empty.
 
 The `no-standalone-expect` rule caught a real one on the first run: there was an `expect` inside
 `beforeAll`, which fails as a HOOK error and does not name what was expected. The fix was not silencing

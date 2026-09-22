@@ -1,18 +1,42 @@
 name: 'test-e2e'
-description: 'Os dois níveis PESADOS: os *E2ETest em processo e a saga entre dois processos'
+description: 'Os dois níveis PESADOS: os *E2ETest em processo e a saga atravessada pelo navegador'
 inputs:
   upload_reports:
-    description: 'Guardar relatórios e os logs das duas aplicações como artefato do run.'
+    description: >
+      Guardar os relatórios, os VÍDEOS/SCREENSHOTS/TRACES do Playwright e os logs das três
+      aplicações como artefatos do run. É por eles que se abre, a partir da PR, o que a suíte viu.
     default: 'true'
     required: false
 runs:
   using: composite
   steps:
+    - name: Install the browser the suite drives
+      run: npx playwright install --with-deps chromium
+      shell: bash
+
     - name: Run end-to-end tests
       run: pnpm test:e2e
       shell: bash
       env:
         CI: 'true'
+
+    - name: Upload the Playwright report
+      if: ${{ always() && inputs.upload_reports == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-report
+        path: apps/web-e2e/target/playwright-report/**
+        if-no-files-found: ignore
+        retention-days: 7
+
+    - name: Upload videos, screenshots and traces
+      if: ${{ always() && inputs.upload_reports == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-artifacts
+        path: apps/web-e2e/target/playwright/**
+        if-no-files-found: ignore
+        retention-days: 7
 
     - name: Upload test reports and application logs
       if: ${{ always() && inputs.upload_reports == 'true' }}
@@ -21,10 +45,29 @@ runs:
         name: e2e-reports
         path: |
           apps/*/target/surefire-reports/**
-          apps/posts-api-e2e/target/test-results/**
-          apps/posts-api-e2e/target/logs/**
+          apps/web-e2e/target/test-results/**
+          apps/web-e2e/target/logs/**
         if-no-files-found: ignore
         retention-days: 7
+
+    - name: Point at what was captured
+      if: ${{ always() && inputs.upload_reports == 'true' }}
+      run: |
+        set -euo pipefail
+        {
+          echo "### Saída da suíte de ponta a ponta"
+          echo
+          echo "Artefatos deste run (aba **Summary**, seção *Artifacts*):"
+          echo
+          echo "| artefato | o que tem dentro |"
+          echo "| --- | --- |"
+          echo "| \`playwright-report\`   | o relatório HTML — abra o \`index.html\` |"
+          echo "| \`playwright-artifacts\`| vídeo, screenshot e trace de cada teste que FALHOU |"
+          echo "| \`e2e-reports\`         | junit, surefire e os logs de posts-api, tagging e web |"
+          echo
+          echo "Um trace abre em <https://trace.playwright.dev> sem instalar nada."
+        } >> "$GITHUB_STEP_SUMMARY"
+      shell: bash
 
     - name: Tear down the compose stack
       if: ${{ always() }}

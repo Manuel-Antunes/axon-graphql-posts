@@ -1,24 +1,14 @@
 import 'server-only';
 
+import type { AuthTokens, PasswordIdentityProvider } from './identity';
+import { IdentityError } from './identity';
+
 const REGION = process.env.COGNITO_REGION ?? 'us-east-1';
 const CLIENT_ID = process.env.COGNITO_CLIENT_ID ?? '';
 
-export interface AuthTokens {
-  idToken: string;
-  accessToken: string;
-  refreshToken?: string;
-  expiresIn: number;
-}
+export type { AuthTokens };
 
-export class CognitoError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'CognitoError';
-  }
-}
+export class CognitoError extends IdentityError {}
 
 interface InitiateAuthResponse {
   AuthenticationResult?: {
@@ -101,6 +91,13 @@ export function signInWithPassword(
 export function refreshTokens(refreshToken: string): Promise<AuthTokens> {
   return initiateAuth('REFRESH_TOKEN_AUTH', { REFRESH_TOKEN: refreshToken });
 }
+
+export const cognitoProvider: PasswordIdentityProvider = {
+  name: 'cognito',
+  isConfigured: () => CLIENT_ID !== '',
+  signInWithPassword,
+  refreshTokens,
+};
 
 export const cognitoConfig = {
   region: REGION,

@@ -1,6 +1,6 @@
 packages:
   - apps/web
-  - apps/posts-api-e2e
+  - apps/web-e2e
 
 onlyBuiltDependencies:
   - nx

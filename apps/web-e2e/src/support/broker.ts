@@ -47,7 +47,7 @@ export class Broker {
   constructor(
     private readonly container: Container,
     private readonly exchange = 'axonposts.events',
-    private readonly managementUrl = 'http://localhost:15672/api',
+    private readonly managementUrl = `http://localhost:${process.env.RABBITMQ_MANAGEMENT_PORT ?? 15672}/api`,
     private readonly credentials = `Basic ${Buffer.from('guest:guest').toString('base64')}`,
   ) {}
 

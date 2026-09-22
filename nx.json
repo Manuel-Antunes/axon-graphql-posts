@@ -70,16 +70,7 @@
       "options": {
         "testTargetName": "test",
         "testMode": "run"
-      },
-      "exclude": ["apps/posts-api-e2e/**"]
-    },
-    {
-      "plugin": "@nx/vitest",
-      "options": {
-        "testTargetName": "test:e2e",
-        "testMode": "run"
-      },
-      "include": ["apps/posts-api-e2e/**"]
+      }
     },
     {
       "plugin": "@nx/docker",

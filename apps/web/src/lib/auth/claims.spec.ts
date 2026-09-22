@@ -84,6 +84,29 @@ describe('toSession', () => {
     });
   });
 
+  it('lê as roles do realm quando o emissor é o Keycloak', () => {
+    const doKeycloak = jwt({
+      sub: claims.sub,
+      email: claims.email,
+      name: claims.name,
+      exp: EXPIRES_AT_SECONDS,
+      iss: 'http://localhost:8081/realms/axon-posts',
+      realm_access: { roles: ['default-roles-axon-posts', AUTHOR_GROUP] },
+    });
+
+    expect(toSession(doKeycloak)?.user.groups).toContain(AUTHOR_GROUP);
+    expect(isAuthor(publicSession(toSession(doKeycloak)))).toBe(true);
+  });
+
+  it('o grupo do pool tem precedência sobre o realm', () => {
+    const dosDois = jwt({
+      ...claims,
+      realm_access: { roles: ['leitor'] },
+    });
+
+    expect(toSession(dosDois)?.user.groups).toEqual([AUTHOR_GROUP]);
+  });
+
   it('cai no e-mail e depois no sub quando o token não traz nome', () => {
     const semNome = toSession(jwt({ ...claims, name: undefined }));
     const semNomeNemEmail = toSession(

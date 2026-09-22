@@ -1,9 +1,10 @@
 {
-  "name": "posts-api-e2e",
+  "name": "web-e2e",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "projectType": "application",
-  "sourceRoot": "apps/posts-api-e2e/src",
+  "sourceRoot": "apps/web-e2e/src",
   "implicitDependencies": [
+    "web",
     "dev.manuelantunes:quarkus-axon-graphql-posts",
     "dev.manuelantunes:axonposts-tagging"
   ],
@@ -22,29 +23,33 @@
       "executor": "nx:run-commands",
       "cache": true,
       "options": {
-        "cwd": "apps/posts-api-e2e",
+        "cwd": "apps/web-e2e",
         "command": "tsc --noEmit"
       }
     },
     "test:e2e": {
-      "dependsOn": ["^docker:build"],
-      "inputs": [
-        "default",
-        "quarkusStack",
+      "executor": "nx:run-commands",
+      "cache": false,
+      "dependsOn": [
         {
-          "externalDependencies": ["vitest"]
-        },
-        {
-          "env": "CI"
-        },
-        {
-          "env": "E2E_LOGS"
+          "projects": [
+            "dev.manuelantunes:quarkus-axon-graphql-posts",
+            "dev.manuelantunes:axonposts-tagging"
+          ],
+          "target": "docker:build"
         }
       ],
       "outputs": [
         "{projectRoot}/target/test-results",
+        "{projectRoot}/target/playwright",
+        "{projectRoot}/target/playwright-report",
         "{projectRoot}/target/logs"
-      ]
+      ],
+      "options": {
+        "cwd": "apps/web-e2e",
+        "forwardAllArgs": false,
+        "command": "playwright test"
+      }
     }
   }
 }

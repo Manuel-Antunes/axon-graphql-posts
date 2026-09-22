@@ -6,6 +6,7 @@ export interface IdTokenClaims {
   'iss': string;
   'aud'?: string;
   'cognito:groups'?: string[];
+  'realm_access'?: { roles?: string[] };
   'identity_provider'?: string;
 }
 
@@ -58,7 +59,7 @@ export function toSession(idToken: string): ServerSession | null {
       sub: claims.sub,
       email: claims.email ?? '',
       name: claims.name ?? claims.email ?? claims.sub,
-      groups: claims['cognito:groups'] ?? [],
+      groups: claims['cognito:groups'] ?? claims.realm_access?.roles ?? [],
       provider: claims.identity_provider ?? 'desconhecido',
     },
   };

@@ -9,17 +9,23 @@ export class Container {
   constructor(readonly name: string) {}
 
   exec(...command: string[]): string {
-    return execFileSync('docker', ['exec', this.name, ...command], {
-      encoding: 'utf8',
-    }).trim();
+    return this.run(command, 'inherit');
   }
 
   execQuietly(...command: string[]): string {
     try {
-      return this.exec(...command);
+      return this.run(command, 'pipe');
     } catch {
       return '';
     }
+  }
+
+  private run(command: string[], diagnostics: 'inherit' | 'pipe'): string {
+    return execFileSync('docker', ['exec', this.name, ...command], {
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', diagnostics],
+    }).trim();
   }
 }
 
@@ -97,10 +103,7 @@ export class Compose {
     const { stdout } = await exec(
       'docker',
       ['compose', '--profile', this.profile, ...args],
-      {
-        cwd: this.root,
-        maxBuffer: 32 * 1024 * 1024,
-      },
+      { cwd: this.root, maxBuffer: 32 * 1024 * 1024 },
     );
     return stdout.trim();
   }

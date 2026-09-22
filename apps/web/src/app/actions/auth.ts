@@ -5,16 +5,13 @@ import { z } from 'zod';
 import type { Session } from '@/lib/auth/claims';
 import { publicSession, toSession } from '@/lib/auth/claims';
 import {
-  CognitoError,
-  refreshTokens,
-  signInWithPassword,
-} from '@/lib/auth/cognito';
-import {
   clearSession,
   readSession,
   storedRefreshToken,
   storeSession,
 } from '@/lib/auth/cookies';
+import { IdentityError } from '@/lib/auth/identity';
+import { refreshTokens, signInWithPassword } from '@/lib/auth/provider';
 
 export interface SignInState {
   status: 'idle' | 'error' | 'ok';
@@ -55,11 +52,11 @@ export async function signIn(
     await storeSession(tokens);
   } catch (error) {
     const failure =
-      error instanceof CognitoError
+      error instanceof IdentityError
         ? error
-        : new CognitoError(
+        : new IdentityError(
             'NetworkError',
-            'Não foi possível falar com o Cognito.',
+            'Não foi possível falar com o provedor de identidade.',
           );
     return {
       status: 'error',
