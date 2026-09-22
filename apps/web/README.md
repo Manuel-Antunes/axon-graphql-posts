@@ -31,7 +31,7 @@ There is no `atoms/`, `molecules/` or `organisms/` folder. There is the route an
 src/app/
   _components/      what crosses features (post-card, post-list, tag-chip, site-header…)
   _providers/       SessionProvider + ApolloProvider
-  actions/          "use server" — the ONLY door between this application and Cognito
+  actions/          "use server" — the ONLY door between this application and the identity provider
   feed/             page.tsx + _components/ + _hooks/
   posts/new/        page.tsx + _components/
   posts/[id]/       page.tsx + _components/ + _hooks/
@@ -261,15 +261,35 @@ and a certificate the day there is one.
 
 ---
 
-## Authentication: server actions, and the bearer is the ID token
+## Authentication: server actions, and TWO providers behind one port
 
-`src/app/actions/auth.ts` is the only door to Cognito. The form does a plain POST
-(`useActionState`), the action calls `InitiateAuth` with `USER_PASSWORD_AUTH` and stores **both tokens
-in `httpOnly` cookies**. The browser never sees the refresh token; the ID token only reaches it in
-memory, delivered by the `currentSession` action, and goes from there to Apollo's `Authorization`
-header.
+`src/app/actions/auth.ts` is the only door to the identity provider. The form posts to it, it signs
+in with a password grant and stores **both tokens in `httpOnly` cookies**. The browser never sees the
+refresh token, and the bearer only reaches the proxy — `/api/graphql` reads the cookie on the server.
 
-Three decisions that cost an explanation:
+**Which provider answers is decided by the environment, not by a build.** `lib/auth/provider.ts`
+picks the OIDC one when `OIDC_ISSUER_URL` is set and Cognito otherwise; both implement
+`PasswordIdentityProvider` from `lib/auth/identity.ts`. On AWS the variable is unset and nothing
+about the deployment changed.
+
+| | Cognito | OIDC (`OIDC_ISSUER_URL`) |
+|---|---|---|
+| where it is used | the deployed stage | dev against compose, and `apps/web-e2e` |
+| endpoint | `InitiateAuth`, hard-coded | **discovered** at `/.well-known/openid-configuration` |
+| the stored bearer | the **ID** token | the **ACCESS** token |
+| where the roles are | `cognito:groups` | `realm_access.roles` |
+
+**The two bearers are opposite, and both are forced by the issuer.** Cognito's access token carries no
+`email`, which `UserProvisioning` needs, so that side stores the ID token. Keycloak puts
+`realm_access.roles` only in the access token, and `posts-api` validates the access token, so a
+session holding Keycloak's ID token would sign in and be refused on the first mutation.
+`withTheAccessTokenAsBearer` in `lib/auth/oidc.ts` is where that side says so.
+
+`lib/auth/claims.ts` reads the groups from `cognito:groups` and falls back to `realm_access.roles`,
+which is what makes `isAuthor` — and therefore `/posts/new`, the `/saga` button and the header's
+badge — work identically under both.
+
+Three decisions of the Cognito path that cost an explanation:
 
 - **`fetch`, not `@aws-sdk/client-cognito-identity-provider`.** The two operations used
   (`USER_PASSWORD_AUTH` and `REFRESH_TOKEN_AUTH`) are unauthenticated — they do not sign with SigV4.
@@ -368,7 +388,7 @@ would hand back a bundle pointing at the previous environment.
 
 | route | what it calls | what it proves |
 |---|---|---|
-| `/login` | `InitiateAuth` (server action) | the bearer is the ID token; `aud` checked by the API |
+| `/login` | the provider's password grant (server action) | the bearer the issuer requires; `aud` checked by the API |
 | `/feed` | `posts(first:, after:)` | cursor connection + per-component fragments |
 | `/posts/new` | `createPost` | born at **v1, with no tag** — the other service is what completes it |
 | `/posts/[id]` | `post`, `updatePost`, `deletePost`, `restorePost` | partial update; **logical** deletion |
